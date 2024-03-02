@@ -1,0 +1,71 @@
+{
+  "name": "unifi-access",
+  "type": "module",
+  "version": "0.1.0",
+  "displayName": "UniFi Access API",
+  "description": "A soon-to-be-almost-complete implementation of the UniFi Access API.",
+  "author": {
+    "name": "HJD",
+    "url": "https://github.com/hjdhjd"
+  },
+  "homepage": "https://github.com/hjdhjd/unifi-access#readme",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/hjdhjd/unifi-access.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hjdhjd/unifi-access/issues"
+  },
+  "keywords": [
+    "camera",
+    "doorbell",
+    "ubiquiti",
+    "unifi",
+    "unifi access",
+    "motion",
+    "motion sensor",
+    "security",
+    "uck",
+    "uck g2",
+    "uck g2+",
+    "uck gen2",
+    "uck gen2+",
+    "udm",
+    "udm pro",
+    "udm-pro",
+    "unifi cloud key",
+    "unifi dream machine pro",
+    "unifios"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "rimraf ./dist && tsc",
+    "build-docs": " rimraf ./docs/classes ./docs/interfaces ./docs/README.md ./docs/modules.md && npx typedoc",
+    "clean": "rimraf ./dist",
+    "lint": "eslint src/**.ts",
+    "postpublish": "npm run clean",
+    "prepublishOnly": "npm run lint && npm run build && npm run build-docs",
+    "test": "eslint src/**.ts",
+    "watch": "npm run build && npm link && nodemon"
+  },
+  "devDependencies": {
+    "@stylistic/eslint-plugin": "1.6.3",
+    "@types/node": "20.11.24",
+    "@types/ws": "8.5.10",
+    "@typescript-eslint/eslint-plugin": "7.1.0",
+    "@typescript-eslint/parser": "7.1.0",
+    "eslint": "8.57.0",
+    "rimraf": "5.0.5",
+    "typedoc": "0.25.9",
+    "typedoc-plugin-markdown": "3.17.1",
+    "typescript": "5.3.3"
+  },
+  "dependencies": {
+    "@adobe/fetch": "4.1.1",
+    "ws": "8.16.0"
+  }
+}
