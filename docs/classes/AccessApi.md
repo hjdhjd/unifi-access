@@ -12,7 +12,7 @@ Here's how the UniFi Access API works:
 2. Enumerate the list of UniFi Access devices by calling the [bootstrap](AccessApi.md#bootstrap) endpoint. This contains everything you would want to know about this particular
    UniFi Access controller, including enumerating all the devices it knows about.
 
-3. Listen for `message` events emitted by [AccessApi](AccessApi.md) containing all Access controller events, in realtime. They are delivered as AccessEventPacket
+3. Listen for `message` events emitted by [AccessApi](AccessApi.md) containing all Access controller events, in realtime. They are delivered as [AccessEventPacket](../modules.md#accesseventpacket)
    packets, containing the event-specific details.
 
 Those are the basics that gets us up and running.
@@ -39,6 +39,9 @@ Those are the basics that gets us up and running.
 ### Accessors
 
 - [bootstrap](AccessApi.md#bootstrap)
+- [devices](AccessApi.md#devices)
+- [doors](AccessApi.md#doors)
+- [floors](AccessApi.md#floors)
 - [isAdminUser](AccessApi.md#isadminuser)
 - [name](AccessApi.md#name)
 
@@ -68,6 +71,7 @@ Those are the basics that gets us up and running.
 - [reset](AccessApi.md#reset)
 - [retrieve](AccessApi.md#retrieve)
 - [setMaxListeners](AccessApi.md#setmaxlisteners)
+- [unlock](AccessApi.md#unlock)
 - [updateDevice](AccessApi.md#updatedevice)
 - [addAbortListener](AccessApi.md#addabortlistener)
 - [getEventListeners](AccessApi.md#geteventlisteners)
@@ -105,7 +109,7 @@ EventEmitter.constructor
 
 #### Defined in
 
-src/access-api.ts:55
+[src/access-api.ts:62](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L62)
 
 ## Properties
 
@@ -230,19 +234,73 @@ node_modules/@types/node/events.d.ts:412
 
 ### bootstrap
 
-• `get` **bootstrap**(): ``null`` \| `Readonly`\<[`AccessDeviceConfigInterface`](../interfaces/AccessDeviceConfigInterface.md)\>[][]
+• `get` **bootstrap**(): ``null`` \| `Readonly`\<[`AccessTopologyConfigInterface`](../interfaces/AccessTopologyConfigInterface.md)\>
 
 Access the Access controller bootstrap JSON.
 
 #### Returns
 
-``null`` \| `Readonly`\<[`AccessDeviceConfigInterface`](../interfaces/AccessDeviceConfigInterface.md)\>[][]
+``null`` \| `Readonly`\<[`AccessTopologyConfigInterface`](../interfaces/AccessTopologyConfigInterface.md)\>
 
 Returns the bootstrap JSON if the Access controller has been bootstrapped, `null` otherwise.
 
 #### Defined in
 
-src/access-api.ts:737
+[src/access-api.ts:957](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L957)
+
+___
+
+### devices
+
+• `get` **devices**(): ``null`` \| `Readonly`\<[`AccessDeviceConfigInterface`](../interfaces/AccessDeviceConfigInterface.md)\>[]
+
+Access the Access controller list of devices.
+
+#### Returns
+
+``null`` \| `Readonly`\<[`AccessDeviceConfigInterface`](../interfaces/AccessDeviceConfigInterface.md)\>[]
+
+Returns an array of all the devices from all the UniFi Access hubs associated with this controller, `null` otherwise.
+
+#### Defined in
+
+[src/access-api.ts:968](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L968)
+
+___
+
+### doors
+
+• `get` **doors**(): ``null`` \| `Readonly`\<[`AccessDoorConfigInterface`](../interfaces/AccessDoorConfigInterface.md)\>[]
+
+Access the Access controller list of doors.
+
+#### Returns
+
+``null`` \| `Readonly`\<[`AccessDoorConfigInterface`](../interfaces/AccessDoorConfigInterface.md)\>[]
+
+Returns an array of all the doors from all the UniFi Access hubs associated with this controller, `null` otherwise.
+
+#### Defined in
+
+[src/access-api.ts:979](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L979)
+
+___
+
+### floors
+
+• `get` **floors**(): ``null`` \| `Readonly`\<[`AccessFloorConfigInterface`](../interfaces/AccessFloorConfigInterface.md)\>[]
+
+Access the Access controller list of floors.
+
+#### Returns
+
+``null`` \| `Readonly`\<[`AccessFloorConfigInterface`](../interfaces/AccessFloorConfigInterface.md)\>[]
+
+Returns an array of all the floors from all the UniFi Access hubs associated with this controller, `null` otherwise.
+
+#### Defined in
+
+[src/access-api.ts:990](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L990)
 
 ___
 
@@ -260,7 +318,7 @@ Returns `true` if the logged in user has administrative privileges, `false` othe
 
 #### Defined in
 
-src/access-api.ts:748
+[src/access-api.ts:1001](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L1001)
 
 ___
 
@@ -279,7 +337,7 @@ Returns the Access controller name in the following format:
 
 #### Defined in
 
-src/access-api.ts:760
+[src/access-api.ts:1013](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L1013)
 
 ## Methods
 
@@ -488,7 +546,7 @@ Valid API endpoints are `bootstrap`, `device`, `login`, `self`, and `websocket`.
 
 #### Defined in
 
-src/access-api.ts:685
+[src/access-api.ts:905](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L905)
 
 ___
 
@@ -506,7 +564,8 @@ Returns a promise that will resolve to `true` if successful and `false` otherwis
 
 **`Remarks`**
 
-A `bootstrap` event will be emitted each time this method is successfully called, with the [AccessDeviceConfig](../interfaces/AccessDeviceConfig.md) JSON as an argument.
+A `bootstrap` event will be emitted each time this method is successfully called, with the AccessToplogyConfig JSON as an argument. As a
+convenience, the [devices](AccessApi.md#devices), [doors](AccessApi.md#doors), and [floors](AccessApi.md#floors) properties will be populated as well.
 
 **`Example`**
 
@@ -570,7 +629,7 @@ process.stdout.write(util.inspect(ufa.bootstrap, { colors: true, depth: null, so
 
 #### Defined in
 
-src/access-api.ts:337
+[src/access-api.ts:499](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L499)
 
 ___
 
@@ -600,7 +659,7 @@ The example above assumed the `deviceInfo` parameter is set to `true`.
 
 #### Defined in
 
-src/access-api.ts:408
+[src/access-api.ts:620](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L620)
 
 ___
 
@@ -625,7 +684,7 @@ Returns the Access device name in the following format:
 
 #### Defined in
 
-src/access-api.ts:435
+[src/access-api.ts:646](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L646)
 
 ___
 
@@ -792,7 +851,7 @@ if(!(await ufa.login("access-controller.local", "username", "password"))) {
 
 #### Defined in
 
-src/access-api.ts:137
+[src/access-api.ts:148](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L148)
 
 ___
 
@@ -808,7 +867,7 @@ Clear the login credentials and terminate any open connection to the UniFi Acces
 
 #### Defined in
 
-src/access-api.ts:459
+[src/access-api.ts:679](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L679)
 
 ___
 
@@ -1290,7 +1349,7 @@ Terminate any open connection to the UniFi Access API.
 
 #### Defined in
 
-src/access-api.ts:447
+[src/access-api.ts:658](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L658)
 
 ___
 
@@ -1321,7 +1380,7 @@ This method should be used when direct access to the Access controller is needed
 
 #### Defined in
 
-src/access-api.ts:494
+[src/access-api.ts:714](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L714)
 
 ___
 
@@ -1360,6 +1419,30 @@ node_modules/@types/node/events.d.ts:733
 
 ___
 
+### unlock
+
+▸ **unlock**(`device`): `Promise`\<`boolean`\>
+
+Send an unlock command to the Access controller.
+
+#### Parameters
+
+| Name | Type | Description |
+| :------ | :------ | :------ |
+| `device` | `Readonly`\<[`AccessDeviceConfigInterface`](../interfaces/AccessDeviceConfigInterface.md)\> | Access device. |
+
+#### Returns
+
+`Promise`\<`boolean`\>
+
+Returns `true` if successful, `false` otherwise.
+
+#### Defined in
+
+[src/access-api.ts:513](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L513)
+
+___
+
 ### updateDevice
 
 ▸ **updateDevice**\<`DeviceType`\>(`device`, `payload`): `Promise`\<``null`` \| `DeviceType`\>
@@ -1392,7 +1475,7 @@ Use this method to change the configuration of a given Access device or controll
 
 #### Defined in
 
-src/access-api.ts:357
+[src/access-api.ts:569](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-api.ts#L569)
 
 ___
 

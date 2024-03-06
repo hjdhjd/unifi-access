@@ -1,7 +1,7 @@
 {
   "name": "unifi-access",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "displayName": "UniFi Access API",
   "description": "A soon-to-be-almost-complete implementation of the UniFi Access API.",
   "author": {
@@ -54,13 +54,13 @@
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "1.6.3",
-    "@types/node": "20.11.24",
+    "@types/node": "20.11.25",
     "@types/ws": "8.5.10",
-    "@typescript-eslint/eslint-plugin": "7.1.0",
-    "@typescript-eslint/parser": "7.1.0",
+    "@typescript-eslint/eslint-plugin": "7.1.1",
+    "@typescript-eslint/parser": "7.1.1",
     "eslint": "8.57.0",
     "rimraf": "5.0.5",
-    "typedoc": "0.25.9",
+    "typedoc": "0.25.11",
     "typedoc-plugin-markdown": "3.17.1",
     "typescript": "5.3.3"
   },

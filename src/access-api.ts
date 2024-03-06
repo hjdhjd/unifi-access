@@ -5,8 +5,12 @@
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT } from "./settings.js";
 import { ALPNProtocol, AbortError, FetchError, Headers, Request, RequestOptions, Response, context, timeoutSignal } from "@adobe/fetch";
 import {
+  AccessApiResponse,
   AccessDeviceConfig,
-  AccessDeviceConfigPayload
+  AccessDeviceConfigPayload,
+  AccessDoorConfig,
+  AccessFloorConfig,
+  AccessTopologyConfig
 } from "./access-types.js";
 import { AccessLogging } from "./access-logging.js";
 import { EventEmitter } from "node:events";
@@ -31,12 +35,15 @@ import util from "node:util";
  */
 export class AccessApi extends EventEmitter {
 
-  private _bootstrap: AccessDeviceConfig[][] | null;
-  private _eventsWs: WebSocket | null;
-
+  private _bootstrap: AccessTopologyConfig | null;
+  private _devices: AccessDeviceConfig[] | null;
+  private _doors: AccessDoorConfig[] | null;
+  private _floors: AccessFloorConfig[] | null;
   private address: string;
   private apiErrorCount: number;
   private apiLastSuccess: number;
+  private events: WebSocket | null;
+  private eventsTimer: NodeJS.Timeout | null;
   private fetch: (url: string|Request, options?: RequestOptions) => Promise<Response>;
   private headers: Headers;
   private _isAdminUser: boolean;
@@ -73,7 +80,11 @@ export class AccessApi extends EventEmitter {
     }
 
     this._bootstrap = null;
-    this._eventsWs = null;
+    this._devices = null;
+    this._doors = null;
+    this._floors = null;
+    this.events = null;
+    this.eventsTimer = null;
 
     this.log = {
 
@@ -239,7 +250,7 @@ export class AccessApi extends EventEmitter {
 
       code: number,
       codeS: string,
-      data: AccessDeviceConfig[][],
+      data: AccessTopologyConfig[],
       error: string,
       msg: string
     }
@@ -257,7 +268,22 @@ export class AccessApi extends EventEmitter {
     }
 
     // Set the new bootstrap.
-    this._bootstrap = data?.data ?? null;
+    this._bootstrap = data?.data[0] ?? null;
+
+    // Retrieve the list of doors from all the floors the user has configured.
+    this._doors = this._bootstrap?.floors.flatMap(x => x.doors) ?? null;
+
+    // Retrieve the list of devices from all the doors the user has configured.
+    this._devices = this._doors?.map(x => x.device_groups).flat(2) ?? null;
+
+    // Set the list of floors as a convenience.
+    this._floors = this._bootstrap?.floors ?? null;
+
+    // We're good. Now connect to the event listener API.
+    if(!(await this.launchEventsWs())) {
+
+      return retry ? this.bootstrapController(false) : false;
+    }
 
     // Notify our users.
     this.emit("bootstrap", this._bootstrap);
@@ -266,12 +292,148 @@ export class AccessApi extends EventEmitter {
     return true;
   }
 
+  // Connect to the realtime events API.
+  private async launchEventsWs(): Promise<boolean> {
+
+    // Log us in if needed.
+    if(!(await this.loginController())) {
+
+      return false;
+    }
+
+    // If we already have a listener, we're already all set.
+    if(this.events) {
+
+      return true;
+    }
+
+    try {
+
+      const ws = new WebSocket("wss://" + this.address + "/proxy/access/api/v2/ws/notification", {
+
+        headers: {
+
+          Cookie: this.headers.get("Cookie") ?? ""
+        },
+
+        rejectUnauthorized: false
+      });
+
+      if(!ws) {
+
+        this.log.error("Unable to connect to the realtime events API. Will retry again later.");
+
+        if(this.eventsTimer) {
+
+          clearTimeout(this.eventsTimer);
+          this.eventsTimer = null;
+        }
+
+        this.events = null;
+
+        return false;
+      }
+
+      let messageHandler: ((event: Buffer) => void) | null;
+
+      // Cleanup after ourselves if our websocket closes for some resaon.
+      ws.once("close", (): void => {
+
+        if(this.eventsTimer) {
+
+          clearTimeout(this.eventsTimer);
+          this.eventsTimer = null;
+        }
+
+        this.events = null;
+
+        if(messageHandler) {
+
+          ws.removeListener("message", messageHandler);
+          messageHandler = null;
+        }
+      });
+
+      // Handle any websocket errors.
+      ws.once("error", (error: Error): void => {
+
+        // If we're closing before fully established it's because we're shutting down the API - ignore it.
+        if(error.message !== "WebSocket was closed before the connection was established") {
+
+          this.log.error(error.toString());
+        }
+
+        ws.terminate();
+      });
+
+      // Process messages as they come in.
+      ws.on("message", messageHandler = (event: Buffer): void => {
+
+        if(!event) {
+
+          this.log.error("Unable to process message from the realtime events API.");
+          ws.terminate();
+          return;
+        }
+
+        // The Access events API seems to send a heartbeat every five seconds.
+        if(event.toString() === "\"Hello\"\n") {
+
+          // Heartbeat.
+          if(this.eventsTimer) {
+
+            clearTimeout(this.eventsTimer);
+          }
+
+          this.eventsTimer = setTimeout(() => {
+
+            this.log.error("Failed to detect heartbeat from the events API. Resetting the connection.");
+            this.reset();
+          }, 1000 * 10);
+
+          return;
+        }
+
+        // Parse the JSON from the events API.
+        let json;
+
+        try {
+
+          json = JSON.parse(event.toString()) as JSON;
+        } catch(error) {
+
+          this.log.error("Error processing message from the events API: %s", error);
+          return;
+        }
+
+        // Emit the decoded packet for users.
+        this.emit("message", json);
+      });
+
+      // Make the websocket available, and then we're done.
+      this.events = ws;
+
+      // Establish our heartbeat.
+      this.eventsTimer = setTimeout(() => {
+
+        this.log.error("Failed to detect heartbeat from the events API. Resetting the connection.");
+        this.reset();
+      }, 1000 * 10);
+    } catch(error) {
+
+      this.log.error("Error connecting to the realtime update events API: %s", error);
+    }
+
+    return true;
+  }
+
   /**
    * Retrieve the bootstrap JSON from a UniFi Access controller.
    *
    * @returns Returns a promise that will resolve to `true` if successful and `false` otherwise.
    *
-   * @remarks A `bootstrap` event will be emitted each time this method is successfully called, with the {@link AccessDeviceConfig} JSON as an argument.
+   * @remarks A `bootstrap` event will be emitted each time this method is successfully called, with the AccessToplogyConfig JSON as an argument. As a
+   * convenience, the {@link devices}, {@link doors}, and {@link floors} properties will be populated as well.
    *
    * @example
    * Retrieve the bootstrap JSON. You can selectively choose to either `await` the promise that is returned by `getBootstrap`, or subscribe to the `bootstrap` event.
@@ -338,6 +500,56 @@ export class AccessApi extends EventEmitter {
 
     // Bootstrap the controller, and attempt to retry the bootstrap if it fails.
     return this.bootstrapController(true);
+  }
+
+  /**
+   * Send an unlock command to the Access controller.
+   *
+   * @param device     - Access device.
+   *
+   * @returns Returns `true` if successful, `false` otherwise.
+   */
+  // Send an unlock command to a hub.
+  public async unlock(device: AccessDeviceConfig): Promise<boolean> {
+
+    // No device object, we're done.
+    if(!device) {
+
+      return false;
+    }
+
+    // Unlocking only works on hubs.
+    if(device.device_type !== "UAH") {
+
+      return false;
+    }
+
+    // Request the unlock from Access.
+    const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + "/relay_unlock", {
+
+      body: JSON.stringify({}),
+      method: "PUT"
+    });
+
+    if(!response?.ok) {
+
+      this.log.error("%s: Unable to unlock the %s: %s.", this.getFullName(device), device.display_model, response?.status);
+      return false;
+    }
+
+    // Get our status.
+    const status = await response.json() as AccessApiResponse;
+
+    if(status.codeS === "SUCCESS") {
+
+      return true;
+    }
+
+    // We failed - let's log what we know.
+    this.log.error("%s: Error unlocking the %s: \n%s", this.getFullName(device), device.display_model,
+      util.inspect(status, { colors: false, depth: null, sorted: true }));
+
+    return false;
   }
 
   /**
@@ -415,8 +627,7 @@ export class AccessApi extends EventEmitter {
 
     // Include the host address information, if we have it.
     const host = (("ip" in device) && device.ip) ? "address: " + device.ip + " " : "";
-
-    const type = device.device_type;
+    const type = (("display_model" in device) && device.display_model) ? device.display_model : device.device_type;
 
     // A completely enumerated device will appear as:
     // Device Name [Device Type] (address: IP address, mac: MAC address).
@@ -447,9 +658,18 @@ export class AccessApi extends EventEmitter {
   public reset(): void {
 
     this._bootstrap = null;
+    this._floors = null;
+    this._doors = null;
+    this._devices = null;
 
-    this._eventsWs?.terminate();
-    this._eventsWs = null;
+    if(this.eventsTimer) {
+
+      clearTimeout(this.eventsTimer);
+    }
+
+    this.eventsTimer = null;
+    this.events?.terminate();
+    this.events = null;
   }
 
   /**
@@ -691,7 +911,7 @@ export class AccessApi extends EventEmitter {
 
       case "bootstrap":
 
-        endpointSuffix = "dashboard/devices";
+        endpointSuffix = "devices/topology4";
         break;
 
       case "device":
@@ -734,9 +954,42 @@ export class AccessApi extends EventEmitter {
    * @returns Returns the bootstrap JSON if the Access controller has been bootstrapped, `null` otherwise.
    */
   // Get the bootstrap JSON.
-  public get bootstrap(): AccessDeviceConfig[][] | null {
+  public get bootstrap(): AccessTopologyConfig | null {
 
     return this._bootstrap;
+  }
+
+  /**
+   * Access the Access controller list of devices.
+   *
+   * @returns Returns an array of all the devices from all the UniFi Access hubs associated with this controller, `null` otherwise.
+   */
+  // Get the list of devices.
+  public get devices(): AccessDeviceConfig[] | null {
+
+    return this._devices;
+  }
+
+  /**
+   * Access the Access controller list of doors.
+   *
+   * @returns Returns an array of all the doors from all the UniFi Access hubs associated with this controller, `null` otherwise.
+   */
+  // Get the list of doors.
+  public get doors(): AccessDoorConfig[] | null {
+
+    return this._doors;
+  }
+
+  /**
+   * Access the Access controller list of floors.
+   *
+   * @returns Returns an array of all the floors from all the UniFi Access hubs associated with this controller, `null` otherwise.
+   */
+  // Get the list of floors.
+  public get floors(): AccessFloorConfig[] | null {
+
+    return this._floors;
   }
 
   /**
@@ -760,9 +1013,10 @@ export class AccessApi extends EventEmitter {
   public get name(): string {
 
     // Our controller string, if it exists, appears as `Controller [Controller Type]`. Otherwise, we appear as `address`.
-    if(this._bootstrap && this._bootstrap[0] && this._bootstrap[0][0].name) {
+    // Our controller string, if it exists, appears as `Controller`. Otherwise, we appear as `address`.
+    if(this._bootstrap && this._bootstrap.name) {
 
-      return this._bootstrap[0][0].name + " [" + this._bootstrap[0][0].device_type + "]";
+      return this._bootstrap.name;
     } else {
 
       return this.address;
