@@ -30,7 +30,7 @@
 
 #### Defined in
 
-[src/access-types.ts:167](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L167)
+[src/access-types.ts:290](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L290)
 
 ___
 
@@ -40,7 +40,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:168](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L168)
+[src/access-types.ts:291](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L291)
 
 ___
 
@@ -50,7 +50,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:169](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L169)
+[src/access-types.ts:292](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L292)
 
 ___
 
@@ -60,7 +60,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:170](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L170)
+[src/access-types.ts:293](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L293)
 
 ___
 
@@ -70,7 +70,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:171](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L171)
+[src/access-types.ts:294](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L294)
 
 ___
 
@@ -80,7 +80,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:172](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L172)
+[src/access-types.ts:295](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L295)
 
 ___
 
@@ -90,7 +90,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:173](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L173)
+[src/access-types.ts:296](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L296)
 
 ___
 
@@ -100,7 +100,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:174](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L174)
+[src/access-types.ts:297](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L297)
 
 ___
 
@@ -110,7 +110,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:175](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L175)
+[src/access-types.ts:298](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L298)
 
 ___
 
@@ -120,7 +120,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:176](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L176)
+[src/access-types.ts:299](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L299)
 
 ___
 
@@ -130,7 +130,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:177](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L177)
+[src/access-types.ts:300](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L300)
 
 ___
 
@@ -140,7 +140,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:178](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L178)
+[src/access-types.ts:301](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L301)
 
 ___
 
@@ -150,7 +150,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:179](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L179)
+[src/access-types.ts:302](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L302)
 
 ___
 
@@ -160,7 +160,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:181](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L181)
+[src/access-types.ts:304](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L304)
 
 ___
 
@@ -170,4 +170,4 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:180](https://github.com/hjdhjd/unifi-access/blob/870bfaa/src/access-types.ts#L180)
+[src/access-types.ts:303](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-types.ts#L303)
