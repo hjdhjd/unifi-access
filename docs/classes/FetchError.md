@@ -53,7 +53,7 @@ FetchBaseError.constructor
 
 #### Defined in
 
-node_modules/typescript/lib/lib.es5.d.ts:1081
+node_modules/typescript/lib/lib.es5.d.ts:1082
 
 • **new FetchError**(`message?`, `options?`): [`FetchError`](FetchError.md)
 
@@ -74,7 +74,7 @@ FetchBaseError.constructor
 
 #### Defined in
 
-node_modules/typescript/lib/lib.es5.d.ts:1081
+node_modules/typescript/lib/lib.es5.d.ts:1082
 
 ## Properties
 
@@ -132,7 +132,7 @@ FetchBaseError.message
 
 #### Defined in
 
-node_modules/typescript/lib/lib.es5.d.ts:1076
+node_modules/typescript/lib/lib.es5.d.ts:1077
 
 ___
 
@@ -146,7 +146,7 @@ FetchBaseError.name
 
 #### Defined in
 
-node_modules/typescript/lib/lib.es5.d.ts:1075
+node_modules/typescript/lib/lib.es5.d.ts:1076
 
 ___
 
@@ -160,7 +160,7 @@ FetchBaseError.stack
 
 #### Defined in
 
-node_modules/typescript/lib/lib.es5.d.ts:1077
+node_modules/typescript/lib/lib.es5.d.ts:1078
 
 ___
 
