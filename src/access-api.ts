@@ -6,11 +6,12 @@ import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT }
 import { ALPNProtocol, AbortError, FetchError, Headers, Request, RequestOptions, Response, context, timeoutSignal } from "@adobe/fetch";
 import {
   AccessApiResponse,
+  AccessBootstrapConfig,
+  AccessControllerConfig,
   AccessDeviceConfig,
   AccessDeviceConfigPayload,
   AccessDoorConfig,
-  AccessFloorConfig,
-  AccessTopologyConfig
+  AccessFloorConfig
 } from "./access-types.js";
 import { AccessLogging } from "./access-logging.js";
 import { EventEmitter } from "node:events";
@@ -18,15 +19,16 @@ import WebSocket from "ws";
 import util from "node:util";
 
 /**
- * The direct UniFi Access API is largely undocumented and has been reverse engineered mostly through
- * the web interface, and trial and error.
+ * The direct UniFi Access API is partially documented through an officially supported public API that Ubiquiti has released. However, this API also has certain
+ * constraints and limitations such as lacking the ability to change the settings on an Access device. The full native API has been reverse engineered mostly through
+ * trail and error with the Access web interface as well as insight from the public API.
  *
  * Here's how the UniFi Access API works:
  *
  * 1. {@link login | Login} to the UniFi Access controller and acquire security credentials for further calls to the API.
  *
- * 2. Enumerate the list of UniFi Access devices by calling the {@link bootstrap} endpoint. This contains everything you would want to know about this particular
- *    UniFi Access controller, including enumerating all the devices it knows about.
+ * 2. Enumerate the list of UniFi Access devices by calling the {@link bootstrap} property. This contains everything you would want to know about the devices attached to
+ *    this particular UniFi Access controller. Information about the Access controller can be accessed through the {@link controller} property.
  *
  * 3. Listen for `message` events emitted by {@link AccessApi} containing all Access controller events, in realtime. They are delivered as {@link AccessEventPacket}
  *    packets, containing the event-specific details.
@@ -35,7 +37,8 @@ import util from "node:util";
  */
 export class AccessApi extends EventEmitter {
 
-  private _bootstrap: AccessTopologyConfig | null;
+  private _bootstrap: AccessBootstrapConfig | null;
+  private _controller: AccessControllerConfig | null;
   private _devices: AccessDeviceConfig[] | null;
   private _doors: AccessDoorConfig[] | null;
   private _floors: AccessFloorConfig[] | null;
@@ -80,6 +83,7 @@ export class AccessApi extends EventEmitter {
     }
 
     this._bootstrap = null;
+    this._controller = null;
     this._devices = null;
     this._doors = null;
     this._floors = null;
@@ -235,40 +239,49 @@ export class AccessApi extends EventEmitter {
       return retry ? this.bootstrapController(false) : false;
     }
 
-    const response = await this.retrieve(this.getApiEndpoint("bootstrap"));
+    // Utility to retrieve and parise API responses, with error handling.
+    const retrieveEndpoint = async (endpoint: string): Promise<AccessApiResponse | null> => {
 
-    // Something went wrong. Retry the bootstrap attempt once, and then we're done.
-    if(!response?.ok) {
+      // Retrieve the endpoint from the controller.
+      const response = await this.retrieve(this.getApiEndpoint(endpoint));
 
-      this.logRetry("Unable to retrieve the UniFi Access controller configuration.", retry);
+      // Something went wrong. Retry the bootstrap attempt once, and then we're done.
+      if(!response?.ok) {
 
-      return retry ? this.bootstrapController(false) : false;
+        this.logRetry("Unable to retrieve the UniFi Access " + endpoint + " configuration.", retry);
+        return null;
+      }
+
+      let data: AccessApiResponse | null = null;
+
+      try {
+
+        data = await response.json() as AccessApiResponse;
+
+      } catch(error) {
+
+        data = null;
+        this.log.error("Unable to parse response from UniFi Access. Will retry again later.");
+      }
+
+      return data;
+    };
+
+    // Retrieve the controller configuration.
+    this._controller = ((await retrieveEndpoint("controller"))?.data as AccessControllerConfig) ?? null;
+
+    if(!this._controller && retry) {
+
+      return this.bootstrapController(false);
     }
 
-    // Now let's get our device configuration information.
-    interface AccessResponse {
+    // Next, retrieve the bootstrap configuration.
+    this._bootstrap = ((await retrieveEndpoint("bootstrap"))?.data as AccessBootstrapConfig[])[0] ?? null;
 
-      code: number,
-      codeS: string,
-      data: AccessTopologyConfig[],
-      error: string,
-      msg: string
+    if(!this._bootstrap && retry) {
+
+      return this.bootstrapController(false);
     }
-
-    let data: AccessResponse | null = null;
-
-    try {
-
-      data = await response.json() as AccessResponse;
-
-    } catch(error) {
-
-      data = null;
-      this.log.error("Unable to parse response from UniFi Access. Will retry again later.");
-    }
-
-    // Set the new bootstrap.
-    this._bootstrap = data?.data[0] ?? null;
 
     // Retrieve the list of doors from all the floors the user has configured.
     this._doors = this._bootstrap?.floors.flatMap(x => x.doors) ?? null;
@@ -505,12 +518,16 @@ export class AccessApi extends EventEmitter {
   /**
    * Send an unlock command to the Access controller.
    *
-   * @param device     - Access device.
+   * @param device    - Access device.
+   * @param duration  - Unlock interval in minutes.
    *
    * @returns Returns `true` if successful, `false` otherwise.
+   *
+   * @remarks If `duration` is not specified, a standard unlock request will be sent to the Access controller which will unlock for 2 seconds. Valid values for duration
+   * are `Infinity` - remain unlocked until reset, `0` - reset lock to secure state, `duration` - number of minutes.
    */
   // Send an unlock command to a hub.
-  public async unlock(device: AccessDeviceConfig): Promise<boolean> {
+  public async unlock(device: AccessDeviceConfig, duration?: number): Promise<boolean> {
 
     // No device object, we're done.
     if(!device) {
@@ -524,16 +541,51 @@ export class AccessApi extends EventEmitter {
       return false;
     }
 
-    // Request the unlock from Access.
-    const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + "/relay_unlock", {
+    // Default to the standard unlock endpoint.
+    let action = "unlock";
+    let endpoint = "/relay_unlock";
+    let payload = {};
 
-      body: JSON.stringify({}),
+    // If we've specified a duration, let's specify that.
+    if(duration !== undefined) {
+
+      endpoint = "/lock_rule";
+
+      // Safety check for out of bounds values.
+      if(duration < 0) {
+
+        duration = 0;
+      }
+
+      switch(duration) {
+
+        case 0:
+
+          action = "lock";
+          payload = { type: "reset" };
+          break;
+
+        case Infinity:
+
+          payload = { type: "keep_unlock" };
+          break;
+
+        default:
+
+          payload = { interval: Math.trunc(duration), type: "custom" };
+      }
+    }
+
+    // Request the unlock from Access.
+    const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + endpoint, {
+
+      body: payload,
       method: "PUT"
     });
 
     if(!response?.ok) {
 
-      this.log.error("%s: Unable to unlock the %s: %s.", this.getFullName(device), device.display_model, response?.status);
+      this.log.error("%s: Unable to %s the %s: %s.", this.getFullName(device), action, device.display_model, response?.status);
       return false;
     }
 
@@ -546,7 +598,7 @@ export class AccessApi extends EventEmitter {
     }
 
     // We failed - let's log what we know.
-    this.log.error("%s: Error unlocking the %s: \n%s", this.getFullName(device), device.display_model,
+    this.log.error("%s: Error %sing the %s: \n%s", this.getFullName(device), action, device.display_model,
       util.inspect(status, { colors: false, depth: null, sorted: true }));
 
     return false;
@@ -631,7 +683,7 @@ export class AccessApi extends EventEmitter {
 
     // A completely enumerated device will appear as:
     // Device Name [Device Type] (address: IP address, mac: MAC address).
-    return (name ?? type) + " [" + type + "]" + (deviceInfo ? " (" + host + "mac: " + device.mac + ")" : "");
+    return (name ?? type) + " [" + type + "]" + (deviceInfo ? " (" + host + "mac: " + device.mac.replace(/:/g, "").toUpperCase() + ")" : "");
   }
 
   /**
@@ -718,8 +770,6 @@ export class AccessApi extends EventEmitter {
 
   // Internal interface to communicating HTTP requests with an Access controller, with error handling.
   private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false): Promise<Response | null> {
-
-    this.log.error(url);
 
     // Catch Access controller server-side issues:
     //
@@ -914,6 +964,11 @@ export class AccessApi extends EventEmitter {
         endpointSuffix = "devices/topology4";
         break;
 
+      case "controller":
+
+        endpointSuffix = "access/info";
+        break;
+
       case "device":
 
         endpointSuffix = "device";
@@ -928,6 +983,11 @@ export class AccessApi extends EventEmitter {
 
         endpointPrefix = "/api/";
         endpointSuffix = "users/self";
+        break;
+
+      case "settings":
+
+        endpointSuffix = "settings";
         break;
 
       case "websocket":
@@ -949,12 +1009,23 @@ export class AccessApi extends EventEmitter {
   }
 
   /**
+   * Access the Access controller information JSON.
+   *
+   * @returns Returns the controller information JSON if the Access controller has been bootstrapped, `null` otherwise.
+   */
+  // Get the controller JSON.
+  public get controller(): AccessControllerConfig | null {
+
+    return this._controller;
+  }
+
+  /**
    * Access the Access controller bootstrap JSON.
    *
    * @returns Returns the bootstrap JSON if the Access controller has been bootstrapped, `null` otherwise.
    */
   // Get the bootstrap JSON.
-  public get bootstrap(): AccessTopologyConfig | null {
+  public get bootstrap(): AccessBootstrapConfig | null {
 
     return this._bootstrap;
   }
