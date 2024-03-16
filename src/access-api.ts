@@ -276,7 +276,9 @@ export class AccessApi extends EventEmitter {
     }
 
     // Next, retrieve the bootstrap configuration.
-    this._bootstrap = ((await retrieveEndpoint("bootstrap"))?.data as AccessBootstrapConfig[])[0] ?? null;
+    const data = ((await retrieveEndpoint("bootstrap"))?.data as AccessBootstrapConfig[]);
+
+    this._bootstrap = data ? data[0] : null;
 
     if(!this._bootstrap && retry) {
 
