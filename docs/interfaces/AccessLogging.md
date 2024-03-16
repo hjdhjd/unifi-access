@@ -30,7 +30,7 @@
 
 #### Defined in
 
-[src/access-logging.ts:9](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-logging.ts#L9)
+[src/access-logging.ts:9](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-logging.ts#L9)
 
 ___
 
@@ -51,7 +51,7 @@ ___
 
 #### Defined in
 
-[src/access-logging.ts:10](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-logging.ts#L10)
+[src/access-logging.ts:10](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-logging.ts#L10)
 
 ___
 
@@ -72,7 +72,7 @@ ___
 
 #### Defined in
 
-[src/access-logging.ts:11](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-logging.ts#L11)
+[src/access-logging.ts:11](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-logging.ts#L11)
 
 ___
 
@@ -93,4 +93,4 @@ ___
 
 #### Defined in
 
-[src/access-logging.ts:12](https://github.com/hjdhjd/unifi-access/blob/0e21590/src/access-logging.ts#L12)
+[src/access-logging.ts:12](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-logging.ts#L12)
