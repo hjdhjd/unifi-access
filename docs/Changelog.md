@@ -2,12 +2,15 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 1.0.2 (2024-03-16)
+  * Fix: more robust exception handling.
+
 ## 1.0.1 (2024-03-15)
   * Housekeeping.
 
 ## 1.0.0 (2024-03-12)
-  * New feature: The UniFi Access controller property and API reply JSONs are now available.
-  * Improvement: The `unlock` API endpoint has been enhanced to allow for arbitrary time periods.
+  * New feature: the UniFi Access controller property and API reply JSONs are now available.
+  * Improvement: the `unlock` API endpoint has been enhanced to allow for arbitrary time periods.
   * Housekeeping.
 
 ## 0.2.0 (2024-03-06)

@@ -111,7 +111,7 @@ EventEmitter.constructor
 
 #### Defined in
 
-[src/access-api.ts:65](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L65)
+[src/access-api.ts:65](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L65)
 
 ## Properties
 
@@ -248,7 +248,7 @@ Returns the bootstrap JSON if the Access controller has been bootstrapped, `null
 
 #### Defined in
 
-[src/access-api.ts:1028](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L1028)
+[src/access-api.ts:1030](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1030)
 
 ___
 
@@ -266,7 +266,7 @@ Returns the controller information JSON if the Access controller has been bootst
 
 #### Defined in
 
-[src/access-api.ts:1017](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L1017)
+[src/access-api.ts:1019](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1019)
 
 ___
 
@@ -284,7 +284,7 @@ Returns an array of all the devices from all the UniFi Access hubs associated wi
 
 #### Defined in
 
-[src/access-api.ts:1039](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L1039)
+[src/access-api.ts:1041](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1041)
 
 ___
 
@@ -302,7 +302,7 @@ Returns an array of all the doors from all the UniFi Access hubs associated with
 
 #### Defined in
 
-[src/access-api.ts:1050](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L1050)
+[src/access-api.ts:1052](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1052)
 
 ___
 
@@ -320,7 +320,7 @@ Returns an array of all the floors from all the UniFi Access hubs associated wit
 
 #### Defined in
 
-[src/access-api.ts:1061](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L1061)
+[src/access-api.ts:1063](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1063)
 
 ___
 
@@ -338,7 +338,7 @@ Returns `true` if the logged in user has administrative privileges, `false` othe
 
 #### Defined in
 
-[src/access-api.ts:1072](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L1072)
+[src/access-api.ts:1074](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1074)
 
 ___
 
@@ -357,7 +357,7 @@ Returns the Access controller name in the following format:
 
 #### Defined in
 
-[src/access-api.ts:1084](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L1084)
+[src/access-api.ts:1086](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1086)
 
 ## Methods
 
@@ -566,7 +566,7 @@ Valid API endpoints are `bootstrap`, `device`, `login`, `self`, and `websocket`.
 
 #### Defined in
 
-[src/access-api.ts:955](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L955)
+[src/access-api.ts:957](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L957)
 
 ___
 
@@ -649,7 +649,7 @@ process.stdout.write(util.inspect(ufa.bootstrap, { colors: true, depth: null, so
 
 #### Defined in
 
-[src/access-api.ts:512](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L512)
+[src/access-api.ts:514](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L514)
 
 ___
 
@@ -679,7 +679,7 @@ The example above assumed the `deviceInfo` parameter is set to `true`.
 
 #### Defined in
 
-[src/access-api.ts:672](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L672)
+[src/access-api.ts:674](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L674)
 
 ___
 
@@ -704,7 +704,7 @@ Returns the Access device name in the following format:
 
 #### Defined in
 
-[src/access-api.ts:698](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L698)
+[src/access-api.ts:700](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L700)
 
 ___
 
@@ -871,7 +871,7 @@ if(!(await ufa.login("access-controller.local", "username", "password"))) {
 
 #### Defined in
 
-[src/access-api.ts:152](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L152)
+[src/access-api.ts:152](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L152)
 
 ___
 
@@ -887,7 +887,7 @@ Clear the login credentials and terminate any open connection to the UniFi Acces
 
 #### Defined in
 
-[src/access-api.ts:731](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L731)
+[src/access-api.ts:733](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L733)
 
 ___
 
@@ -1369,7 +1369,7 @@ Terminate any open connection to the UniFi Access API.
 
 #### Defined in
 
-[src/access-api.ts:710](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L710)
+[src/access-api.ts:712](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L712)
 
 ___
 
@@ -1400,7 +1400,7 @@ This method should be used when direct access to the Access controller is needed
 
 #### Defined in
 
-[src/access-api.ts:766](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L766)
+[src/access-api.ts:768](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L768)
 
 ___
 
@@ -1465,7 +1465,7 @@ are `Infinity` - remain unlocked until reset, `0` - reset lock to secure state, 
 
 #### Defined in
 
-[src/access-api.ts:530](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L530)
+[src/access-api.ts:532](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L532)
 
 ___
 
@@ -1501,7 +1501,7 @@ Use this method to change the configuration of a given Access device or controll
 
 #### Defined in
 
-[src/access-api.ts:621](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-api.ts#L621)
+[src/access-api.ts:623](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L623)
 
 ___
 
