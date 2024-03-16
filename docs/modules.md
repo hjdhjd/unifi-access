@@ -58,7 +58,7 @@ UniFi Access API response JSON.
 
 #### Defined in
 
-[src/access-types.ts:9](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-types.ts#L9)
+[src/access-types.ts:9](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L9)
 
 ___
 
@@ -75,7 +75,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:62](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-types.ts#L62)
+[src/access-types.ts:62](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L62)
 
 ___
 
@@ -109,7 +109,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:38](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-types.ts#L38)
+[src/access-types.ts:38](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L38)
 
 ___
 
@@ -145,4 +145,4 @@ property.
 
 #### Defined in
 
-[src/access-types.ts:28](https://github.com/hjdhjd/unifi-access/blob/197fbda/src/access-types.ts#L28)
+[src/access-types.ts:28](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L28)
