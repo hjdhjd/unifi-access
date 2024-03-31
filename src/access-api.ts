@@ -286,16 +286,16 @@ export class AccessApi extends EventEmitter {
     }
 
     // Retrieve the list of doors from all the floors the user has configured.
-    this._doors = this._bootstrap?.floors.flatMap(x => x.doors) ?? null;
+    this._doors = this._bootstrap?.floors?.filter(x => x).flatMap(x => x.doors) ?? null;
 
     // Retrieve the list of devices from all the doors the user has configured.
-    this._devices = this._doors?.map(x => x.device_groups).flat(2) ?? null;
+    this._devices = this._doors?.filter(x => x).map(x => x.device_groups).flat(2) ?? null;
 
     // Set the list of floors as a convenience.
     this._floors = this._bootstrap?.floors ?? null;
 
-    // We're good. Now connect to the event listener API.
-    if(!(await this.launchEventsWs())) {
+    // If we're boostrapped, connect to the event listener API. Otherwise, we're done.
+    if(!this._bootstrap || !(await this.launchEventsWs())) {
 
       return retry ? this.bootstrapController(false) : false;
     }
