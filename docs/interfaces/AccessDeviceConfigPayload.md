@@ -53,7 +53,7 @@
 
 #### Defined in
 
-[src/access-types.ts:163](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L163)
+[src/access-types.ts:163](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L163)
 
 ___
 
@@ -63,7 +63,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:164](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L164)
+[src/access-types.ts:164](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L164)
 
 ___
 
@@ -73,7 +73,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:165](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L165)
+[src/access-types.ts:165](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L165)
 
 ___
 
@@ -83,7 +83,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:166](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L166)
+[src/access-types.ts:166](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L166)
 
 ___
 
@@ -93,7 +93,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:167](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L167)
+[src/access-types.ts:167](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L167)
 
 ___
 
@@ -103,7 +103,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:171](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L171)
+[src/access-types.ts:171](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L171)
 
 ___
 
@@ -113,7 +113,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:168](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L168)
+[src/access-types.ts:168](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L168)
 
 ___
 
@@ -123,7 +123,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:169](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L169)
+[src/access-types.ts:169](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L169)
 
 ___
 
@@ -133,7 +133,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:170](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L170)
+[src/access-types.ts:170](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L170)
 
 ___
 
@@ -143,7 +143,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:172](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L172)
+[src/access-types.ts:172](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L172)
 
 ___
 
@@ -153,7 +153,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:187](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L187)
+[src/access-types.ts:187](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L187)
 
 ___
 
@@ -163,7 +163,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:186](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L186)
+[src/access-types.ts:186](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L186)
 
 ___
 
@@ -173,7 +173,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:188](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L188)
+[src/access-types.ts:188](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L188)
 
 ___
 
@@ -183,7 +183,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:202](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L202)
+[src/access-types.ts:202](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L202)
 
 ___
 
@@ -193,7 +193,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:203](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L203)
+[src/access-types.ts:203](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L203)
 
 ___
 
@@ -203,7 +203,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:204](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L204)
+[src/access-types.ts:204](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L204)
 
 ___
 
@@ -213,7 +213,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:212](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L212)
+[src/access-types.ts:212](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L212)
 
 ___
 
@@ -223,7 +223,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:213](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L213)
+[src/access-types.ts:213](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L213)
 
 ___
 
@@ -233,7 +233,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:214](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L214)
+[src/access-types.ts:214](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L214)
 
 ___
 
@@ -243,7 +243,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:215](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L215)
+[src/access-types.ts:215](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L215)
 
 ___
 
@@ -253,7 +253,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:216](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L216)
+[src/access-types.ts:216](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L216)
 
 ___
 
@@ -263,7 +263,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:217](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L217)
+[src/access-types.ts:217](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L217)
 
 ___
 
@@ -273,7 +273,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:231](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L231)
+[src/access-types.ts:231](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L231)
 
 ___
 
@@ -283,7 +283,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:232](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L232)
+[src/access-types.ts:232](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L232)
 
 ___
 
@@ -293,7 +293,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:233](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L233)
+[src/access-types.ts:233](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L233)
 
 ___
 
@@ -303,7 +303,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:234](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L234)
+[src/access-types.ts:234](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L234)
 
 ___
 
@@ -313,7 +313,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:235](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L235)
+[src/access-types.ts:235](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L235)
 
 ___
 
@@ -323,7 +323,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:236](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L236)
+[src/access-types.ts:236](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L236)
 
 ___
 
@@ -333,7 +333,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:238](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L238)
+[src/access-types.ts:238](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L238)
 
 ___
 
@@ -343,7 +343,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:237](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L237)
+[src/access-types.ts:237](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L237)
 
 ___
 
@@ -353,7 +353,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:239](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L239)
+[src/access-types.ts:239](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L239)
 
 ___
 
@@ -363,7 +363,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:240](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L240)
+[src/access-types.ts:240](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L240)
 
 ___
 
@@ -373,7 +373,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:241](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L241)
+[src/access-types.ts:241](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L241)
 
 ___
 
@@ -383,7 +383,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:242](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L242)
+[src/access-types.ts:242](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L242)
 
 ___
 
@@ -393,7 +393,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:243](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L243)
+[src/access-types.ts:243](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L243)
 
 ___
 
@@ -403,7 +403,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:244](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L244)
+[src/access-types.ts:244](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L244)
 
 ___
 
@@ -413,7 +413,7 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:264](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L264)
+[src/access-types.ts:264](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L264)
 
 ___
 
@@ -423,4 +423,4 @@ ___
 
 #### Defined in
 
-[src/access-types.ts:263](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-types.ts#L263)
+[src/access-types.ts:263](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-types.ts#L263)
