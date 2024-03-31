@@ -111,7 +111,7 @@ EventEmitter.constructor
 
 #### Defined in
 
-[src/access-api.ts:65](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L65)
+[src/access-api.ts:65](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L65)
 
 ## Properties
 
@@ -133,7 +133,7 @@ EventEmitter.captureRejectionSymbol
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:419
+node_modules/@types/node/events.d.ts:415
 
 ___
 
@@ -155,7 +155,7 @@ EventEmitter.captureRejections
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:426
+node_modules/@types/node/events.d.ts:422
 
 ___
 
@@ -207,7 +207,7 @@ EventEmitter.defaultMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:463
+node_modules/@types/node/events.d.ts:459
 
 ___
 
@@ -230,7 +230,7 @@ EventEmitter.errorMonitor
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:412
+node_modules/@types/node/events.d.ts:408
 
 ## Accessors
 
@@ -248,7 +248,7 @@ Returns the bootstrap JSON if the Access controller has been bootstrapped, `null
 
 #### Defined in
 
-[src/access-api.ts:1030](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1030)
+[src/access-api.ts:1030](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L1030)
 
 ___
 
@@ -266,7 +266,7 @@ Returns the controller information JSON if the Access controller has been bootst
 
 #### Defined in
 
-[src/access-api.ts:1019](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1019)
+[src/access-api.ts:1019](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L1019)
 
 ___
 
@@ -284,7 +284,7 @@ Returns an array of all the devices from all the UniFi Access hubs associated wi
 
 #### Defined in
 
-[src/access-api.ts:1041](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1041)
+[src/access-api.ts:1041](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L1041)
 
 ___
 
@@ -302,7 +302,7 @@ Returns an array of all the doors from all the UniFi Access hubs associated with
 
 #### Defined in
 
-[src/access-api.ts:1052](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1052)
+[src/access-api.ts:1052](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L1052)
 
 ___
 
@@ -320,7 +320,7 @@ Returns an array of all the floors from all the UniFi Access hubs associated wit
 
 #### Defined in
 
-[src/access-api.ts:1063](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1063)
+[src/access-api.ts:1063](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L1063)
 
 ___
 
@@ -338,7 +338,7 @@ Returns `true` if the logged in user has administrative privileges, `false` othe
 
 #### Defined in
 
-[src/access-api.ts:1074](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1074)
+[src/access-api.ts:1074](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L1074)
 
 ___
 
@@ -357,7 +357,7 @@ Returns the Access controller name in the following format:
 
 #### Defined in
 
-[src/access-api.ts:1086](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L1086)
+[src/access-api.ts:1086](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L1086)
 
 ## Methods
 
@@ -389,7 +389,7 @@ EventEmitter.[captureRejectionSymbol]
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:129
+node_modules/@types/node/events.d.ts:125
 
 ___
 
@@ -426,7 +426,7 @@ EventEmitter.addListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:562
+node_modules/@types/node/events.d.ts:558
 
 ___
 
@@ -499,7 +499,7 @@ EventEmitter.emit
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:824
+node_modules/@types/node/events.d.ts:820
 
 ___
 
@@ -538,7 +538,7 @@ EventEmitter.eventNames
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:887
+node_modules/@types/node/events.d.ts:883
 
 ___
 
@@ -566,7 +566,7 @@ Valid API endpoints are `bootstrap`, `device`, `login`, `self`, and `websocket`.
 
 #### Defined in
 
-[src/access-api.ts:957](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L957)
+[src/access-api.ts:957](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L957)
 
 ___
 
@@ -649,7 +649,7 @@ process.stdout.write(util.inspect(ufa.bootstrap, { colors: true, depth: null, so
 
 #### Defined in
 
-[src/access-api.ts:514](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L514)
+[src/access-api.ts:514](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L514)
 
 ___
 
@@ -679,7 +679,7 @@ The example above assumed the `deviceInfo` parameter is set to `true`.
 
 #### Defined in
 
-[src/access-api.ts:674](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L674)
+[src/access-api.ts:674](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L674)
 
 ___
 
@@ -704,7 +704,7 @@ Returns the Access device name in the following format:
 
 #### Defined in
 
-[src/access-api.ts:700](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L700)
+[src/access-api.ts:700](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L700)
 
 ___
 
@@ -729,7 +729,7 @@ EventEmitter.getMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:739
+node_modules/@types/node/events.d.ts:735
 
 ___
 
@@ -768,7 +768,7 @@ EventEmitter.listenerCount
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:833
+node_modules/@types/node/events.d.ts:829
 
 ___
 
@@ -812,7 +812,7 @@ EventEmitter.listeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:752
+node_modules/@types/node/events.d.ts:748
 
 ___
 
@@ -871,7 +871,7 @@ if(!(await ufa.login("access-controller.local", "username", "password"))) {
 
 #### Defined in
 
-[src/access-api.ts:152](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L152)
+[src/access-api.ts:152](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L152)
 
 ___
 
@@ -887,7 +887,7 @@ Clear the login credentials and terminate any open connection to the UniFi Acces
 
 #### Defined in
 
-[src/access-api.ts:733](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L733)
+[src/access-api.ts:733](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L733)
 
 ___
 
@@ -924,7 +924,7 @@ EventEmitter.off
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:712
+node_modules/@types/node/events.d.ts:708
 
 ___
 
@@ -986,7 +986,7 @@ EventEmitter.on
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:594
+node_modules/@types/node/events.d.ts:590
 
 ___
 
@@ -1046,7 +1046,7 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:624
+node_modules/@types/node/events.d.ts:620
 
 ___
 
@@ -1094,7 +1094,7 @@ EventEmitter.prependListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:851
+node_modules/@types/node/events.d.ts:847
 
 ___
 
@@ -1140,7 +1140,7 @@ EventEmitter.prependOnceListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:867
+node_modules/@types/node/events.d.ts:863
 
 ___
 
@@ -1202,13 +1202,13 @@ EventEmitter.rawListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:783
+node_modules/@types/node/events.d.ts:779
 
 ___
 
 ### removeAllListeners
 
-▸ **removeAllListeners**(`event?`): `this`
+▸ **removeAllListeners**(`eventName?`): `this`
 
 Removes all listeners, or those of the specified `eventName`.
 
@@ -1222,7 +1222,7 @@ Returns a reference to the `EventEmitter`, so that calls can be chained.
 
 | Name | Type |
 | :------ | :------ |
-| `event?` | `string` \| `symbol` |
+| `eventName?` | `string` \| `symbol` |
 
 #### Returns
 
@@ -1238,7 +1238,7 @@ EventEmitter.removeAllListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:723
+node_modules/@types/node/events.d.ts:719
 
 ___
 
@@ -1353,7 +1353,7 @@ EventEmitter.removeListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:707
+node_modules/@types/node/events.d.ts:703
 
 ___
 
@@ -1369,7 +1369,7 @@ Terminate any open connection to the UniFi Access API.
 
 #### Defined in
 
-[src/access-api.ts:712](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L712)
+[src/access-api.ts:712](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L712)
 
 ___
 
@@ -1400,7 +1400,7 @@ This method should be used when direct access to the Access controller is needed
 
 #### Defined in
 
-[src/access-api.ts:768](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L768)
+[src/access-api.ts:768](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L768)
 
 ___
 
@@ -1435,7 +1435,7 @@ EventEmitter.setMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:733
+node_modules/@types/node/events.d.ts:729
 
 ___
 
@@ -1465,7 +1465,7 @@ are `Infinity` - remain unlocked until reset, `0` - reset lock to secure state, 
 
 #### Defined in
 
-[src/access-api.ts:532](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L532)
+[src/access-api.ts:532](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L532)
 
 ___
 
@@ -1501,7 +1501,7 @@ Use this method to change the configuration of a given Access device or controll
 
 #### Defined in
 
-[src/access-api.ts:623](https://github.com/hjdhjd/unifi-access/blob/ea613dd/src/access-api.ts#L623)
+[src/access-api.ts:623](https://github.com/hjdhjd/unifi-access/blob/e0dcb0f/src/access-api.ts#L623)
 
 ___
 
@@ -1562,7 +1562,7 @@ EventEmitter.addAbortListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:404
+node_modules/@types/node/events.d.ts:400
 
 ___
 
@@ -1616,7 +1616,7 @@ EventEmitter.getEventListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:325
+node_modules/@types/node/events.d.ts:321
 
 ___
 
@@ -1670,7 +1670,7 @@ EventEmitter.getMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:354
+node_modules/@types/node/events.d.ts:350
 
 ___
 
@@ -1715,7 +1715,7 @@ EventEmitter.listenerCount
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:297
+node_modules/@types/node/events.d.ts:293
 
 ___
 
@@ -1802,7 +1802,7 @@ EventEmitter.on
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:275
+node_modules/@types/node/events.d.ts:271
 
 ___
 
@@ -1891,7 +1891,7 @@ ee.emit('foo'); // Prints: Waiting for the event was canceled!
 
 | Name | Type |
 | :------ | :------ |
-| `emitter` | `_NodeEventTarget` |
+| `emitter` | `EventEmitter`\<`DefaultEventMap`\> |
 | `eventName` | `string` \| `symbol` |
 | `options?` | `StaticEventEmitterOptions` |
 
@@ -1909,7 +1909,7 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:210
+node_modules/@types/node/events.d.ts:206
 
 ▸ **once**(`emitter`, `eventName`, `options?`): `Promise`\<`any`[]\>
 
@@ -1931,7 +1931,7 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:215
+node_modules/@types/node/events.d.ts:211
 
 ___
 
@@ -1969,4 +1969,4 @@ EventEmitter.setMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:369
+node_modules/@types/node/events.d.ts:365

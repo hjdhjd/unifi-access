@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 1.0.3 (2024-03-31)
+  * Fix: additional robustification.
+  * Housekeeping.
+
 ## 1.0.2 (2024-03-16)
   * Fix: more robust exception handling.
 
