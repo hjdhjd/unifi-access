@@ -538,7 +538,7 @@ export class AccessApi extends EventEmitter {
     }
 
     // Unlocking only works on hubs.
-    if(device.device_type !== "UAH") {
+    if(device.device_type !== "UAH" && device.device_type !== "UA-ULTRA") {
 
       return false;
     }
@@ -578,12 +578,22 @@ export class AccessApi extends EventEmitter {
       }
     }
 
-    // Request the unlock from Access.
-    const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + endpoint, {
+    if (device.device_type == "UA-ULTRA") {
+      endpoint = '/unlock';
+      const response = await this.retrieve(this.getApiEndpoint("location") + "/"+device.location_id+endpoint, {
 
-      body: payload,
-      method: "PUT"
-    });
+          body: payload,
+          method: "PUT"
+      });	
+      
+    }else{
+       // Request the unlock from Access.
+      const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + endpoint, {
+
+        body: payload,
+        method: "PUT"
+      });
+    }
 
     if(!response?.ok) {
 
@@ -974,6 +984,11 @@ export class AccessApi extends EventEmitter {
       case "device":
 
         endpointSuffix = "device";
+        break;
+
+      case "location":
+
+        endpointSuffix = "location";
         break;
 
       case "login":
