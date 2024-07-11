@@ -578,9 +578,10 @@ export class AccessApi extends EventEmitter {
       }
     }
 
+    let response;
     if (device.device_type == "UA-ULTRA") {
       endpoint = '/unlock';
-      const response = await this.retrieve(this.getApiEndpoint("location") + "/"+device.location_id+endpoint, {
+      response = await this.retrieve(this.getApiEndpoint("location") + "/"+device.location_id+endpoint, {
 
           body: payload,
           method: "PUT"
@@ -588,7 +589,7 @@ export class AccessApi extends EventEmitter {
       
     }else{
        // Request the unlock from Access.
-      const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + endpoint, {
+      response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + endpoint, {
 
         body: payload,
         method: "PUT"
