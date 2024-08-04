@@ -12,7 +12,7 @@
 [![Downloads](https://img.shields.io/npm/dt/unifi-access?color=%230559C9&logo=icloud&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/unifi-access)
 [![Version](https://img.shields.io/npm/v/unifi-access?color=%230559C9&label=UniFi%20Access%20API&logo=ubiquiti&logoColor=%23FFFFFF&style=for-the-badge)](https://www.npmjs.com/package/unifi-access)
 
-## A complete UniFi Access API implementation.
+## Aspiring to a complete UniFi Access API implementation.
 </DIV>
 </SPAN>
 
