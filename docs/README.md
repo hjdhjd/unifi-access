@@ -1,4 +1,6 @@
-unifi-access / [Exports](modules.md)
+**unifi-access** • **Docs**
+
+***
 
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
@@ -14,35 +16,28 @@ unifi-access / [Exports](modules.md)
 </DIV>
 </SPAN>
 
-`unifi-access` is a library that enabled you to connect to and communicate with the Ubiquiti UniFi Access API and ecosystem. [UniFi Access](https://ui.com/door-access) is [Ubiquiti's](https://www.ui.com) enterprise and small business solution for door access with a variety of controller hardware options, locks, and readers for you to choose from, as well as an app which you can use to view, configure and manage your setup.
+`unifi-access` is a library that enabled you to connect to and communicate with the Ubiquiti UniFi Access native API and ecosystem. [UniFi Access](https://www.ui.com/door-access) is [Ubiquiti's](https://www.ui.com) enterprise and small business solution for door access with a variety of controller hardware options, locks, and readers for you to choose from, as well as an app which you can use to manage door security.
 
 ## Why use this library for UniFi Access support?
-UniFi has published an API to support UniFi Access. This library's goal is to make the native UniFi Access API available as well as the more limited API that's officially supported by Ubiquiti to provide a robust library.
+In short - because I use it every day to support a popular [Homebridge](https://homebridge.io) plugin named [homebridge-unifi-access](https://www.npmjs.com/package/homebridge-unifi-access) that I maintain.
+
+Ubiquiti has made a public UniFi Access API available and suitable for end users and large-scale integration scenarios, focused almost entirely on authentication integration and the ability to unlock a door. It works, it's supported by Ubiquiti, and if you're looking for an official solution that's where I would point you to. It's also limited in what it can do and constrained to a handful of use cases.
+
+I prefer native API solutions when possible - they can be more feature-rich and there's a fun challenge in solving the puzzle of how it's all put together.
+
+This implementation is unique: it's a true native library for UniFi Access, in much the same vein as my [UniFi Protect](https://www.npmjs.com/package/unifi-protect) library. It will ultimately provide access to the native capabilities of the Access platform well beyond what Ubiquiti officially supports currently. It's well-tested, it is modern, and most importantly, *it just works*. It's quite easy to add support for UniFi Access in your project using this library, and you can rely on the fact that the code is used by a significant population of users out there who ensure its continued robustness.
+
+This implementation is also in its infancy. More capabilities will come with time.
 
 ### <A NAME="access-contribute"></A>How you can contribute and make this library even better
-This implementation is in its infancy. I welcome inputs and perspective, particularly as I pursue a path to implement both the native Access API and the published one by Ubiquiti.
+This implementation is not yet feature complete. I strive to add support for meaningful features to a broad groups of people in order to avoid any unnecessary cruft and technical debt that may accrue over time.
 
-### Features
-- Native UniFi Access support.
+The native UniFi Access API is undocumented and implementing a library like this one is the result of many hours of trial and error as well as community support.
 
-## Changelog
-* [Changelog](https://github.com/hjdhjd/unifi-access/blob/main/docs/Changelog.md): changes and release history of this library.
+## Modules
 
-## Installation
-To use this library in Node, install it from the command line:
-
-```sh
-npm install unifi-access
-```
-
-## Documentation
-
-Documentation and examples for using this library to access UniFi Access controllers is [available here](https://github.com/hjdhjd/unifi-access/blob/main/docs/classes/AccessApi.md).
-
-## Library Development Dashboard
-This is mostly of interest to the true developer nerds amongst us.
-
-[![License](https://img.shields.io/npm/l/unifi-access?color=%230559C9&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/unifi-access/blob/main/LICENSE.md)
-[![Build Status](https://img.shields.io/github/workflow/status/hjdhjd/unifi-access/Continuous%20Integration?color=%230559C9&logo=github-actions&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/unifi-access/actions?query=workflow%3A%22Continuous+Integration%22)
-[![Dependencies](https://img.shields.io/librariesio/release/npm/unifi-access?color=%230559C9&logo=dependabot&style=for-the-badge)](https://libraries.io/npm/uniti-access)
-[![GitHub commits since latest release (by SemVer)](https://img.shields.io/github/commits-since/hjdhjd/unifi-access/latest?color=%230559C9&logo=github&sort=semver&style=for-the-badge)](https://github.com/hjdhjd/unifi-access/commits/main)
+| Module | Description |
+| ------ | ------ |
+| [access-api](access-api.md) | - |
+| [access-logging](access-logging.md) | - |
+| [access-types](access-types.md) | - |
