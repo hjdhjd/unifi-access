@@ -1,7 +1,7 @@
 {
   "name": "unifi-access",
   "type": "module",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "displayName": "UniFi Access API",
   "description": "A soon-to-be-almost-complete implementation of the UniFi Access API.",
   "author": {
@@ -43,29 +43,31 @@
   },
   "main": "dist/index.js",
   "scripts": {
-    "build": "rimraf ./dist && tsc",
-    "build-docs": " rimraf ./docs/classes ./docs/interfaces ./docs/README.md ./docs/modules.md && npx typedoc",
-    "clean": "rimraf ./dist",
-    "lint": "eslint src/**.ts",
+    "build": "shx rm -rf ./dist && tsc",
+    "build-docs": "shx rm -f ./docs/[^CO]*.md && npx typedoc",
+    "clean": "shx rm -rf ./dist",
+    "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs src/**.ts",
     "postpublish": "npm run clean",
     "prepublishOnly": "npm run lint && npm run build && npm run build-docs",
-    "test": "eslint src/**.ts",
-    "watch": "npm run build && npm link && nodemon"
+    "test": "eslint src/**.ts"
   },
   "devDependencies": {
-    "@stylistic/eslint-plugin": "1.7.0",
-    "@types/node": "20.12.2",
-    "@types/ws": "8.5.10",
-    "@typescript-eslint/eslint-plugin": "7.4.0",
-    "@typescript-eslint/parser": "7.4.0",
-    "eslint": "8.57.0",
-    "rimraf": "5.0.5",
-    "typedoc": "0.25.12",
-    "typedoc-plugin-markdown": "3.17.1",
-    "typescript": "5.4.3"
+    "@stylistic/eslint-plugin": "2.6.1",
+    "@types/node": "22.1.0",
+    "@types/ws": "8.5.12",
+    "eslint": "9.8.0",
+    "homebridge-plugin-utils": "1.7.0",
+    "shx": "0.3.4",
+    "typedoc": "0.26.5",
+    "typedoc-plugin-markdown": "4.2.3",
+    "typescript": "5.5.4",
+    "typescript-eslint": "8.0.0"
   },
   "dependencies": {
-    "@adobe/fetch": "4.1.1",
-    "ws": "8.16.0"
+    "@adobe/fetch": "4.1.8",
+    "ws": "8.18.0"
+  },
+  "optionalDependencies": {
+    "bufferutil": "4.0.8"
   }
 }

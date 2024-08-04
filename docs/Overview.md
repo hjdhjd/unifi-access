@@ -1,7 +1,3 @@
-**unifi-access** • **Docs**
-
-***
-
 <SPAN ALIGN="CENTER" STYLE="text-align:center">
 <DIV ALIGN="CENTER" STYLE="text-align:center">
 
@@ -33,11 +29,3 @@ This implementation is also in its infancy. More capabilities will come with tim
 This implementation is not yet feature complete. I strive to add support for meaningful features to a broad groups of people in order to avoid any unnecessary cruft and technical debt that may accrue over time.
 
 The native UniFi Access API is undocumented and implementing a library like this one is the result of many hours of trial and error as well as community support.
-
-## Modules
-
-| Module | Description |
-| ------ | ------ |
-| [access-api](access-api.md) | - |
-| [access-logging](access-logging.md) | - |
-| [access-types](access-types.md) | - |

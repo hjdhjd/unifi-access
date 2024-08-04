@@ -30,8 +30,8 @@ import util from "node:util";
  * 2. Enumerate the list of UniFi Access devices by calling the {@link bootstrap} property. This contains everything you would want to know about the devices attached to
  *    this particular UniFi Access controller. Information about the Access controller can be accessed through the {@link controller} property.
  *
- * 3. Listen for `message` events emitted by {@link AccessApi} containing all Access controller events, in realtime. They are delivered as {@link AccessEventPacket}
- *    packets, containing the event-specific details.
+ * 3. Listen for `message` events emitted by {@link AccessApi} containing all Access controller events, in realtime. They are delivered as
+ *    {@link access-types.AccessEventPacket} packets, containing the event-specific details.
  *
  * Those are the basics that gets us up and running.
  */
@@ -47,7 +47,7 @@ export class AccessApi extends EventEmitter {
   private apiLastSuccess: number;
   private events: WebSocket | null;
   private eventsTimer: NodeJS.Timeout | null;
-  private fetch: (url: string|Request, options?: RequestOptions) => Promise<Response>;
+  private fetch: (url: Request | string, options?: RequestOptions) => Promise<Response>;
   private headers: Headers;
   private _isAdminUser: boolean;
   private log: AccessLogging;
@@ -100,8 +100,7 @@ export class AccessApi extends EventEmitter {
 
     this.apiErrorCount = 0;
     this.apiLastSuccess = 0;
-    const { fetch } = context({ alpnProtocols: [ ALPNProtocol.ALPN_HTTP2 ], rejectUnauthorized: false, userAgent: "unifi-access" });
-    this.fetch = fetch;
+    this.fetch = context({ alpnProtocols: [ ALPNProtocol.ALPN_HTTP2 ], rejectUnauthorized: false, userAgent: "unifi-access" }).fetch;
     this.headers = new Headers();
     this._isAdminUser = false;
     this.address = "";
@@ -206,6 +205,7 @@ export class AccessApi extends EventEmitter {
     if(!response?.ok) {
 
       this.logout();
+
       return false;
     }
 
@@ -227,6 +227,7 @@ export class AccessApi extends EventEmitter {
 
     // Clear out our login credentials.
     this.logout();
+
     return false;
   }
 
@@ -249,6 +250,7 @@ export class AccessApi extends EventEmitter {
       if(!response?.ok) {
 
         this.logRetry("Unable to retrieve the UniFi Access " + endpoint + " configuration.", retry);
+
         return null;
       }
 
@@ -258,6 +260,7 @@ export class AccessApi extends EventEmitter {
 
         data = await response.json() as AccessApiResponse;
 
+      // @eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch(error) {
 
         data = null;
@@ -388,6 +391,7 @@ export class AccessApi extends EventEmitter {
 
           this.log.error("Unable to process message from the realtime events API.");
           ws.terminate();
+
           return;
         }
 
@@ -418,6 +422,7 @@ export class AccessApi extends EventEmitter {
         } catch(error) {
 
           this.log.error("Error processing message from the events API: %s", error);
+
           return;
         }
 
@@ -538,20 +543,23 @@ export class AccessApi extends EventEmitter {
     }
 
     // Unlocking only works on hubs.
-    if(device.device_type !== "UAH") {
+    if(!device.capabilities?.includes("is_hub")) {
 
       return false;
     }
 
     // Default to the standard unlock endpoint.
     let action = "unlock";
-    let endpoint = "/relay_unlock";
+    let endpoint = this.getApiEndpoint("location") + "/" + device.location_id + "/unlock";
     let payload = {};
 
     // If we've specified a duration, let's specify that.
     if(duration !== undefined) {
 
-      endpoint = "/lock_rule";
+      // eslint-disable-next-line camelcase
+      const params = new URLSearchParams({ get_result: "true" });
+
+      endpoint = this.getApiEndpoint("device") + "/" + device.unique_id + "/lock_rule?" + params.toString();
 
       // Safety check for out of bounds values.
       if(duration < 0) {
@@ -565,11 +573,13 @@ export class AccessApi extends EventEmitter {
 
           action = "lock";
           payload = { type: "reset" };
+
           break;
 
         case Infinity:
 
           payload = { type: "keep_unlock" };
+
           break;
 
         default:
@@ -579,7 +589,7 @@ export class AccessApi extends EventEmitter {
     }
 
     // Request the unlock from Access.
-    const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + endpoint, {
+    const response = await this.retrieve(endpoint, {
 
       body: payload,
       method: "PUT"
@@ -588,6 +598,7 @@ export class AccessApi extends EventEmitter {
     if(!response?.ok) {
 
       this.log.error("%s: Unable to %s the %s: %s.", this.getFullName(device), action, device.display_model, response?.status);
+
       return false;
     }
 
@@ -643,7 +654,7 @@ export class AccessApi extends EventEmitter {
     this.log.debug("%s: %s", this.getFullName(device), util.inspect(payload, { colors: true, depth: null, sorted: true }));
 
     // Update Access with the new configuration.
-    const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + (device.device_type === "UAH" ? "configs" : "settings"), {
+    const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + (device.capabilities?.includes("is_hub") ? "configs" : "settings"), {
 
       body: JSON.stringify(payload),
       method: "PUT"
@@ -652,6 +663,7 @@ export class AccessApi extends EventEmitter {
     if(!response?.ok) {
 
       this.log.error("%s: Unable to configure the %s: %s.", this.getFullName(device), device.device_type, response?.status);
+
       return null;
     }
 
@@ -805,6 +817,7 @@ export class AccessApi extends EventEmitter {
             this.apiErrorCount, ACCESS_API_RETRY_INTERVAL / 60);
           this.apiErrorCount++;
           this.apiLastSuccess = now;
+
           return null;
         }
 
@@ -842,6 +855,7 @@ export class AccessApi extends EventEmitter {
 
         this.logout();
         this.log.error("Invalid login credentials given. Please check your login and password.");
+
         return null;
       }
 
@@ -849,12 +863,14 @@ export class AccessApi extends EventEmitter {
       if(response.status === 403) {
 
         this.log.error("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
+
         return null;
       }
 
       if(!response.ok && isServerSideIssue(response.status)) {
 
         this.log.error("Unable to connect to the Access controller. This is usually temporary and will occur during Access controller reboots and firmware updates.");
+
         return null;
       }
 
@@ -862,11 +878,13 @@ export class AccessApi extends EventEmitter {
       if(!response.ok) {
 
         this.log.error("%s - %s", response.status, response.statusText);
+
         return null;
       }
 
       this.apiLastSuccess = Date.now();
       this.apiErrorCount = 0;
+
       return response;
     } catch(error) {
 
@@ -876,6 +894,7 @@ export class AccessApi extends EventEmitter {
 
         this.log.error("Access controller is taking too long to respond to a request. This error can usually be safely ignored.");
         this.log.debug("Original request was: %s", url);
+
         return null;
       }
 
@@ -887,6 +906,7 @@ export class AccessApi extends EventEmitter {
           case "ERR_HTTP2_STREAM_CANCEL":
 
             this.log.error("Connection refused.");
+
             break;
 
           case "ECONNRESET":
@@ -898,12 +918,14 @@ export class AccessApi extends EventEmitter {
             }
 
             this.log.error("Network connection to Access controller has been reset.");
+
             break;
 
           case "ENOTFOUND":
 
             this.log.error("Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Access controller is correct.",
               this.address);
+
             break;
 
           default:
@@ -913,6 +935,7 @@ export class AccessApi extends EventEmitter {
 
               this.log.error("Error: %s %s.", error.code, error.message);
             }
+
             break;
         }
       }
@@ -964,37 +987,50 @@ export class AccessApi extends EventEmitter {
       case "bootstrap":
 
         endpointSuffix = "devices/topology4";
+
         break;
 
       case "controller":
 
         endpointSuffix = "access/info";
+
         break;
 
       case "device":
 
         endpointSuffix = "device";
+
+        break;
+
+      case "location":
+
+        endpointSuffix = "location";
+
         break;
 
       case "login":
         endpointPrefix = "/api/";
         endpointSuffix = "auth/login";
+
         break;
 
       case "self":
 
         endpointPrefix = "/api/";
         endpointSuffix = "users/self";
+
         break;
 
       case "settings":
 
         endpointSuffix = "settings";
+
         break;
 
       case "websocket":
 
         endpointSuffix = "ws";
+
         break;
 
       default:
