@@ -297,7 +297,7 @@ export class AccessApi extends EventEmitter {
     // Set the list of floors as a convenience.
     this._floors = this._bootstrap?.floors ?? null;
 
-    // If we're boostrapped, connect to the event listener API. Otherwise, we're done.
+    // If we're bootstrapped, connect to the event listener API. Otherwise, we're done.
     if(!this._bootstrap || !(await this.launchEventsWs())) {
 
       return retry ? this.bootstrapController(false) : false;
@@ -683,7 +683,7 @@ export class AccessApi extends EventEmitter {
    * @remarks The example above assumed the `deviceInfo` parameter is set to `true`.
    */
   // Utility to generate a nicely formatted device string.
-  public getDeviceName(device: AccessDeviceConfig, name = device?.name, deviceInfo = false): string {
+  public getDeviceName(device: AccessDeviceConfig, name = device?.alias?.length ? device.alias : device?.name, deviceInfo = false): string {
 
     // Validate our inputs.
     if(!device) {
@@ -1123,9 +1123,9 @@ export class AccessApi extends EventEmitter {
 
     // Our controller string, if it exists, appears as `Controller [Controller Type]`. Otherwise, we appear as `address`.
     // Our controller string, if it exists, appears as `Controller`. Otherwise, we appear as `address`.
-    if(this._bootstrap && this._bootstrap.name) {
+    if(this._bootstrap?.alias?.length || this._bootstrap?.name?.length) {
 
-      return this._bootstrap.name;
+      return this._bootstrap.alias?.length ? this._bootstrap.alias : this._bootstrap.name;
     } else {
 
       return this.address;

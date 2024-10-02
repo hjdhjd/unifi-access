@@ -70,6 +70,7 @@ export type AccessEventDoorbellCancel = {
 // An semi-complete description of the UniFi Access topology JSON, which we use to bootstrap.
 export interface AccessBootstrapConfigInterface {
 
+  alias: string,
   extra_type: string,
   extras: AccessDeviceExtrasConfigInterface,
   floors: AccessFloorConfigInterface[],
