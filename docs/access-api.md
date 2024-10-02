@@ -280,7 +280,7 @@ Utility method that generates a nicely formatted device information string.
 | Parameter | Type | Default value | Description |
 | ------ | ------ | ------ | ------ |
 | `device` | `Readonly`\<[`AccessDeviceConfigInterface`](access-types.md#accessdeviceconfiginterface)\> | `undefined` | Access device. |
-| `name` | `string` | `device.name` | Optional name for the device. Defaults to the device type (e.g. `UA G2 Pro Black`). |
+| `name` | `string` | `...` | Optional name for the device. Defaults to the device type (e.g. `UA G2 Pro Black`). |
 | `deviceInfo` | `boolean` | `false` | Optionally specify whether or not to include the IP address and MAC address in the returned string. Defaults to `false`. |
 
 ###### Returns

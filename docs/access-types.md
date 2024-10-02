@@ -14,6 +14,7 @@
 
 | Property | Modifier | Type |
 | ------ | ------ | ------ |
+| `alias` | `readonly` | `string` |
 | `extra_type` | `readonly` | `string` |
 | `extras` | `readonly` | [`AccessDeviceExtrasConfigInterface`](access-types.md#accessdeviceextrasconfiginterface) |
 | `floors` | `readonly` | [`AccessFloorConfigInterface`](access-types.md#accessfloorconfiginterface)[] |
@@ -35,6 +36,7 @@
 
 | Property | Type |
 | ------ | ------ |
+| `alias` | `string` |
 | `extra_type` | `string` |
 | `extras` | [`AccessDeviceExtrasConfigInterface`](access-types.md#accessdeviceextrasconfiginterface) |
 | `floors` | [`AccessFloorConfigInterface`](access-types.md#accessfloorconfiginterface)[] |
