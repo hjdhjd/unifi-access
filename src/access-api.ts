@@ -1,21 +1,15 @@
-/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * access-api.ts: Our UniFi Access API implementation.
  */
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT } from "./settings.js";
-import { ALPNProtocol, AbortError, FetchError, Headers, Request, RequestOptions, Response, context, timeoutSignal } from "@adobe/fetch";
-import {
-  AccessApiResponse,
-  AccessBootstrapConfig,
-  AccessControllerConfig,
-  AccessDeviceConfig,
-  AccessDeviceConfigPayload,
-  AccessDoorConfig,
-  AccessFloorConfig
-} from "./access-types.js";
-import { AccessLogging } from "./access-logging.js";
+import { ALPNProtocol, AbortError, FetchError, Headers, type Request, type RequestOptions, type Response, context, timeoutSignal } from "@adobe/fetch";
+import type { AccessApiResponse, AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload, AccessDoorConfig,
+  AccessFloorConfig } from "./access-types.js";
+import type { AccessLogging } from "./access-logging.js";
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
+import { toCamelCase } from "homebridge-plugin-utils";
 import util from "node:util";
 
 /**
@@ -289,10 +283,28 @@ export class AccessApi extends EventEmitter {
     }
 
     // Retrieve the list of doors from all the floors the user has configured.
-    this._doors = this._bootstrap?.floors?.filter(x => x).flatMap(x => x.doors) ?? null;
+    this._doors = this._bootstrap?.floors?.flatMap(x => x.doors) ?? null;
 
     // Retrieve the list of devices from all the doors the user has configured.
-    this._devices = this._doors?.filter(x => x).map(x => x.device_groups).flat(2) ?? null;
+    this._devices = this._doors?.map(x => x.device_groups).flat(2) ?? null;
+
+    // Account for Enterprise Access Hubs. What we do here is append to the devices array a transformed version of each extension (which in the case of an EAH amounts to
+    // the equivalent of a hub / lock) attached to it. We transform the configuration to make it appear like it's a typical UAH for our purposes, and we map the name and
+    // unlock location accordingly.
+    /* eslint-disable camelcase */
+    const eahDevices = this._bootstrap?.device_groups?.flat().filter(device => device.device_type === "UAH-Ent").
+      flatMap(({ extensions = [], alias, display_model, location_id, ...device }) => extensions.
+        map(({ target_name, target_value, ...extension }) => ({...device, ...extension, alias: target_name ?? "Unknown",
+          display_model: display_model + ((extension.source_id !== undefined) ? " " + toCamelCase(extension.source_id) : ""),
+          location_id: target_value ?? location_id, name: alias })));
+    /* eslint-enable camelcase */
+
+    // Add EAH devices, if we have them.
+    if(eahDevices?.length) {
+
+      this._devices ??= [];
+      this._devices.push(...eahDevices);
+    }
 
     // Set the list of floors as a convenience.
     this._floors = this._bootstrap?.floors ?? null;
