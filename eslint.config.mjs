@@ -1,4 +1,4 @@
-/* Copyright(C) 2017-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2017-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * eslint.config.mjs: Linting defaults for Homebridge plugins.
  */
@@ -13,7 +13,7 @@ export default ts.config(
 
   {
 
-    files: [ "src/**.ts" ],
+    files: [ "src/**.ts", "src/util/**.ts" ],
     rules: {
 
       ...hbPluginUtils.rules.ts
@@ -22,7 +22,7 @@ export default ts.config(
 
   {
 
-    files: [ "ui/lib/**.mjs", "eslint.config.mjs" ],
+    files: [ "eslint.config.mjs" ],
     rules: {
 
       ...hbPluginUtils.rules.js
@@ -31,7 +31,7 @@ export default ts.config(
 
   {
 
-    files: [ "src/**.ts", "eslint.config.mjs" ],
+    files: [ "src/**.ts", "src/util/**.ts", "eslint.config.mjs" ],
 
     ignores: [ "dist" ],
 

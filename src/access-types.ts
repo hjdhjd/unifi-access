@@ -1,8 +1,8 @@
-/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * access-types.ts: Type definitions for UniFi Access.
  */
-import { DeepPartial } from "homebridge-plugin-utils";
+import type { DeepPartial } from "homebridge-plugin-utils";
 
 /**
  * UniFi Access API response JSON.
@@ -71,6 +71,7 @@ export type AccessEventDoorbellCancel = {
 export interface AccessBootstrapConfigInterface {
 
   alias: string,
+  device_groups: AccessDeviceConfigInterface[],
   extra_type: string,
   extras: AccessDeviceExtrasConfigInterface,
   floors: AccessFloorConfigInterface[],
@@ -186,6 +187,22 @@ export interface AccessDeviceConfigInterface {
     work_time_id: string,
     extras: AccessDeviceExtrasConfigInterface
   },
+  extensions?: {
+
+    device_id: string,
+    extension_name: string,
+    source_id: string,
+    target_config: {
+
+      config_key: string,
+      config_tag: string,
+      config_value: boolean | number | string
+    }[],
+    target_name: string,
+    target_type: string,
+    target_value: string,
+    unique_id: string
+  }[],
   firmware_update_time: number,
   firmware: string,
   floor: {
@@ -217,6 +234,7 @@ export interface AccessDeviceConfigInterface {
   is_connected: boolean,
   is_managed: boolean,
   is_online: boolean,
+  is_rebooting: boolean,
   location: {
 
     extra_type: string,
@@ -241,6 +259,7 @@ export interface AccessDeviceConfigInterface {
   revision: number,
   security_check: boolean,
   source: string,
+  source_id: string,
   start_time: number,
   unique_id: string,
   update: string,

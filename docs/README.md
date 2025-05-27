@@ -1,4 +1,4 @@
-**unifi-access** • **Docs**
+**unifi-access**
 
 ***
 

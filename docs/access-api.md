@@ -1,4 +1,4 @@
-[**unifi-access**](README.md) • **Docs**
+[**unifi-access**](README.md)
 
 ***
 
@@ -16,12 +16,12 @@ trail and error with the Access web interface as well as insight from the public
 
 Here's how the UniFi Access API works:
 
-1. [Login](access-api.md#login) to the UniFi Access controller and acquire security credentials for further calls to the API.
+1. [Login](#login) to the UniFi Access controller and acquire security credentials for further calls to the API.
 
-2. Enumerate the list of UniFi Access devices by calling the [bootstrap](access-api.md#bootstrap) property. This contains everything you would want to know about the devices attached to
-   this particular UniFi Access controller. Information about the Access controller can be accessed through the [controller](access-api.md#controller) property.
+2. Enumerate the list of UniFi Access devices by calling the [bootstrap](#bootstrap) property. This contains everything you would want to know about the devices attached to
+   this particular UniFi Access controller. Information about the Access controller can be accessed through the [controller](#controller) property.
 
-3. Listen for `message` events emitted by [AccessApi](access-api.md#accessapi) containing all Access controller events, in realtime. They are delivered as
+3. Listen for `message` events emitted by [AccessApi](#accessapi) containing all Access controller events, in realtime. They are delivered as
    [access-types.AccessEventPacket](access-types.md#accesseventpacket) packets, containing the event-specific details.
 
 Those are the basics that gets us up and running.
@@ -32,10 +32,10 @@ Those are the basics that gets us up and running.
 
 #### Constructors
 
-##### new AccessApi()
+##### Constructor
 
 ```ts
-new AccessApi(log?): AccessApi
+new AccessApi(log?): AccessApi;
 ```
 
 Create an instance of the UniFi Access API.
@@ -44,11 +44,11 @@ Create an instance of the UniFi Access API.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `log`? | [`AccessLogging`](access-logging.md#accesslogging) | Logging functions to use. |
+| `log?` | [`AccessLogging`](access-logging.md#accesslogging) | Logging functions to use. |
 
 ###### Returns
 
-[`AccessApi`](access-api.md#accessapi)
+[`AccessApi`](#accessapi)
 
 ###### Default Value
 
@@ -56,84 +56,113 @@ Create an instance of the UniFi Access API.
 
 ###### Overrides
 
-`EventEmitter.constructor`
+```ts
+EventEmitter.constructor
+```
 
 #### Accessors
 
 ##### bootstrap
 
+###### Get Signature
+
 ```ts
-get bootstrap(): null | Readonly<AccessBootstrapConfigInterface>
+get bootstrap(): 
+  | null
+| Readonly<AccessBootstrapConfigInterface>;
 ```
 
 Access the Access controller bootstrap JSON.
 
 ###### Returns
 
-`null` \| `Readonly`\<[`AccessBootstrapConfigInterface`](access-types.md#accessbootstrapconfiginterface)\>
+  \| `null`
+  \| `Readonly`\<[`AccessBootstrapConfigInterface`](access-types.md#accessbootstrapconfiginterface)\>
 
 Returns the bootstrap JSON if the Access controller has been bootstrapped, `null` otherwise.
 
 ##### controller
 
+###### Get Signature
+
 ```ts
-get controller(): null | Readonly<AccessControllerConfigInterface>
+get controller(): 
+  | null
+| Readonly<AccessControllerConfigInterface>;
 ```
 
 Access the Access controller information JSON.
 
 ###### Returns
 
-`null` \| `Readonly`\<[`AccessControllerConfigInterface`](access-types.md#accesscontrollerconfiginterface)\>
+  \| `null`
+  \| `Readonly`\<[`AccessControllerConfigInterface`](access-types.md#accesscontrollerconfiginterface)\>
 
 Returns the controller information JSON if the Access controller has been bootstrapped, `null` otherwise.
 
 ##### devices
 
+###### Get Signature
+
 ```ts
-get devices(): null | Readonly<AccessDeviceConfigInterface>[]
+get devices(): 
+  | null
+  | Readonly<AccessDeviceConfigInterface>[];
 ```
 
 Access the Access controller list of devices.
 
 ###### Returns
 
-`null` \| `Readonly`\<[`AccessDeviceConfigInterface`](access-types.md#accessdeviceconfiginterface)\>[]
+  \| `null`
+  \| `Readonly`\<[`AccessDeviceConfigInterface`](access-types.md#accessdeviceconfiginterface)\>[]
 
 Returns an array of all the devices from all the UniFi Access hubs associated with this controller, `null` otherwise.
 
 ##### doors
 
+###### Get Signature
+
 ```ts
-get doors(): null | Readonly<AccessDoorConfigInterface>[]
+get doors(): 
+  | null
+  | Readonly<AccessDoorConfigInterface>[];
 ```
 
 Access the Access controller list of doors.
 
 ###### Returns
 
-`null` \| `Readonly`\<[`AccessDoorConfigInterface`](access-types.md#accessdoorconfiginterface)\>[]
+  \| `null`
+  \| `Readonly`\<[`AccessDoorConfigInterface`](access-types.md#accessdoorconfiginterface)\>[]
 
 Returns an array of all the doors from all the UniFi Access hubs associated with this controller, `null` otherwise.
 
 ##### floors
 
+###### Get Signature
+
 ```ts
-get floors(): null | Readonly<AccessFloorConfigInterface>[]
+get floors(): 
+  | null
+  | Readonly<AccessFloorConfigInterface>[];
 ```
 
 Access the Access controller list of floors.
 
 ###### Returns
 
-`null` \| `Readonly`\<[`AccessFloorConfigInterface`](access-types.md#accessfloorconfiginterface)\>[]
+  \| `null`
+  \| `Readonly`\<[`AccessFloorConfigInterface`](access-types.md#accessfloorconfiginterface)\>[]
 
 Returns an array of all the floors from all the UniFi Access hubs associated with this controller, `null` otherwise.
 
 ##### isAdminUser
 
+###### Get Signature
+
 ```ts
-get isAdminUser(): boolean
+get isAdminUser(): boolean;
 ```
 
 Utility method that returns whether the credentials that were used to login to the Access controller have administrative privileges or not.
@@ -146,8 +175,10 @@ Returns `true` if the logged in user has administrative privileges, `false` othe
 
 ##### name
 
+###### Get Signature
+
 ```ts
-get name(): string
+get name(): string;
 ```
 
 Utility method that returns a nicely formatted version of the Access controller name.
@@ -164,7 +195,7 @@ Returns the Access controller name in the following format:
 ##### getApiEndpoint()
 
 ```ts
-getApiEndpoint(endpoint): string
+getApiEndpoint(endpoint): string;
 ```
 
 Return an API endpoint for the requested endpoint type.
@@ -188,7 +219,7 @@ Valid API endpoints are `bootstrap`, `device`, `login`, `self`, and `websocket`.
 ##### getBootstrap()
 
 ```ts
-getBootstrap(): Promise<boolean>
+getBootstrap(): Promise<boolean>;
 ```
 
 Retrieve the bootstrap JSON from a UniFi Access controller.
@@ -202,7 +233,7 @@ Returns a promise that will resolve to `true` if successful and `false` otherwis
 ###### Remarks
 
 A `bootstrap` event will be emitted each time this method is successfully called, with the AccessToplogyConfig JSON as an argument. As a
-convenience, the [devices](access-api.md#devices), [doors](access-api.md#doors), and [floors](access-api.md#floors) properties will be populated as well.
+convenience, the [devices](#devices), [doors](#doors), and [floors](#floors) properties will be populated as well.
 
 ###### Example
 
@@ -237,7 +268,7 @@ if(!(await ufa.getBootstrap())) {
 }
 ```
 
-Alternatively, you can access the bootstrap JSON directly through the [bootstrap](access-api.md#bootstrap) accessor:
+Alternatively, you can access the bootstrap JSON directly through the [bootstrap](#bootstrap) accessor:
 
 ```ts
 import { AccessApi } from "unifi-access";
@@ -270,7 +301,7 @@ process.stdout.write(util.inspect(ufa.bootstrap, { colors: true, depth: null, so
 getDeviceName(
    device, 
    name, 
-   deviceInfo): string
+   deviceInfo): string;
 ```
 
 Utility method that generates a nicely formatted device information string.
@@ -279,7 +310,7 @@ Utility method that generates a nicely formatted device information string.
 
 | Parameter | Type | Default value | Description |
 | ------ | ------ | ------ | ------ |
-| `device` | `Readonly`\<[`AccessDeviceConfigInterface`](access-types.md#accessdeviceconfiginterface)\> | `undefined` | Access device. |
+| `device` | [`AccessDeviceConfig`](access-types.md#accessdeviceconfig) | `undefined` | Access device. |
 | `name` | `string` | `...` | Optional name for the device. Defaults to the device type (e.g. `UA G2 Pro Black`). |
 | `deviceInfo` | `boolean` | `false` | Optionally specify whether or not to include the IP address and MAC address in the returned string. Defaults to `false`. |
 
@@ -296,7 +327,7 @@ The example above assumed the `deviceInfo` parameter is set to `true`.
 ##### getFullName()
 
 ```ts
-getFullName(device): string
+getFullName(device): string;
 ```
 
 Utility method that generates a combined, nicely formatted device and controller string.
@@ -305,7 +336,7 @@ Utility method that generates a combined, nicely formatted device and controller
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `device` | `Readonly`\<[`AccessDeviceConfigInterface`](access-types.md#accessdeviceconfiginterface)\> | Access device. |
+| `device` | [`AccessDeviceConfig`](access-types.md#accessdeviceconfig) | Access device. |
 
 ###### Returns
 
@@ -320,7 +351,7 @@ Returns the Access device name in the following format:
 login(
    address, 
    username, 
-password): Promise<boolean>
+password): Promise<boolean>;
 ```
 
 Execute a login attempt to the UniFi Access API.
@@ -375,7 +406,7 @@ if(!(await ufa.login("access-controller.local", "username", "password"))) {
 ##### logout()
 
 ```ts
-logout(): void
+logout(): void;
 ```
 
 Clear the login credentials and terminate any open connection to the UniFi Access API.
@@ -387,7 +418,7 @@ Clear the login credentials and terminate any open connection to the UniFi Acces
 ##### reset()
 
 ```ts
-reset(): void
+reset(): void;
 ```
 
 Terminate any open connection to the UniFi Access API.
@@ -402,7 +433,7 @@ Terminate any open connection to the UniFi Access API.
 retrieve(
    url, 
    options, 
-logErrors): Promise<null | Response>
+logErrors): Promise<null | Response>;
 ```
 
 Execute an HTTP fetch request to the Access controller.
@@ -429,7 +460,7 @@ This method should be used when direct access to the Access controller is needed
 ##### unlock()
 
 ```ts
-unlock(device, duration?): Promise<boolean>
+unlock(device, duration?): Promise<boolean>;
 ```
 
 Send an unlock command to the Access controller.
@@ -438,8 +469,8 @@ Send an unlock command to the Access controller.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `device` | `Readonly`\<[`AccessDeviceConfigInterface`](access-types.md#accessdeviceconfiginterface)\> | Access device. |
-| `duration`? | `number` | Unlock interval in minutes. |
+| `device` | [`AccessDeviceConfig`](access-types.md#accessdeviceconfig) | Access device. |
+| `duration?` | `number` | Unlock interval in minutes. |
 
 ###### Returns
 
@@ -455,7 +486,7 @@ are `Infinity` - remain unlocked until reset, `0` - reset lock to secure state, 
 ##### updateDevice()
 
 ```ts
-updateDevice<DeviceType>(device, payload): Promise<null | DeviceType>
+updateDevice<DeviceType>(device, payload): Promise<null | DeviceType>;
 ```
 
 Update an Access device's configuration on the UniFi Access controller.
@@ -471,7 +502,7 @@ Update an Access device's configuration on the UniFi Access controller.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `device` | `DeviceType` | Access device. |
-| `payload` | `DeepPartial`\<[`AccessDeviceConfigInterface`](access-types.md#accessdeviceconfiginterface)\> | Device configuration payload to upload, usually a subset of the device-specific configuration JSON. |
+| `payload` | [`AccessDeviceConfigPayload`](access-types.md#accessdeviceconfigpayload) | Device configuration payload to upload, usually a subset of the device-specific configuration JSON. |
 
 ###### Returns
 
