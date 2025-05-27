@@ -52,7 +52,7 @@
     "clean": "shx rm -rf ./dist",
     "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs src/**.ts src/util/**.ts",
     "postpublish": "npm run clean",
-    "prepublishOnly": "npm run lint && npm run build && npm run build-docs",
+    "prepublishOnly": "npm run lint && npm run build",
     "test": "eslint src/**.ts"
   },
   "devDependencies": {
