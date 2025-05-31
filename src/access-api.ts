@@ -9,7 +9,6 @@ import type { AccessApiResponse, AccessBootstrapConfig, AccessControllerConfig, 
 import type { AccessLogging } from "./access-logging.js";
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
-import { toCamelCase } from "homebridge-plugin-utils";
 import util from "node:util";
 
 /**
@@ -295,7 +294,7 @@ export class AccessApi extends EventEmitter {
     const eahDevices = this._bootstrap?.device_groups?.flat().filter(device => device.device_type === "UAH-Ent").
       flatMap(({ extensions = [], alias, display_model, location_id, ...device }) => extensions.
         map(({ target_name, target_value, ...extension }) => ({...device, ...extension, alias: target_name ?? "Unknown",
-          display_model: display_model + ((extension.source_id !== undefined) ? " " + toCamelCase(extension.source_id) : ""),
+          display_model: display_model + ((extension.source_id !== undefined) ? " " + extension.source_id.replace(/(^\w|\s+\w)/g, match => match.toUpperCase()) : ""),
           location_id: target_value ?? location_id, name: alias })));
     /* eslint-enable camelcase */
 

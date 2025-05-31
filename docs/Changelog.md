@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 1.3.1 (2025-05-31)
+  * Improvement: remove the dependency on homebridge-plugin-utils.
+  * Housekeeping.
+
 ## 1.3.0 (2025-05-27)
   * New feature: utility appication, ufa, to allow command-line access to the UniFi Access API.
   * New feature: initial support for Enterprise Access Hubs.
