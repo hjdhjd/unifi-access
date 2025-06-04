@@ -368,3 +368,17 @@ export type AccessDoorConfigPayload = DeepPartial<AccessDoorConfigInterface>;
 export type AccessFloorConfig = Readonly<AccessFloorConfigInterface>;
 /** @interface */
 export type AccessFloorConfigPayload = DeepPartial<AccessFloorConfigInterface>;
+
+// Reader access method types
+export enum AccessMethod {
+  NFC = "nfc",
+  HAND_WAVE = "hand-wave"
+}
+
+export interface AccessDeviceMethodPayload {
+  access_method: AccessMethod;
+  configs: {
+    key: string;
+    value: string;
+  }[];
+}
