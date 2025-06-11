@@ -5,7 +5,8 @@
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT } from "./settings.js";
 import { ALPNProtocol, AbortError, FetchError, Headers, type Request, type RequestOptions, type Response, context, timeoutSignal } from "@adobe/fetch";
 import type { AccessApiResponse, AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload, AccessDoorConfig,
-  AccessFloorConfig } from "./access-types.js";
+  AccessFloorConfig, AccessDeviceMethodPayload } from "./access-types.js";
+import { AccessMethod } from "./access-types.js";
 import type { AccessLogging } from "./access-logging.js";
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
@@ -1147,5 +1148,70 @@ export class AccessApi extends EventEmitter {
 
       return this.address;
     }
+  }
+
+  /**
+   * Update a reader device's access method.
+   *
+   * @param device - The reader device to update.
+   * @param accessMethod - The access method to set (NFC or hand-wave).
+   *
+   * @returns Returns a promise that will resolve to true if successful, and false otherwise.
+   */
+  public async setReaderAccessMethod(device: AccessDeviceConfig, accessMethod: AccessMethod): Promise<boolean> {
+    this.log.info("Setting reader access method for %s to %s", device.alias ?? device.model, accessMethod);
+    // No device object, we're done.
+    if(!device) {
+      this.log.error("No device object provided");
+      return false;
+    }
+
+    // Log us in if needed.
+    if(!(await this.loginController())) {
+      this.log.error("Failed to login to controller");
+      return false;
+    }
+
+    // Check if this is a reader device with hand-wave capability
+    if(!device.capabilities?.includes("is_reader")) {
+      this.log.error("%s: Device is not a reader.", this.getFullName(device));
+      return false;
+    }
+
+    // Check for hand-wave capability if we're trying to enable it
+    if(accessMethod === AccessMethod.HAND_WAVE && !device.capabilities?.includes("hand_wave")) {
+      this.log.error("%s: Device does not support hand-wave access method.", this.getFullName(device));
+      return false;
+    }
+
+    // Prepare the payload based on the Python implementation
+    const payload = [
+      {
+        key: "nfc",
+        tag: "open_door_mode",
+        value: accessMethod === AccessMethod.NFC ? "yes" : "no"
+      },
+      {
+        key: "wave",
+        tag: "open_door_mode",
+        value: accessMethod === AccessMethod.HAND_WAVE ? "yes" : "no"
+      }
+    ];
+
+    this.log.debug("%s: Setting access method to %s", this.getFullName(device), accessMethod);
+
+    // Update Access with the new configuration using the correct endpoint
+    const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + "/configs", {
+      body: JSON.stringify(payload),
+      method: "PUT"
+    });
+
+    if(!response?.ok) {
+      this.log.error("%s: Unable to update access method: %s.", this.getFullName(device), response?.status);
+      return false;
+    }
+
+    this.log.info("Successfully set access method for %s", device.device_type);
+    return true;
   }
 }
