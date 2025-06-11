@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 1.3.2 (2025-06-11)
+  * Fix: increase our robustness against potential weirdness in what the Access API gives us to work with.
+  * Housekeeping.
+
 ## 1.3.1 (2025-05-31)
   * Improvement: remove the dependency on homebridge-plugin-utils.
   * Housekeeping.
