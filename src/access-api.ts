@@ -282,10 +282,16 @@ export class AccessApi extends EventEmitter {
     }
 
     // Retrieve the list of doors from all the floors the user has configured.
-    this._doors = this._bootstrap?.floors?.flatMap(x => x.doors) ?? null;
+    this._doors = this._bootstrap?.floors?.flatMap(floor => floor.doors)?.filter(Boolean) ?? null;
+
+    // In case we end up with an empty floors array due to changes in the Access API, we can conceivably end up with an empty array here.
+    this._doors = this._doors?.length ? this._doors : null;
 
     // Retrieve the list of devices from all the doors the user has configured.
-    this._devices = this._doors?.map(x => x.device_groups).flat(2) ?? null;
+    this._devices = this._doors?.map(x => x.device_groups ?? []).flat(2).filter(Boolean) ?? null;
+
+    // In case we end up with an empty floors array due to changes in the Access API, we can conceivably end up with an empty array here.
+    this._devices = this._devices?.length ? this._devices : null;
 
     // Account for Enterprise Access Hubs. What we do here is append to the devices array a transformed version of each extension (which in the case of an EAH amounts to
     // the equivalent of a hub / lock) attached to it. We transform the configuration to make it appear like it's a typical UAH for our purposes, and we map the name and
