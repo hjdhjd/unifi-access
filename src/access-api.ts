@@ -46,6 +46,7 @@ export class AccessApi extends EventEmitter {
   private log: AccessLogging;
   private password: string;
   private username: string;
+  private apikey: string;
 
   /**
    * Create an instance of the UniFi Access API.
@@ -99,6 +100,7 @@ export class AccessApi extends EventEmitter {
     this.address = "";
     this.username = "";
     this.password = "";
+    this.apikey = "";
   }
 
   /**
@@ -159,11 +161,17 @@ export class AccessApi extends EventEmitter {
     return loginSuccess;
   }
 
-  // Login to the UniFi Access API.
+   // Login to the UniFi Access API.
   private async loginController(): Promise<boolean> {
 
     // If we're already logged in, we're done.
     if(this.headers.has("Cookie") && this.headers.has("X-CSRF-Token")) {
+
+      return true;
+    }
+
+    // If we're using apikey, we're done.
+    if(this.apikey) {
 
       return true;
     }
@@ -222,6 +230,63 @@ export class AccessApi extends EventEmitter {
     this.logout();
 
     return false;
+  }
+
+
+ /**
+   * Execute a login attempt to the UniFi Access API.
+   *
+   * @param address - Address of the UniFi Access controller, expressed as an FQDN or IP address.
+   * @param apikey   - Apikey for the controller.
+   *
+   * @returns Returns a promise that will resolve to `true` if successful and `false` otherwise.
+   *
+   * @remarks A `login` event will be emitted each time this method is called, with the result of the attempt as an argument.
+   *
+   * @example
+   * Login to the Access controller. You can selectively choose to either `await` the promise that is returned by `login`, or subscribe to the `login` event.
+   *
+   * ```ts
+   * import { AccessApi } from "unifi-access";
+   *
+   * // Create a new Access API instance.
+   * const ufp = new AccessApi();
+   *
+   * // Set a listener to wait for the login event to occur.
+   * ufp.once("login", (successfulLogin: boolean) => {
+   *
+   *   // Indicate if we are successful.
+   *   if(successfulLogin) {
+   *
+   *     console.log("Logged in successfully.");
+   *     process.exit(0);
+   *   }
+   * });
+   *
+   * // Login to the Access controller.
+   * if(!(await ufa.login("access-controller.local", "username", "password"))) {
+   *
+   *   console.log("Invalid login credentials.");
+   *   process.exit(0);
+   * };
+   * ```
+   */
+  // Login to the Access controller and terminate any existing login we might have.
+ public async loginapi(address: string, apikey: string): Promise<boolean> {
+
+    this.logout();
+
+    this.address = address;
+    this.apikey = apikey;
+
+    // Let's attempt to login.
+    const loginSuccess = await this.loginController();
+
+    // Publish the result to our listeners
+    this.emit("login", loginSuccess);
+
+    // Return the status of our login attempt.
+    return loginSuccess;
   }
 
   // Attempt to retrieve the bootstrap configuration from the Access controller.
@@ -348,7 +413,8 @@ export class AccessApi extends EventEmitter {
 
         headers: {
 
-          Cookie: this.headers.get("Cookie") ?? ""
+          Cookie: this.headers.get("Cookie") ?? "",
+          ...(this.apikey ? {'X-API-KEY': this.apikey} : null),
         },
 
         rejectUnauthorized: false
@@ -773,6 +839,9 @@ export class AccessApi extends EventEmitter {
     // Initialize the headers we need.
     this.headers = new Headers();
     this.headers.set("Content-Type", "application/json");
+    if (this.apikey) {
+      this.headers.set("X-API-KEY", this.apikey);
+    }
 
     // Restore the CSRF token if we have one.
     if(csrfToken) {
