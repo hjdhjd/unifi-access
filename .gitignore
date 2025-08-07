@@ -124,3 +124,8 @@ dist
 .yarn/unplugged
 .yarn/build-state.yml
 .pnp.*
+
+# local config files
+/.editorconfig
+/.prettierrc
+/.vscode
