@@ -161,7 +161,7 @@ export class AccessApi extends EventEmitter {
     return loginSuccess;
   }
 
-   // Login to the UniFi Access API.
+  // Login to the UniFi Access API.
   private async loginController(): Promise<boolean> {
 
     // If we're already logged in, we're done.
@@ -233,7 +233,7 @@ export class AccessApi extends EventEmitter {
   }
 
 
- /**
+  /**
    * Execute a login attempt to the UniFi Access API.
    *
    * @param address - Address of the UniFi Access controller, expressed as an FQDN or IP address.
@@ -272,7 +272,7 @@ export class AccessApi extends EventEmitter {
    * ```
    */
   // Login to the Access controller and terminate any existing login we might have.
- public async loginapi(address: string, apikey: string): Promise<boolean> {
+  public async loginapi(address: string, apikey: string): Promise<boolean> {
 
     this.logout();
 
@@ -318,7 +318,7 @@ export class AccessApi extends EventEmitter {
 
         data = await response.json() as AccessApiResponse;
 
-      // @eslint-disable-next-line @typescript-eslint/no-unused-vars
+        // @eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch(error) {
 
         data = null;
@@ -397,7 +397,7 @@ export class AccessApi extends EventEmitter {
 
     // Log us in if needed.
     if(!(await this.loginController())) {
-
+  
       return false;
     }
 
@@ -414,7 +414,7 @@ export class AccessApi extends EventEmitter {
         headers: {
 
           Cookie: this.headers.get("Cookie") ?? "",
-          ...(this.apikey ? {'X-API-KEY': this.apikey} : null),
+          ...(this.apikey ? {"X-API-KEY": this.apikey} : null)
         },
 
         rejectUnauthorized: false
@@ -491,6 +491,7 @@ export class AccessApi extends EventEmitter {
 
             this.log.error("Failed to detect heartbeat from the events API. Resetting the connection.");
             this.reset();
+            this.launchEventsWs().catch(() => {});
           }, 1000 * 10);
 
           return;
@@ -521,6 +522,7 @@ export class AccessApi extends EventEmitter {
 
         this.log.error("Failed to detect heartbeat from the events API. Resetting the connection.");
         this.reset();
+        this.launchEventsWs().catch(() => {});
       }, 1000 * 10);
     } catch(error) {
 
