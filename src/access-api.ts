@@ -293,6 +293,13 @@ export class AccessApi extends EventEmitter {
     // In case we end up with an empty floors array due to changes in the Access API, we can conceivably end up with an empty array here.
     this._devices = this._devices?.length ? this._devices : null;
 
+    // UA 4.x fallback: some controllers expose device_groups at the top level without floors/doors.
+    if(!this._devices && Array.isArray(this._bootstrap?.device_groups)) {
+
+      this._devices = this._bootstrap.device_groups.flat().filter(Boolean);
+      this._devices = this._devices?.length ? this._devices : null;
+    }
+
     // Account for Enterprise Access Hubs. What we do here is append to the devices array a transformed version of each extension (which in the case of an EAH amounts to
     // the equivalent of a hub / lock) attached to it. We transform the configuration to make it appear like it's a typical UAH for our purposes, and we map the name and
     // unlock location accordingly.
