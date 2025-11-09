@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file. This projec
 
 ## 1.4.0 (2025-11-09)
   * Behavior change: we now use undici for the underlying network stack, resulting in some adjustments to our API options.
+  * New feature: UniFi Access Gate Hub support.
   * Housekeeping.
 
 ## 1.3.2 (2025-06-11)
