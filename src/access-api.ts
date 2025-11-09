@@ -626,8 +626,8 @@ export class AccessApi extends EventEmitter {
       }
     } else {
 
-      // For undefined duration, use the generic location unlock endpoint (for gates).
-      // Prefer the door/gate location from extensions over the device's building location.
+      // For undefined duration, use the generic location unlock endpoint (for gates). We prefer the door/gate location from extensions over the device's building
+      // location.
       const locationId = device.extensions?.find(ext => ext.extension_name === "port_setting")?.target_value ?? device.location_id;
 
       endpoint = this.getApiEndpoint("location") + "/" + locationId + "/unlock";
