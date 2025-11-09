@@ -409,12 +409,8 @@ export class AccessApi extends EventEmitter {
       // Handle any websocket errors.
       ws.addEventListener("error", (event: ErrorEvent): void => {
 
-        this.log.error("WS ERROR CAUSE: %s", event.error.cause);
-        this.log.error("WS ERROR CODE: %s", (event.error.cause as NodeJS.ErrnoException).code);
-        this.log.error("CAUSE INSPECT: %s", util.inspect(event.error.cause), { colors: true, depth: null, sorted: true });
-        this.log.error("--");
+        this.log.error("Events API error: %s", event.error.cause);
         this.log.error(util.inspect(event.error, { colors: true, depth: null, sorted: true }));
-        this.log.error("--");
 
         ws.close();
       }, { once: true });
