@@ -329,7 +329,7 @@ export class AccessApi extends EventEmitter {
     if(!this._devices && Array.isArray(this._bootstrap?.device_groups)) {
 
       this._devices = this._bootstrap.device_groups.flat().filter(Boolean);
-      this._devices = this._devices?.length ? this._devices : null;
+      this._devices = this._devices.length ? this._devices : null;
     }
 
     // Account for Enterprise Access Hubs. What we do here is append to the devices array a transformed version of each extension (which in the case of an EAH amounts to
