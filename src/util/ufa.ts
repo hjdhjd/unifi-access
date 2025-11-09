@@ -118,12 +118,12 @@ switch(process.argv.length) {
 
           if(process.argv.length === 5) {
 
-            if(!["event", "event_object_id"].includes(process.argv[3])) {
+            if(![ "event", "event_object_id" ].includes(process.argv[3])) {
 
               return;
             }
 
-            if(packet[process.argv[3]]?.toLowerCase() !== process.argv[4]?.toLowerCase()) {
+            if(packet[process.argv[3]].toLowerCase() !== process.argv[4]?.toLowerCase()) {
 
               return;
             }
@@ -156,7 +156,7 @@ switch(process.argv.length) {
           //eslint-disable-next-line no-await-in-loop
           const response = await ufa.retrieve(ufa.getApiEndpoint("device") + "/" + device.unique_id + "/restart", { body: JSON.stringify({}), method: "PUT" });
 
-          if(!response?.ok) {
+          if(!ufa.responseOk(response?.statusCode)) {
 
             log.error("%s: unable to reboot: %s", ufa.getDeviceName(device), response);
 
@@ -199,7 +199,7 @@ function usage(): void {
     if(ufa.devices?.length) {
 
       log.error("Devices:");
-      ufa.devices.map(x => log.error("  %s => %s", (x.alias || x.name) ?? x.display_model, x.unique_id));
+      ufa.devices.map(x => log.error("  %s => %s", (x.alias ?? x.name) ?? x.display_model, x.unique_id));
     }
   }
 
