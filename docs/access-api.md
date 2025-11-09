@@ -60,24 +60,39 @@ Create an instance of the UniFi Access API.
 EventEmitter.constructor
 ```
 
-#### Accessors
+#### Utilities
+
+##### isThrottled
+
+###### Get Signature
+
+```ts
+get isThrottled(): boolean;
+```
+
+Utility method that returns whether our connection to the Access controller is currently throttled or not.
+
+###### Returns
+
+`boolean`
+
+Returns `true` if the API has returned too many errors and is now throttled for a period of time, `false` otherwise.
+
+#### Other
 
 ##### bootstrap
 
 ###### Get Signature
 
 ```ts
-get bootstrap(): 
-  | null
-| Readonly<AccessBootstrapConfigInterface>;
+get bootstrap(): Nullable<Readonly<AccessBootstrapConfigInterface>>;
 ```
 
 Access the Access controller bootstrap JSON.
 
 ###### Returns
 
-  \| `null`
-  \| `Readonly`\<[`AccessBootstrapConfigInterface`](access-types.md#accessbootstrapconfiginterface)\>
+`Nullable`\<`Readonly`\<[`AccessBootstrapConfigInterface`](access-types.md#accessbootstrapconfiginterface)\>\>
 
 Returns the bootstrap JSON if the Access controller has been bootstrapped, `null` otherwise.
 
@@ -86,17 +101,14 @@ Returns the bootstrap JSON if the Access controller has been bootstrapped, `null
 ###### Get Signature
 
 ```ts
-get controller(): 
-  | null
-| Readonly<AccessControllerConfigInterface>;
+get controller(): Nullable<Readonly<AccessControllerConfigInterface>>;
 ```
 
 Access the Access controller information JSON.
 
 ###### Returns
 
-  \| `null`
-  \| `Readonly`\<[`AccessControllerConfigInterface`](access-types.md#accesscontrollerconfiginterface)\>
+`Nullable`\<`Readonly`\<[`AccessControllerConfigInterface`](access-types.md#accesscontrollerconfiginterface)\>\>
 
 Returns the controller information JSON if the Access controller has been bootstrapped, `null` otherwise.
 
@@ -105,17 +117,14 @@ Returns the controller information JSON if the Access controller has been bootst
 ###### Get Signature
 
 ```ts
-get devices(): 
-  | null
-  | Readonly<AccessDeviceConfigInterface>[];
+get devices(): Nullable<Readonly<AccessDeviceConfigInterface>[]>;
 ```
 
 Access the Access controller list of devices.
 
 ###### Returns
 
-  \| `null`
-  \| `Readonly`\<[`AccessDeviceConfigInterface`](access-types.md#accessdeviceconfiginterface)\>[]
+`Nullable`\<`Readonly`\<[`AccessDeviceConfigInterface`](access-types.md#accessdeviceconfiginterface)\>[]\>
 
 Returns an array of all the devices from all the UniFi Access hubs associated with this controller, `null` otherwise.
 
@@ -124,17 +133,14 @@ Returns an array of all the devices from all the UniFi Access hubs associated wi
 ###### Get Signature
 
 ```ts
-get doors(): 
-  | null
-  | Readonly<AccessDoorConfigInterface>[];
+get doors(): Nullable<Readonly<AccessDoorConfigInterface>[]>;
 ```
 
 Access the Access controller list of doors.
 
 ###### Returns
 
-  \| `null`
-  \| `Readonly`\<[`AccessDoorConfigInterface`](access-types.md#accessdoorconfiginterface)\>[]
+`Nullable`\<`Readonly`\<[`AccessDoorConfigInterface`](access-types.md#accessdoorconfiginterface)\>[]\>
 
 Returns an array of all the doors from all the UniFi Access hubs associated with this controller, `null` otherwise.
 
@@ -143,17 +149,14 @@ Returns an array of all the doors from all the UniFi Access hubs associated with
 ###### Get Signature
 
 ```ts
-get floors(): 
-  | null
-  | Readonly<AccessFloorConfigInterface>[];
+get floors(): Nullable<Readonly<AccessFloorConfigInterface>[]>;
 ```
 
 Access the Access controller list of floors.
 
 ###### Returns
 
-  \| `null`
-  \| `Readonly`\<[`AccessFloorConfigInterface`](access-types.md#accessfloorconfiginterface)\>[]
+`Nullable`\<`Readonly`\<[`AccessFloorConfigInterface`](access-types.md#accessfloorconfiginterface)\>[]\>
 
 Returns an array of all the floors from all the UniFi Access hubs associated with this controller, `null` otherwise.
 
@@ -189,8 +192,6 @@ Utility method that returns a nicely formatted version of the Access controller 
 
 Returns the Access controller name in the following format:
   <code>*Access controller name* [*Access controller type*]</code>.
-
-#### Methods
 
 ##### getApiEndpoint()
 
@@ -311,7 +312,7 @@ Utility method that generates a nicely formatted device information string.
 | Parameter | Type | Default value | Description |
 | ------ | ------ | ------ | ------ |
 | `device` | [`AccessDeviceConfig`](access-types.md#accessdeviceconfig) | `undefined` | Access device. |
-| `name` | `string` | `...` | Optional name for the device. Defaults to the device type (e.g. `UA G2 Pro Black`). |
+| `name` | `string` \| `undefined` | `...` | Optional name for the device. Defaults to the device type (e.g. `UA G2 Pro Black`). |
 | `deviceInfo` | `boolean` | `false` | Optionally specify whether or not to include the IP address and MAC address in the returned string. Defaults to `false`. |
 
 ###### Returns
@@ -427,35 +428,58 @@ Terminate any open connection to the UniFi Access API.
 
 `void`
 
+##### responseOk()
+
+```ts
+responseOk(code?): boolean;
+```
+
+###### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `code?` | `number` |
+
+###### Returns
+
+`boolean`
+
 ##### retrieve()
 
 ```ts
 retrieve(
    url, 
    options, 
-logErrors): Promise<null | Response>;
+retrieveOptions): Promise<Nullable<ResponseData<unknown>>>;
 ```
 
 Execute an HTTP fetch request to the Access controller.
 
 ###### Parameters
 
-| Parameter | Type | Default value | Description |
-| ------ | ------ | ------ | ------ |
-| `url` | `string` | `undefined` | Requested endpoint type. Valid types are `livestream` and `talkback`. |
-| `options` | `RequestOptions` | `...` | Parameters to pass on for the endpoint request. |
-| `logErrors` | `boolean` | `true` | Log errors that aren't already accounted for and handled, rather than failing silently. Defaults to `true`. |
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `url` | `string` | Full URL to request (e.g., `https://192.168.1.1/proxy/access/api/v2/devices/topologyv4`) |
+| `options` | [`RequestOptions`](#requestoptions) | Parameters to pass on for the endpoint request. |
+| `retrieveOptions` | [`RetrieveOptions`](#retrieveoptions) | Additional options for error handling and timeouts |
 
 ###### Returns
 
-`Promise`\<`null` \| `Response`\>
+`Promise`\<`Nullable`\<`ResponseData`\<`unknown`\>\>\>
 
-Returns a promise that will resolve to a Response object successful, and `null` otherwise.
+Promise resolving to the Response object, or `null` on failure.
 
 ###### Remarks
 
-This method should be used when direct access to the Access controller is needed, or when this library doesn't have a needed method to access
-  controller capabilities.
+This method provides direct access to the Protect controller API for advanced use cases not covered by the built-in methods. It handles:
+
+- Authentication and session management
+- Automatic retry with exponential backoff
+- Error logging and throttling
+- CSRF token management
+
+The `options` parameter extends [Undici's RequestOptions](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions), providing full control
+over the HTTP request.
 
 ##### unlock()
 
@@ -486,7 +510,7 @@ are `Infinity` - remain unlocked until reset, `0` - reset lock to secure state, 
 ##### updateDevice()
 
 ```ts
-updateDevice<DeviceType>(device, payload): Promise<null | DeviceType>;
+updateDevice<DeviceType>(device, payload): Promise<Nullable<DeviceType>>;
 ```
 
 Update an Access device's configuration on the UniFi Access controller.
@@ -506,7 +530,7 @@ Update an Access device's configuration on the UniFi Access controller.
 
 ###### Returns
 
-`Promise`\<`null` \| `DeviceType`\>
+`Promise`\<`Nullable`\<`DeviceType`\>\>
 
 Returns a promise that will resolve to the updated device-specific configuration JSON if successful, and `null` otherwise.
 
@@ -514,3 +538,32 @@ Returns a promise that will resolve to the updated device-specific configuration
 
 Use this method to change the configuration of a given Access device or controller. It requires the credentials used to login to the Access API
   to have administrative privileges for most settings.
+
+## Interfaces
+
+### RetrieveOptions
+
+Options to tailor the behavior of [AccessApi.retrieve](#retrieve).
+
+#### Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="logerrors"></a> `logErrors?` | `boolean` | Log errors. Defaults to `true`. |
+| <a id="timeout"></a> `timeout?` | `number` | Amount of time, in milliseconds, to wait for the Access controller to respond before timing out. Defaults to `3500`. |
+
+## Type Aliases
+
+### RequestOptions
+
+```ts
+type RequestOptions = {
+  dispatcher?: Dispatcher;
+} & Omit<Dispatcher.RequestOptions, "origin" | "path">;
+```
+
+#### Type Declaration
+
+| Name | Type |
+| ------ | ------ |
+| `dispatcher?` | `Dispatcher` |

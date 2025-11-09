@@ -9,5 +9,5 @@ export const ACCESS_API_ERROR_LIMIT = 10;
 // Interval, in seconds, to wait before trying to access the API again once we've hit the ACCESS_API_ERROR_LIMIT threshold.
 export const ACCESS_API_RETRY_INTERVAL = 300;
 
-// Access API response timeout, in seconds. This should never be greater than 5 seconds.
-export const ACCESS_API_TIMEOUT = 3.5;
+// Access API response timeout, in milliseconds. This should never be greater than 5000 ms.
+export const ACCESS_API_TIMEOUT = 3500;

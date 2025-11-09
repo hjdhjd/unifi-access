@@ -14,15 +14,15 @@
 
 | Property | Modifier | Type |
 | ------ | ------ | ------ |
-| <a id="alias"></a> `alias` | `readonly` | `string` |
-| <a id="device_groups"></a> `device_groups` | `readonly` | [`AccessDeviceConfigInterface`](#accessdeviceconfiginterface)[] |
+| <a id="alias"></a> `alias?` | `readonly` | `string` |
+| <a id="device_groups"></a> `device_groups?` | `readonly` | [`AccessDeviceConfigInterface`](#accessdeviceconfiginterface)[] |
 | <a id="extra_type"></a> `extra_type` | `readonly` | `string` |
 | <a id="extras"></a> `extras` | `readonly` | [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface) |
-| <a id="floors"></a> `floors` | `readonly` | [`AccessFloorConfigInterface`](#accessfloorconfiginterface)[] |
+| <a id="floors"></a> `floors?` | `readonly` | [`AccessFloorConfigInterface`](#accessfloorconfiginterface)[] |
 | <a id="full_name"></a> `full_name` | `readonly` | `string` |
 | <a id="level"></a> `level` | `readonly` | `number` |
 | <a id="location_type"></a> `location_type` | `readonly` | `string` |
-| <a id="name"></a> `name` | `readonly` | `string` |
+| <a id="name"></a> `name?` | `readonly` | `string` |
 | <a id="timezone"></a> `timezone` | `readonly` | `string` |
 | <a id="unique_id"></a> `unique_id` | `readonly` | `string` |
 | <a id="up_id"></a> `up_id` | `readonly` | `string` |
@@ -37,15 +37,15 @@
 
 | Property | Type |
 | ------ | ------ |
-| <a id="alias-1"></a> `alias` | `string` |
-| <a id="device_groups-1"></a> `device_groups` | [`AccessDeviceConfigInterface`](#accessdeviceconfiginterface)[] |
+| <a id="alias-1"></a> `alias?` | `string` |
+| <a id="device_groups-1"></a> `device_groups?` | [`AccessDeviceConfigInterface`](#accessdeviceconfiginterface)[] |
 | <a id="extra_type-1"></a> `extra_type` | `string` |
 | <a id="extras-1"></a> `extras` | [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface) |
-| <a id="floors-1"></a> `floors` | [`AccessFloorConfigInterface`](#accessfloorconfiginterface)[] |
+| <a id="floors-1"></a> `floors?` | [`AccessFloorConfigInterface`](#accessfloorconfiginterface)[] |
 | <a id="full_name-1"></a> `full_name` | `string` |
 | <a id="level-1"></a> `level` | `number` |
 | <a id="location_type-1"></a> `location_type` | `string` |
-| <a id="name-1"></a> `name` | `string` |
+| <a id="name-1"></a> `name?` | `string` |
 | <a id="timezone-1"></a> `timezone` | `string` |
 | <a id="unique_id-1"></a> `unique_id` | `string` |
 | <a id="up_id-1"></a> `up_id` | `string` |
@@ -61,14 +61,14 @@
 | Property | Modifier | Type |
 | ------ | ------ | ------ |
 | <a id="adopted_by_uid"></a> `adopted_by_uid` | `readonly` | `boolean` |
-| <a id="agent_info"></a> `agent_info` | `readonly` | \{ `admin_portal`: `null` \| `string`; `company_id`: `string`; `company_logo`: `string`; `company_name`: `string`; `configured`: `boolean`; `controller_id`: `string`; `current_admin_portal`: `null` \| `string`; `endpoints`: \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `core-login`: `string`; \}; `host_device_id`: `string`; `is_access_kua`: `boolean`; `is_install`: `boolean`; `is_kua`: `boolean`; `is_migrating`: `boolean`; `is_running`: `boolean`; `is_setup`: `boolean`; `is_workspace_consistent`: `boolean`; `mqtt_connected`: `boolean`; `site_info`: `null` \| `string`; `software_version`: `string`; `token_valid`: `boolean`; \} |
-| `agent_info.admin_portal` | `public` | `null` \| `string` |
+| <a id="agent_info"></a> `agent_info` | `readonly` | \{ `admin_portal`: `string` \| `null`; `company_id`: `string`; `company_logo`: `string`; `company_name`: `string`; `configured`: `boolean`; `controller_id`: `string`; `current_admin_portal`: `string` \| `null`; `endpoints`: \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `core-login`: `string`; \}; `host_device_id`: `string`; `is_access_kua`: `boolean`; `is_install`: `boolean`; `is_kua`: `boolean`; `is_migrating`: `boolean`; `is_running`: `boolean`; `is_setup`: `boolean`; `is_workspace_consistent`: `boolean`; `mqtt_connected`: `boolean`; `site_info`: `string` \| `null`; `software_version`: `string`; `token_valid`: `boolean`; \} |
+| `agent_info.admin_portal` | `public` | `string` \| `null` |
 | `agent_info.company_id` | `public` | `string` |
 | `agent_info.company_logo` | `public` | `string` |
 | `agent_info.company_name` | `public` | `string` |
 | `agent_info.configured` | `public` | `boolean` |
 | `agent_info.controller_id` | `public` | `string` |
-| `agent_info.current_admin_portal` | `public` | `null` \| `string` |
+| `agent_info.current_admin_portal` | `public` | `string` \| `null` |
 | `agent_info.endpoints` | `public` | \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `core-login`: `string`; \} |
 | `agent_info.endpoints.admin` | `public` | `string` |
 | `agent_info.endpoints.api` | `public` | `string` |
@@ -83,7 +83,7 @@
 | `agent_info.is_setup` | `public` | `boolean` |
 | `agent_info.is_workspace_consistent` | `public` | `boolean` |
 | `agent_info.mqtt_connected` | `public` | `boolean` |
-| `agent_info.site_info` | `public` | `null` \| `string` |
+| `agent_info.site_info` | `public` | `string` \| `null` |
 | `agent_info.software_version` | `public` | `string` |
 | `agent_info.token_valid` | `public` | `boolean` |
 | <a id="bt_config_revision"></a> `bt_config_revision` | `readonly` | `number` |
@@ -116,7 +116,7 @@
 | <a id="ucore_capabilities"></a> `ucore_capabilities` | `readonly` | `string`[] |
 | <a id="ui_cdn"></a> `ui_cdn` | `readonly` | `string` |
 | <a id="uid_acess_portal"></a> `uid_acess_portal` | `readonly` | `string` |
-| <a id="uid_adopt_info"></a> `uid_adopt_info` | `readonly` | `null` \| `string` |
+| <a id="uid_adopt_info"></a> `uid_adopt_info` | `readonly` | `string` \| `null` |
 | <a id="uid_capabilities"></a> `uid_capabilities` | `readonly` | `string`[] |
 | <a id="ulp_capabilities"></a> `ulp_capabilities` | `readonly` | `string`[] |
 | <a id="ulp_version"></a> `ulp_version` | `readonly` | `string` |
@@ -132,14 +132,14 @@
 | Property | Type |
 | ------ | ------ |
 | <a id="adopted_by_uid-1"></a> `adopted_by_uid` | `boolean` |
-| <a id="agent_info-1"></a> `agent_info` | \{ `admin_portal`: `null` \| `string`; `company_id`: `string`; `company_logo`: `string`; `company_name`: `string`; `configured`: `boolean`; `controller_id`: `string`; `current_admin_portal`: `null` \| `string`; `endpoints`: \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `core-login`: `string`; \}; `host_device_id`: `string`; `is_access_kua`: `boolean`; `is_install`: `boolean`; `is_kua`: `boolean`; `is_migrating`: `boolean`; `is_running`: `boolean`; `is_setup`: `boolean`; `is_workspace_consistent`: `boolean`; `mqtt_connected`: `boolean`; `site_info`: `null` \| `string`; `software_version`: `string`; `token_valid`: `boolean`; \} |
-| `agent_info.admin_portal` | `null` \| `string` |
+| <a id="agent_info-1"></a> `agent_info` | \{ `admin_portal`: `string` \| `null`; `company_id`: `string`; `company_logo`: `string`; `company_name`: `string`; `configured`: `boolean`; `controller_id`: `string`; `current_admin_portal`: `string` \| `null`; `endpoints`: \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `core-login`: `string`; \}; `host_device_id`: `string`; `is_access_kua`: `boolean`; `is_install`: `boolean`; `is_kua`: `boolean`; `is_migrating`: `boolean`; `is_running`: `boolean`; `is_setup`: `boolean`; `is_workspace_consistent`: `boolean`; `mqtt_connected`: `boolean`; `site_info`: `string` \| `null`; `software_version`: `string`; `token_valid`: `boolean`; \} |
+| `agent_info.admin_portal` | `string` \| `null` |
 | `agent_info.company_id` | `string` |
 | `agent_info.company_logo` | `string` |
 | `agent_info.company_name` | `string` |
 | `agent_info.configured` | `boolean` |
 | `agent_info.controller_id` | `string` |
-| `agent_info.current_admin_portal` | `null` \| `string` |
+| `agent_info.current_admin_portal` | `string` \| `null` |
 | `agent_info.endpoints` | \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `core-login`: `string`; \} |
 | `agent_info.endpoints.admin` | `string` |
 | `agent_info.endpoints.api` | `string` |
@@ -154,7 +154,7 @@
 | `agent_info.is_setup` | `boolean` |
 | `agent_info.is_workspace_consistent` | `boolean` |
 | `agent_info.mqtt_connected` | `boolean` |
-| `agent_info.site_info` | `null` \| `string` |
+| `agent_info.site_info` | `string` \| `null` |
 | `agent_info.software_version` | `string` |
 | `agent_info.token_valid` | `boolean` |
 | <a id="bt_config_revision-1"></a> `bt_config_revision` | `number` |
@@ -187,7 +187,7 @@
 | <a id="ucore_capabilities-1"></a> `ucore_capabilities` | `string`[] |
 | <a id="ui_cdn-1"></a> `ui_cdn` | `string` |
 | <a id="uid_acess_portal-1"></a> `uid_acess_portal` | `string` |
-| <a id="uid_adopt_info-1"></a> `uid_adopt_info` | `null` \| `string` |
+| <a id="uid_adopt_info-1"></a> `uid_adopt_info` | `string` \| `null` |
 | <a id="uid_capabilities-1"></a> `uid_capabilities` | `string`[] |
 | <a id="ulp_capabilities-1"></a> `ulp_capabilities` | `string`[] |
 | <a id="ulp_version-1"></a> `ulp_version` | `string` |
@@ -203,7 +203,7 @@
 | Property | Type |
 | ------ | ------ |
 | <a id="adopted_by_uid-2"></a> `adopted_by_uid?` | `DeepPartial`\<`boolean`\> |
-| <a id="agent_info-2"></a> `agent_info?` | `DeepPartial`\<\{ `admin_portal`: `null` \| `string`; `company_id`: `string`; `company_logo`: `string`; `company_name`: `string`; `configured`: `boolean`; `controller_id`: `string`; `current_admin_portal`: `null` \| `string`; `endpoints`: \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `core-login`: `string`; \}; `host_device_id`: `string`; `is_access_kua`: `boolean`; `is_install`: `boolean`; `is_kua`: `boolean`; `is_migrating`: `boolean`; `is_running`: `boolean`; `is_setup`: `boolean`; `is_workspace_consistent`: `boolean`; `mqtt_connected`: `boolean`; `site_info`: `null` \| `string`; `software_version`: `string`; `token_valid`: `boolean`; \}\> |
+| <a id="agent_info-2"></a> `agent_info?` | `DeepPartial`\<\{ `admin_portal`: `string` \| `null`; `company_id`: `string`; `company_logo`: `string`; `company_name`: `string`; `configured`: `boolean`; `controller_id`: `string`; `current_admin_portal`: `string` \| `null`; `endpoints`: \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `core-login`: `string`; \}; `host_device_id`: `string`; `is_access_kua`: `boolean`; `is_install`: `boolean`; `is_kua`: `boolean`; `is_migrating`: `boolean`; `is_running`: `boolean`; `is_setup`: `boolean`; `is_workspace_consistent`: `boolean`; `mqtt_connected`: `boolean`; `site_info`: `string` \| `null`; `software_version`: `string`; `token_valid`: `boolean`; \}\> |
 | <a id="bt_config_revision-2"></a> `bt_config_revision?` | `number` |
 | <a id="capabilities-2"></a> `capabilities?` | `string`[] |
 | <a id="configured-2"></a> `configured?` | `DeepPartial`\<`boolean`\> |
@@ -217,7 +217,7 @@
 | <a id="ucore_capabilities-2"></a> `ucore_capabilities?` | `string`[] |
 | <a id="ui_cdn-2"></a> `ui_cdn?` | `string` |
 | <a id="uid_acess_portal-2"></a> `uid_acess_portal?` | `string` |
-| <a id="uid_adopt_info-2"></a> `uid_adopt_info?` | `DeepPartial`\<`null` \| `string`\> |
+| <a id="uid_adopt_info-2"></a> `uid_adopt_info?` | `DeepPartial`\<`string` \| `null`\> |
 | <a id="uid_capabilities-2"></a> `uid_capabilities?` | `string`[] |
 | <a id="ulp_capabilities-2"></a> `ulp_capabilities?` | `string`[] |
 | <a id="ulp_version-2"></a> `ulp_version?` | `string` |
@@ -234,13 +234,13 @@
 | ------ | ------ | ------ |
 | <a id="adopt_time"></a> `adopt_time` | `readonly` | `number` |
 | <a id="adopting"></a> `adopting` | `readonly` | `boolean` |
-| <a id="alias-2"></a> `alias` | `readonly` | `string` |
+| <a id="alias-2"></a> `alias?` | `readonly` | `string` |
 | <a id="bom_rev"></a> `bom_rev` | `readonly` | `string` |
 | <a id="capabilities-3"></a> `capabilities` | `readonly` | `string`[] |
-| <a id="configs"></a> `configs` | `readonly` | [`AccessDeviceEntryConfigInterface`](#accessdeviceentryconfiginterface)[] |
+| <a id="configs"></a> `configs?` | `readonly` | [`AccessDeviceEntryConfigInterface`](#accessdeviceentryconfiginterface)[] |
 | <a id="connected_uah_id"></a> `connected_uah_id` | `readonly` | `string` |
 | <a id="device_type"></a> `device_type` | `readonly` | `string` |
-| <a id="display_model"></a> `display_model` | `readonly` | `string` |
+| <a id="display_model"></a> `display_model?` | `readonly` | `string` |
 | <a id="door"></a> `door` | `readonly` | \{ `extra_type`: `string`; `extras`: [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface); `full_name`: `string`; `level`: `number`; `location_type`: `string`; `name`: `string`; `timezone`: `string`; `unique_id`: `string`; `up_id`: `string`; `work_time`: `string`[]; `work_time_id`: `string`; \} |
 | `door.extra_type` | `public` | `string` |
 | `door.extras` | `public` | [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface) |
@@ -253,7 +253,7 @@
 | `door.up_id` | `public` | `string` |
 | `door.work_time` | `public` | `string`[] |
 | `door.work_time_id` | `public` | `string` |
-| <a id="extensions"></a> `extensions?` | `readonly` | \{ `device_id`: `string`; `extension_name`: `string`; `source_id`: `string`; `target_config`: \{ `config_key`: `string`; `config_tag`: `string`; `config_value`: `string` \| `number` \| `boolean`; \}[]; `target_name`: `string`; `target_type`: `string`; `target_value`: `string`; `unique_id`: `string`; \}[] |
+| <a id="extensions"></a> `extensions?` | `readonly` | \{ `device_id`: `string`; `extension_name`: `string`; `source_id?`: `string`; `target_config`: \{ `config_key`: `string`; `config_tag`: `string`; `config_value`: `string` \| `number` \| `boolean`; \}[]; `target_name?`: `string`; `target_type?`: `string`; `target_value?`: `string`; `unique_id`: `string`; \}[] |
 | <a id="firmware"></a> `firmware` | `readonly` | `string` |
 | <a id="firmware_update_time"></a> `firmware_update_time` | `readonly` | `number` |
 | <a id="floor"></a> `floor` | `readonly` | \{ `extra_type`: `string`; `extras`: [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface); `full_name`: `string`; `level`: `number`; `location_type`: `string`; `name`: `string`; `timezone`: `string`; `unique_id`: `string`; `up_id`: `string`; `work_time`: `string`[]; `work_time_id`: `string`; \} |
@@ -280,7 +280,7 @@
 | <a id="is_adopted"></a> `is_adopted` | `readonly` | `boolean` |
 | <a id="is_connected"></a> `is_connected` | `readonly` | `boolean` |
 | <a id="is_managed"></a> `is_managed` | `readonly` | `boolean` |
-| <a id="is_online"></a> `is_online` | `readonly` | `boolean` |
+| <a id="is_online"></a> `is_online?` | `readonly` | `boolean` |
 | <a id="is_rebooting"></a> `is_rebooting` | `readonly` | `boolean` |
 | <a id="location"></a> `location` | `readonly` | \{ `extra_type`: `string`; `extras`: [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface); `full_name`: `string`; `level`: `number`; `location_type`: `string`; `name`: `string`; `timezone`: `string`; `unique_id`: `string`; `up_id`: `string`; `work_time`: `string`[]; `work_time_id`: `string`; \} |
 | `location.extra_type` | `public` | `string` |
@@ -297,7 +297,7 @@
 | <a id="location_id"></a> `location_id` | `readonly` | `string` |
 | <a id="mac"></a> `mac` | `readonly` | `string` |
 | <a id="model"></a> `model` | `readonly` | `string` |
-| <a id="name-2"></a> `name` | `readonly` | `string` |
+| <a id="name-2"></a> `name?` | `readonly` | `string` |
 | <a id="need_advisory"></a> `need_advisory` | `readonly` | `boolean` |
 | <a id="resource_name"></a> `resource_name` | `readonly` | `string` |
 | <a id="revision"></a> `revision` | `readonly` | `number` |
@@ -335,13 +335,13 @@
 | ------ | ------ |
 | <a id="adopt_time-1"></a> `adopt_time` | `number` |
 | <a id="adopting-1"></a> `adopting` | `boolean` |
-| <a id="alias-3"></a> `alias` | `string` |
+| <a id="alias-3"></a> `alias?` | `string` |
 | <a id="bom_rev-1"></a> `bom_rev` | `string` |
 | <a id="capabilities-4"></a> `capabilities` | `string`[] |
-| <a id="configs-1"></a> `configs` | [`AccessDeviceEntryConfigInterface`](#accessdeviceentryconfiginterface)[] |
+| <a id="configs-1"></a> `configs?` | [`AccessDeviceEntryConfigInterface`](#accessdeviceentryconfiginterface)[] |
 | <a id="connected_uah_id-1"></a> `connected_uah_id` | `string` |
 | <a id="device_type-1"></a> `device_type` | `string` |
-| <a id="display_model-1"></a> `display_model` | `string` |
+| <a id="display_model-1"></a> `display_model?` | `string` |
 | <a id="door-1"></a> `door` | \{ `extra_type`: `string`; `extras`: [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface); `full_name`: `string`; `level`: `number`; `location_type`: `string`; `name`: `string`; `timezone`: `string`; `unique_id`: `string`; `up_id`: `string`; `work_time`: `string`[]; `work_time_id`: `string`; \} |
 | `door.extra_type` | `string` |
 | `door.extras` | [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface) |
@@ -354,7 +354,7 @@
 | `door.up_id` | `string` |
 | `door.work_time` | `string`[] |
 | `door.work_time_id` | `string` |
-| <a id="extensions-1"></a> `extensions?` | \{ `device_id`: `string`; `extension_name`: `string`; `source_id`: `string`; `target_config`: \{ `config_key`: `string`; `config_tag`: `string`; `config_value`: `string` \| `number` \| `boolean`; \}[]; `target_name`: `string`; `target_type`: `string`; `target_value`: `string`; `unique_id`: `string`; \}[] |
+| <a id="extensions-1"></a> `extensions?` | \{ `device_id`: `string`; `extension_name`: `string`; `source_id?`: `string`; `target_config`: \{ `config_key`: `string`; `config_tag`: `string`; `config_value`: `string` \| `number` \| `boolean`; \}[]; `target_name?`: `string`; `target_type?`: `string`; `target_value?`: `string`; `unique_id`: `string`; \}[] |
 | <a id="firmware-1"></a> `firmware` | `string` |
 | <a id="firmware_update_time-1"></a> `firmware_update_time` | `number` |
 | <a id="floor-1"></a> `floor` | \{ `extra_type`: `string`; `extras`: [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface); `full_name`: `string`; `level`: `number`; `location_type`: `string`; `name`: `string`; `timezone`: `string`; `unique_id`: `string`; `up_id`: `string`; `work_time`: `string`[]; `work_time_id`: `string`; \} |
@@ -381,7 +381,7 @@
 | <a id="is_adopted-1"></a> `is_adopted` | `boolean` |
 | <a id="is_connected-1"></a> `is_connected` | `boolean` |
 | <a id="is_managed-1"></a> `is_managed` | `boolean` |
-| <a id="is_online-1"></a> `is_online` | `boolean` |
+| <a id="is_online-1"></a> `is_online?` | `boolean` |
 | <a id="is_rebooting-1"></a> `is_rebooting` | `boolean` |
 | <a id="location-1"></a> `location` | \{ `extra_type`: `string`; `extras`: [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface); `full_name`: `string`; `level`: `number`; `location_type`: `string`; `name`: `string`; `timezone`: `string`; `unique_id`: `string`; `up_id`: `string`; `work_time`: `string`[]; `work_time_id`: `string`; \} |
 | `location.extra_type` | `string` |
@@ -398,7 +398,7 @@
 | <a id="location_id-1"></a> `location_id` | `string` |
 | <a id="mac-1"></a> `mac` | `string` |
 | <a id="model-1"></a> `model` | `string` |
-| <a id="name-3"></a> `name` | `string` |
+| <a id="name-3"></a> `name?` | `string` |
 | <a id="need_advisory-1"></a> `need_advisory` | `boolean` |
 | <a id="resource_name-1"></a> `resource_name` | `string` |
 | <a id="revision-1"></a> `revision` | `number` |
@@ -436,15 +436,15 @@
 | ------ | ------ |
 | <a id="adopt_time-2"></a> `adopt_time?` | `number` |
 | <a id="adopting-2"></a> `adopting?` | `DeepPartial`\<`boolean`\> |
-| <a id="alias-4"></a> `alias?` | `string` |
+| <a id="alias-4"></a> `alias?` | `DeepPartial`\<`string` \| `undefined`\> |
 | <a id="bom_rev-2"></a> `bom_rev?` | `string` |
 | <a id="capabilities-5"></a> `capabilities?` | `string`[] |
-| <a id="configs-2"></a> `configs?` | `DeepPartial`\<[`AccessDeviceEntryConfigInterface`](#accessdeviceentryconfiginterface)\>[] |
+| <a id="configs-2"></a> `configs?` | `DeepPartial`\< \| [`AccessDeviceEntryConfigInterface`](#accessdeviceentryconfiginterface)[] \| `undefined`\> |
 | <a id="connected_uah_id-2"></a> `connected_uah_id?` | `string` |
 | <a id="device_type-2"></a> `device_type?` | `string` |
-| <a id="display_model-2"></a> `display_model?` | `string` |
+| <a id="display_model-2"></a> `display_model?` | `DeepPartial`\<`string` \| `undefined`\> |
 | <a id="door-2"></a> `door?` | `DeepPartial`\<\{ `extra_type`: `string`; `extras`: [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface); `full_name`: `string`; `level`: `number`; `location_type`: `string`; `name`: `string`; `timezone`: `string`; `unique_id`: `string`; `up_id`: `string`; `work_time`: `string`[]; `work_time_id`: `string`; \}\> |
-| <a id="extensions-2"></a> `extensions?` | `DeepPartial`\< \| `undefined` \| \{ `device_id`: `string`; `extension_name`: `string`; `source_id`: `string`; `target_config`: \{ `config_key`: `string`; `config_tag`: `string`; `config_value`: `string` \| `number` \| `boolean`; \}[]; `target_name`: `string`; `target_type`: `string`; `target_value`: `string`; `unique_id`: `string`; \}[]\> |
+| <a id="extensions-2"></a> `extensions?` | `DeepPartial`\< \| \{ `device_id`: `string`; `extension_name`: `string`; `source_id?`: `string`; `target_config`: \{ `config_key`: `string`; `config_tag`: `string`; `config_value`: `string` \| `number` \| `boolean`; \}[]; `target_name?`: `string`; `target_type?`: `string`; `target_value?`: `string`; `unique_id`: `string`; \}[] \| `undefined`\> |
 | <a id="firmware-2"></a> `firmware?` | `string` |
 | <a id="firmware_update_time-2"></a> `firmware_update_time?` | `number` |
 | <a id="floor-2"></a> `floor?` | `DeepPartial`\<\{ `extra_type`: `string`; `extras`: [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface); `full_name`: `string`; `level`: `number`; `location_type`: `string`; `name`: `string`; `timezone`: `string`; `unique_id`: `string`; `up_id`: `string`; `work_time`: `string`[]; `work_time_id`: `string`; \}\> |
@@ -455,13 +455,13 @@
 | <a id="is_adopted-2"></a> `is_adopted?` | `DeepPartial`\<`boolean`\> |
 | <a id="is_connected-2"></a> `is_connected?` | `DeepPartial`\<`boolean`\> |
 | <a id="is_managed-2"></a> `is_managed?` | `DeepPartial`\<`boolean`\> |
-| <a id="is_online-2"></a> `is_online?` | `DeepPartial`\<`boolean`\> |
+| <a id="is_online-2"></a> `is_online?` | `DeepPartial`\<`boolean` \| `undefined`\> |
 | <a id="is_rebooting-2"></a> `is_rebooting?` | `DeepPartial`\<`boolean`\> |
 | <a id="location-2"></a> `location?` | `DeepPartial`\<\{ `extra_type`: `string`; `extras`: [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface); `full_name`: `string`; `level`: `number`; `location_type`: `string`; `name`: `string`; `timezone`: `string`; `unique_id`: `string`; `up_id`: `string`; `work_time`: `string`[]; `work_time_id`: `string`; \}\> |
 | <a id="location_id-2"></a> `location_id?` | `string` |
 | <a id="mac-2"></a> `mac?` | `string` |
 | <a id="model-2"></a> `model?` | `string` |
-| <a id="name-4"></a> `name?` | `string` |
+| <a id="name-4"></a> `name?` | `DeepPartial`\<`string` \| `undefined`\> |
 | <a id="need_advisory-2"></a> `need_advisory?` | `DeepPartial`\<`boolean`\> |
 | <a id="resource_name-2"></a> `resource_name?` | `string` |
 | <a id="revision-2"></a> `revision?` | `number` |
@@ -541,7 +541,7 @@
 | Property | Modifier | Type |
 | ------ | ------ | ------ |
 | <a id="camera_resource_ids"></a> `camera_resource_ids` | `readonly` | `string`[] |
-| <a id="device_groups-2"></a> `device_groups` | `readonly` | [`AccessDeviceConfigInterface`](#accessdeviceconfiginterface)[] |
+| <a id="device_groups-2"></a> `device_groups?` | `readonly` | [`AccessDeviceConfigInterface`](#accessdeviceconfiginterface)[] |
 | <a id="door_guard"></a> `door_guard` | `readonly` | `string`[] |
 | <a id="extra_type-2"></a> `extra_type` | `readonly` | `string` |
 | <a id="extras-2"></a> `extras` | `readonly` | [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface) |
@@ -565,7 +565,7 @@
 | Property | Type |
 | ------ | ------ |
 | <a id="camera_resource_ids-1"></a> `camera_resource_ids` | `string`[] |
-| <a id="device_groups-3"></a> `device_groups` | [`AccessDeviceConfigInterface`](#accessdeviceconfiginterface)[] |
+| <a id="device_groups-3"></a> `device_groups?` | [`AccessDeviceConfigInterface`](#accessdeviceconfiginterface)[] |
 | <a id="door_guard-1"></a> `door_guard` | `string`[] |
 | <a id="extra_type-3"></a> `extra_type` | `string` |
 | <a id="extras-3"></a> `extras` | [`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface) |
@@ -589,7 +589,7 @@
 | Property | Type |
 | ------ | ------ |
 | <a id="camera_resource_ids-2"></a> `camera_resource_ids?` | `string`[] |
-| <a id="device_groups-4"></a> `device_groups?` | `DeepPartial`\<[`AccessDeviceConfigInterface`](#accessdeviceconfiginterface)\>[] |
+| <a id="device_groups-4"></a> `device_groups?` | `DeepPartial`\< \| [`AccessDeviceConfigInterface`](#accessdeviceconfiginterface)[] \| `undefined`\> |
 | <a id="door_guard-2"></a> `door_guard?` | `string`[] |
 | <a id="extra_type-4"></a> `extra_type?` | `string` |
 | <a id="extras-4"></a> `extras?` | `DeepPartial`\<[`AccessDeviceExtrasConfigInterface`](#accessdeviceextrasconfiginterface)\> |

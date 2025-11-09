@@ -3,13 +3,33 @@
  * access-api.ts: Our UniFi Access API implementation.
  */
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT } from "./settings.js";
-import { ALPNProtocol, AbortError, FetchError, Headers, type Request, type RequestOptions, type Response, context, timeoutSignal } from "@adobe/fetch";
 import type { AccessApiResponse, AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload, AccessDoorConfig,
-  AccessFloorConfig } from "./access-types.js";
+  AccessFloorConfig, Nullable } from "./access-types.js";
+import { Agent, type Dispatcher, type ErrorEvent, type MessageEvent, Pool, WebSocket, errors, interceptors, request } from "undici";
 import type { AccessLogging } from "./access-logging.js";
 import { EventEmitter } from "node:events";
-import WebSocket from "ws";
+import { STATUS_CODES } from "node:http";
 import util from "node:util";
+
+export type RequestOptions = { dispatcher?: Dispatcher } & Omit<Dispatcher.RequestOptions, "origin" | "path">;
+
+/**
+ * Options to tailor the behavior of {@link AccessApi.retrieve}.
+ *
+ * @property {boolean} [logErrors=true] - Log errors. Defaults to `true`.
+ * @property {number} [timeout=3500] - Amount of time, in milliseconds, to wait for the Access controller to respond before timing out. Defaults to `3500`.
+ */
+export interface RetrieveOptions {
+
+  logErrors?: boolean;
+  timeout?: number;
+}
+
+// Our private interface to retrieve.
+interface InternalRetrieveOptions extends RetrieveOptions {
+
+  decodeResponse?: boolean;
+}
 
 /**
  * The direct UniFi Access API is partially documented through an officially supported public API that Ubiquiti has released. However, this API also has certain
@@ -30,19 +50,20 @@ import util from "node:util";
  */
 export class AccessApi extends EventEmitter {
 
-  private _bootstrap: AccessBootstrapConfig | null;
-  private _controller: AccessControllerConfig | null;
-  private _devices: AccessDeviceConfig[] | null;
-  private _doors: AccessDoorConfig[] | null;
-  private _floors: AccessFloorConfig[] | null;
+  private _bootstrap: Nullable<AccessBootstrapConfig>;
+  private _controller: Nullable<AccessControllerConfig>;
+  private _devices: Nullable<AccessDeviceConfig[]>;
+  private _doors: Nullable<AccessDoorConfig[]>;
+  private _floors: Nullable<AccessFloorConfig[]>;
+  private _isAdminUser: boolean;
+  private _isThrottled: boolean;
   private address: string;
   private apiErrorCount: number;
   private apiLastSuccess: number;
-  private events: WebSocket | null;
-  private eventsTimer: NodeJS.Timeout | null;
-  private fetch: (url: Request | string, options?: RequestOptions) => Promise<Response>;
-  private headers: Headers;
-  private _isAdminUser: boolean;
+  private dispatcher?: Dispatcher;
+  private events: Nullable<WebSocket>;
+  private eventsTimer: Nullable<NodeJS.Timeout>;
+  private headers: Record<string, string | undefined>;
   private log: AccessLogging;
   private password: string;
   private username: string;
@@ -61,41 +82,38 @@ export class AccessApi extends EventEmitter {
     super();
 
     // If we didn't get passed a logging parameter, by default we log to the console.
-    if(!log) {
+    log ??= {
 
-      log = {
-
-        /* eslint-disable no-console */
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        debug: (message: string, ...parameters: unknown[]): void => { /* No debug logging by default. */ },
-        error: (message: string, ...parameters: unknown[]): void => console.error(message, ...parameters),
-        info: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters),
-        warn: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters)
-        /* eslint-enable no-console */
-      };
-    }
+      /* eslint-disable no-console */
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      debug: (_message: string, ..._parameters: unknown[]): void => { /* No debug logging by default. */ },
+      error: (message: string, ...parameters: unknown[]): void => console.error(message, ...parameters),
+      info: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters),
+      warn: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters)
+      /* eslint-enable no-console */
+    };
 
     this._bootstrap = null;
     this._controller = null;
     this._devices = null;
     this._doors = null;
     this._floors = null;
+    this._isAdminUser = false;
+    this._isThrottled = false;
     this.events = null;
     this.eventsTimer = null;
 
     this.log = {
 
-      debug: (message: string, ...parameters: unknown[]): void => log?.debug(this.name + ": " + message, ...parameters),
-      error: (message: string, ...parameters: unknown[]): void => log?.error(this.name + ": API error: " + message, ...parameters),
-      info: (message: string, ...parameters: unknown[]): void => log?.info(this.name + ": " + message, ...parameters),
-      warn: (message: string, ...parameters: unknown[]): void => log?.warn(this.name + ": " + message, ...parameters)
+      debug: (message: string, ...parameters: unknown[]): void => log.debug(this.name + ": " + message, ...parameters),
+      error: (message: string, ...parameters: unknown[]): void => log.error(this.name + ": API error: " + message, ...parameters),
+      info: (message: string, ...parameters: unknown[]): void => log.info(this.name + ": " + message, ...parameters),
+      warn: (message: string, ...parameters: unknown[]): void => log.warn(this.name + ": " + message, ...parameters)
     };
 
     this.apiErrorCount = 0;
     this.apiLastSuccess = 0;
-    this.fetch = context({ alpnProtocols: [ ALPNProtocol.ALPN_HTTP2 ], rejectUnauthorized: false, userAgent: "unifi-access" }).fetch;
-    this.headers = new Headers();
-    this._isAdminUser = false;
+    this.headers = {};
     this.address = "";
     this.username = "";
     this.password = "";
@@ -143,11 +161,11 @@ export class AccessApi extends EventEmitter {
   // Login to the Access controller and terminate any existing login we might have.
   public async login(address: string, username: string, password: string): Promise<boolean> {
 
-    this.logout();
-
     this.address = address;
     this.username = username;
     this.password = password;
+
+    this.logout();
 
     // Let's attempt to login.
     const loginSuccess = await this.loginController();
@@ -163,26 +181,40 @@ export class AccessApi extends EventEmitter {
   private async loginController(): Promise<boolean> {
 
     // If we're already logged in, we're done.
-    if(this.headers.has("Cookie") && this.headers.has("X-CSRF-Token")) {
+    if(this.headers.cookie && this.headers["x-csrf-token"]) {
 
       return true;
     }
 
+    // Utility to grab the headers we're interested in a normalized manner.
+    const getHeader = (name: string, headers?: Record<string, string | string[] | undefined>): Nullable<string> => {
+
+      const rawHeader = headers?.[name.toLowerCase()];
+
+      if(!rawHeader) {
+
+        return null;
+      }
+
+      // Normalize it to a string:
+      return Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+    };
+
     // Acquire a CSRF token, if needed. We only need to do this if we aren't already logged in, or we don't already have a token.
-    if(!this.headers.has("X-CSRF-Token")) {
+    if(!this.headers["x-csrf-token"]) {
 
       // UniFi OS has cross-site request forgery protection built into it's web management UI. We retrieve the CSRF token, if available, by connecting to the Access
       // controller and checking the headers for it.
-      const response = await this.retrieve("https://" + this.address, { method: "GET" }, false);
+      const response = await this.retrieve("https://" + this.address, { method: "GET" }, { logErrors: false });
 
-      if(response?.ok) {
+      if(this.responseOk(response?.statusCode)) {
 
-        const csrfToken = response.headers.get("X-CSRF-Token");
+        const csrfToken = getHeader("X-CSRF-Token", response?.headers);
 
         // Preserve the CSRF token, if found, for future API calls.
         if(csrfToken) {
 
-          this.headers.set("X-CSRF-Token", csrfToken);
+          this.headers["x-csrf-token"] = csrfToken;
         }
       }
     }
@@ -195,7 +227,7 @@ export class AccessApi extends EventEmitter {
     });
 
     // Something went wrong with the login call, possibly a controller reboot or failure.
-    if(!response?.ok) {
+    if(!this.responseOk(response?.statusCode)) {
 
       this.logout();
 
@@ -203,17 +235,17 @@ export class AccessApi extends EventEmitter {
     }
 
     // We're logged in. Let's configure our headers.
-    const csrfToken = response.headers.get("X-Updated-CSRF-Token") ?? response.headers.get("X-CSRF-Token");
-    const cookie = response.headers.get("Set-Cookie");
+    const csrfToken = getHeader("X-Updated-CSRF-Token", response?.headers) ?? getHeader("X-CSRF-Token", response?.headers);
+    const cookie = getHeader("Set-Cookie", response?.headers);
 
     // Save the refreshed cookie and CSRF token for future API calls and we're done.
     if(csrfToken && cookie) {
 
       // Only preserve the token element of the cookie and not the superfluous information that's been added to it.
-      this.headers.set("Cookie", cookie.split(";")[0]);
+      this.headers.cookie = cookie.split(";")[0];
 
       // Save the CSRF token.
-      this.headers.set("X-CSRF-Token", csrfToken);
+      this.headers["x-csrf-token"] = csrfToken;
 
       return true;
     }
@@ -234,24 +266,24 @@ export class AccessApi extends EventEmitter {
     }
 
     // Utility to retrieve and parise API responses, with error handling.
-    const retrieveEndpoint = async (endpoint: string): Promise<AccessApiResponse | null> => {
+    const retrieveEndpoint = async (endpoint: string): Promise<Nullable<AccessApiResponse>> => {
 
       // Retrieve the endpoint from the controller.
       const response = await this.retrieve(this.getApiEndpoint(endpoint));
 
       // Something went wrong. Retry the bootstrap attempt once, and then we're done.
-      if(!response?.ok) {
+      if(!this.responseOk(response?.statusCode)) {
 
         this.logRetry("Unable to retrieve the UniFi Access " + endpoint + " configuration.", retry);
 
         return null;
       }
 
-      let data: AccessApiResponse | null = null;
+      let data: Nullable<AccessApiResponse> = null;
 
       try {
 
-        data = await response.json() as AccessApiResponse;
+        data = await response?.body.json() as AccessApiResponse;
 
       // @eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch(error) {
@@ -264,7 +296,7 @@ export class AccessApi extends EventEmitter {
     };
 
     // Retrieve the controller configuration.
-    this._controller = ((await retrieveEndpoint("controller"))?.data as AccessControllerConfig) ?? null;
+    this._controller = ((await retrieveEndpoint("controller"))?.data as AccessControllerConfig | undefined) ?? null;
 
     if(!this._controller && retry) {
 
@@ -272,7 +304,7 @@ export class AccessApi extends EventEmitter {
     }
 
     // Next, retrieve the bootstrap configuration.
-    const data = ((await retrieveEndpoint("bootstrap"))?.data as AccessBootstrapConfig[]);
+    const data = ((await retrieveEndpoint("bootstrap"))?.data as AccessBootstrapConfig[] | undefined);
 
     this._bootstrap = data ? data[0] : null;
 
@@ -282,7 +314,7 @@ export class AccessApi extends EventEmitter {
     }
 
     // Retrieve the list of doors from all the floors the user has configured.
-    this._doors = this._bootstrap?.floors?.flatMap(floor => floor.doors)?.filter(Boolean) ?? null;
+    this._doors = this._bootstrap?.floors?.flatMap(floor => floor.doors).filter(Boolean) ?? null;
 
     // In case we end up with an empty floors array due to changes in the Access API, we can conceivably end up with an empty array here.
     this._doors = this._doors?.length ? this._doors : null;
@@ -344,35 +376,13 @@ export class AccessApi extends EventEmitter {
 
     try {
 
-      const ws = new WebSocket("wss://" + this.address + "/proxy/access/api/v2/ws/notification", {
+      const ws = new WebSocket("wss://" + this.address + "/proxy/access/api/v2/ws/notification",
+        { dispatcher: new Agent({ connect: { rejectUnauthorized: false } }), headers: { Cookie: this.headers.cookie ?? "" } });
 
-        headers: {
-
-          Cookie: this.headers.get("Cookie") ?? ""
-        },
-
-        rejectUnauthorized: false
-      });
-
-      if(!ws) {
-
-        this.log.error("Unable to connect to the realtime events API. Will retry again later.");
-
-        if(this.eventsTimer) {
-
-          clearTimeout(this.eventsTimer);
-          this.eventsTimer = null;
-        }
-
-        this.events = null;
-
-        return false;
-      }
-
-      let messageHandler: ((event: Buffer) => void) | null;
+      let messageHandler: Nullable<(event: MessageEvent) => void>;
 
       // Cleanup after ourselves if our websocket closes for some resaon.
-      ws.once("close", (): void => {
+      ws.addEventListener("close", (): void => {
 
         if(this.eventsTimer) {
 
@@ -384,36 +394,43 @@ export class AccessApi extends EventEmitter {
 
         if(messageHandler) {
 
-          ws.removeListener("message", messageHandler);
+          ws.removeEventListener("message", messageHandler);
           messageHandler = null;
         }
-      });
+      }, { once: true });
 
       // Handle any websocket errors.
-      ws.once("error", (error: Error): void => {
+      ws.addEventListener("error", (event: ErrorEvent): void => {
 
-        // If we're closing before fully established it's because we're shutting down the API - ignore it.
-        if(error.message !== "WebSocket was closed before the connection was established") {
+        this.log.error("WS ERROR CAUSE: %s", event.error.cause);
+        this.log.error("WS ERROR CODE: %s", (event.error.cause as NodeJS.ErrnoException).code);
+        this.log.error("CAUSE INSPECT: %s", util.inspect(event.error.cause), { colors: true, depth: null, sorted: true });
+        this.log.error("--");
+        this.log.error(util.inspect(event.error, { colors: true, depth: null, sorted: true }));
+        this.log.error("--");
 
-          this.log.error(error.toString());
-        }
-
-        ws.terminate();
-      });
+        ws.close();
+      }, { once: true });
 
       // Process messages as they come in.
-      ws.on("message", messageHandler = (event: Buffer): void => {
+      ws.addEventListener("message", messageHandler = (event?: MessageEvent): void => {
 
         if(!event) {
 
           this.log.error("Unable to process message from the realtime events API.");
-          ws.terminate();
+          ws.close();
+
+          return;
+        }
+
+        // No event data - we're done.
+        if(!event.data) {
 
           return;
         }
 
         // The Access events API seems to send a heartbeat every five seconds.
-        if(event.toString() === "\"Hello\"\n") {
+        if(event.data === "\"Hello\"\n") {
 
           // Heartbeat.
           if(this.eventsTimer) {
@@ -430,21 +447,17 @@ export class AccessApi extends EventEmitter {
           return;
         }
 
-        // Parse the JSON from the events API.
-        let json;
-
+        // Access events are published as JSON objects.
         try {
 
-          json = JSON.parse(event.toString()) as JSON;
+          // Emit the decoded packet for users.
+          this.emit("message", JSON.parse(event.data));
         } catch(error) {
 
           this.log.error("Error processing message from the events API: %s", error);
 
           return;
         }
-
-        // Emit the decoded packet for users.
-        this.emit("message", json);
       });
 
       // Make the websocket available, and then we're done.
@@ -554,13 +567,14 @@ export class AccessApi extends EventEmitter {
   public async unlock(device: AccessDeviceConfig, duration?: number): Promise<boolean> {
 
     // No device object, we're done.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if(!device) {
 
       return false;
     }
 
     // Unlocking only works on hubs.
-    if(!device.capabilities?.includes("is_hub")) {
+    if(!device.capabilities.includes("is_hub")) {
 
       return false;
     }
@@ -608,19 +622,19 @@ export class AccessApi extends EventEmitter {
     // Request the unlock from Access.
     const response = await this.retrieve(endpoint, {
 
-      body: payload,
+      body: JSON.stringify(payload),
       method: "PUT"
     });
 
-    if(!response?.ok) {
+    if(!this.responseOk(response?.statusCode)) {
 
-      this.log.error("%s: Unable to %s the %s: %s.", this.getFullName(device), action, device.display_model, response?.status);
+      this.log.error("%s: Unable to %s the %s: %s.", this.getFullName(device), action, device.display_model, response?.statusCode);
 
       return false;
     }
 
     // Get our status.
-    const status = await response.json() as AccessApiResponse;
+    const status = await response?.body.json() as AccessApiResponse;
 
     if(status.codeS === "SUCCESS") {
 
@@ -648,9 +662,10 @@ export class AccessApi extends EventEmitter {
    *   to have administrative privileges for most settings.
    */
   // Update an Access device object.
-  public async updateDevice<DeviceType extends AccessDeviceConfig>(device: DeviceType, payload: AccessDeviceConfigPayload): Promise<DeviceType | null> {
+  public async updateDevice<DeviceType extends AccessDeviceConfig>(device: DeviceType, payload: AccessDeviceConfigPayload): Promise<Nullable<DeviceType>> {
 
     // No device object, we're done.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if(!device) {
 
       return null;
@@ -671,21 +686,27 @@ export class AccessApi extends EventEmitter {
     this.log.debug("%s: %s", this.getFullName(device), util.inspect(payload, { colors: true, depth: null, sorted: true }));
 
     // Update Access with the new configuration.
-    const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + (device.capabilities?.includes("is_hub") ? "configs" : "settings"), {
+    const response = await this.retrieve(this.getApiEndpoint("device") + "/" + device.unique_id + (device.capabilities.includes("is_hub") ? "configs" : "settings"), {
 
       body: JSON.stringify(payload),
       method: "PUT"
     });
 
-    if(!response?.ok) {
+    // Something happened - the retrieve call will log the error for us.
+    if(!response) {
 
-      this.log.error("%s: Unable to configure the %s: %s.", this.getFullName(device), device.device_type, response?.status);
+      return null;
+    }
+
+    if(!this.responseOk(response.statusCode)) {
+
+      this.log.error("%s: Unable to configure the %s: %s.", this.getFullName(device), device.device_type, response.statusCode);
 
       return null;
     }
 
     // We successfully set the message, return the updated device object.
-    return await response.json() as DeviceType;
+    return await response.body.json() as DeviceType;
   }
 
   /**
@@ -700,13 +721,7 @@ export class AccessApi extends EventEmitter {
    * @remarks The example above assumed the `deviceInfo` parameter is set to `true`.
    */
   // Utility to generate a nicely formatted device string.
-  public getDeviceName(device: AccessDeviceConfig, name = device?.alias?.length ? device.alias : device?.name, deviceInfo = false): string {
-
-    // Validate our inputs.
-    if(!device) {
-
-      return "";
-    }
+  public getDeviceName(device: AccessDeviceConfig, name = device.alias?.length ? device.alias : device.name, deviceInfo = false): string {
 
     // Include the host address information, if we have it.
     const host = (("ip" in device) && device.ip) ? "address: " + device.ip + " " : "";
@@ -751,8 +766,29 @@ export class AccessApi extends EventEmitter {
     }
 
     this.eventsTimer = null;
-    this.events?.terminate();
+    this.events?.close();
     this.events = null;
+
+    if(this.address) {
+
+      // Cleanup any prior pool.
+      void this.dispatcher?.destroy();
+
+      // Create an interceptor that allows us to set the user agent to our liking.
+      const ua: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (opts: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler) => {
+
+        opts.headers ??= {};
+        (opts.headers as Record<string, string>)["user-agent"] = "unifi-access";
+
+        return dispatch(opts, handler);
+      };
+
+      // Create a dispatcher using a new pool. We want to explicitly allow self-signed SSL certificates, enabled HTTP2 connections, and allow up to five connections at a
+      // time and provide some robust retry handling - we retry each request up to three times, with backoff.
+      this.dispatcher = new Pool("https://" + this.address, { allowH2: true, clientTtl: 60 * 1000, connect: { rejectUnauthorized: false }, connections: 5 })
+        .compose(ua, interceptors.retry({ maxRetries: 5, maxTimeout: 1500, methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ], minTimeout: 100,
+          statusCodes: [ 400, 404, 429, 500, 502, 503, 504 ], timeoutFactor: 2 }));
+    }
   }
 
   /**
@@ -768,39 +804,65 @@ export class AccessApi extends EventEmitter {
     this._isAdminUser = false;
 
     // Save our CSRF token, if we have one.
-    const csrfToken = this.headers?.get("X-CSRF-Token");
+    const csrfToken = this.headers["x-csrf-token"];
 
     // Initialize the headers we need.
-    this.headers = new Headers();
-    this.headers.set("Content-Type", "application/json");
+    this.headers = {};
+    this.headers["content-type"] = "application/json";
 
     // Restore the CSRF token if we have one.
     if(csrfToken) {
 
-      this.headers.set("X-CSRF-Token", csrfToken);
+      this.headers["x-csrf-token"] = csrfToken;
     }
   }
 
   /**
    * Execute an HTTP fetch request to the Access controller.
    *
-   * @param url       - Requested endpoint type. Valid types are `livestream` and `talkback`.
+   * @param url       - Full URL to request (e.g., `https://192.168.1.1/proxy/access/api/v2/devices/topologyv4`)
    * @param options   - Parameters to pass on for the endpoint request.
-   * @param logErrors - Log errors that aren't already accounted for and handled, rather than failing silently. Defaults to `true`.
+   * @param retrieveOptions - Additional options for error handling and timeouts
    *
-   * @returns Returns a promise that will resolve to a Response object successful, and `null` otherwise.
+   * @returns Promise resolving to the Response object, or `null` on failure.
    *
-   * @remarks This method should be used when direct access to the Access controller is needed, or when this library doesn't have a needed method to access
-   *   controller capabilities.
+   * @remarks
+   * This method provides direct access to the Protect controller API for advanced use cases not covered by the built-in methods. It handles:
+   *
+   * - Authentication and session management
+   * - Automatic retry with exponential backoff
+   * - Error logging and throttling
+   * - CSRF token management
+   *
+   * The `options` parameter extends [Undici's RequestOptions](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions), providing full control
+   * over the HTTP request.
    */
   // Communicate HTTP requests with a Access controller.
-  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true): Promise<Response | null> {
+  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, retrieveOptions: RetrieveOptions = {}):
+  Promise<Nullable<Dispatcher.ResponseData<unknown>>> {
 
-    return this._retrieve(url, options, logErrors);
+    return this._retrieve(url, options, retrieveOptions);
   }
 
   // Internal interface to communicating HTTP requests with an Access controller, with error handling.
-  private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false): Promise<Response | null> {
+  private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, retrieveOptions: InternalRetrieveOptions = {}):
+  Promise<Nullable<Dispatcher.ResponseData<unknown>>> {
+
+    // Set our defaults unless the user has overriden them.
+    retrieveOptions.decodeResponse ??= true;
+    retrieveOptions.logErrors ??= true;
+    retrieveOptions.timeout ??= ACCESS_API_TIMEOUT;
+
+    // Log errors if that's what the caller requested.
+    const logError = (message: string, ...parameters: unknown[]): void => {
+
+      if(!retrieveOptions.logErrors) {
+
+        return;
+      }
+
+      this.log.error(message, ...parameters);
+    };
 
     // Catch Access controller server-side issues:
     //
@@ -810,15 +872,17 @@ export class AccessApi extends EventEmitter {
     // 500: Internal server error.
     // 502: Bad gateway.
     // 503: Service temporarily unavailable.
-    const isServerSideIssue = (code: number): boolean => [400, 404, 429, 500, 502, 503].some(x => x === code);
+    const serverErrors = new Set([ 400, 404, 429, 500, 502, 503 ]);
 
-    let response: Response;
+    let response: Dispatcher.ResponseData<unknown>;
 
     // Create a signal handler to deliver the abort operation.
-    const signal = timeoutSignal(ACCESS_API_TIMEOUT * 1000);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), retrieveOptions.timeout);
 
+    options.dispatcher = this.dispatcher;
     options.headers = this.headers;
-    options.signal = signal;
+    options.signal = controller.signal;
 
     try {
 
@@ -828,12 +892,15 @@ export class AccessApi extends EventEmitter {
       if(this.apiErrorCount >= ACCESS_API_ERROR_LIMIT) {
 
         // Let the user know we've got an API problem.
-        if(this.apiErrorCount === ACCESS_API_ERROR_LIMIT) {
+        if(!this._isThrottled) {
+
+          this.apiLastSuccess = now;
+          this._isThrottled = true;
 
           this.log.error("Throttling API calls due to errors with the %s previous attempts. Pausing communication with the Access controller for %s minutes.",
-            this.apiErrorCount, ACCESS_API_RETRY_INTERVAL / 60);
-          this.apiErrorCount++;
-          this.apiLastSuccess = now;
+            this.apiErrorCount++, ACCESS_API_RETRY_INTERVAL / 60);
+
+          this.reset();
 
           return null;
         }
@@ -848,7 +915,7 @@ export class AccessApi extends EventEmitter {
         this.log.error("Resuming connectivity to the UniFi Access API after pausing for %s minutes.", ACCESS_API_RETRY_INTERVAL / 60);
 
         this.apiErrorCount = 0;
-        this.reset();
+        this._isThrottled = false;
 
         if(!(await this.loginController())) {
 
@@ -856,10 +923,10 @@ export class AccessApi extends EventEmitter {
         }
       }
 
-      response = await this.fetch(url, options);
+      response = await request(url, options);
 
       // The caller will sort through responses instead of us.
-      if(!decodeResponse) {
+      if(!retrieveOptions.decodeResponse) {
 
         return response;
       }
@@ -868,100 +935,137 @@ export class AccessApi extends EventEmitter {
       this.apiErrorCount++;
 
       // Bad username and password.
-      if(response.status === 401) {
+      if(response.statusCode === 401) {
 
         this.logout();
-        this.log.error("Invalid login credentials given. Please check your login and password.");
+        logError("Invalid login credentials given. Please check your login and password.");
 
         return null;
       }
 
       // Insufficient privileges.
-      if(response.status === 403) {
+      if(response.statusCode === 403) {
 
-        this.log.error("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
-
-        return null;
-      }
-
-      if(!response.ok && isServerSideIssue(response.status)) {
-
-        this.log.error("Unable to connect to the Access controller. This is usually temporary and will occur during Access controller reboots and firmware updates.");
+        logError("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
 
         return null;
       }
 
-      // Some other unknown error occurred.
-      if(!response.ok) {
+      if(!this.responseOk(response.statusCode)) {
 
-        this.log.error("%s - %s", response.status, response.statusText);
+        if(serverErrors.has(response.statusCode)) {
+
+          logError("Unable to connect to the Access controller. This is usually temporary and will occur during device reboots.");
+
+          return null;
+        }
+
+        // Some other unknown error occurred.
+        logError("%s - %s", response.statusCode, STATUS_CODES[response.statusCode]);
 
         return null;
       }
 
       this.apiLastSuccess = Date.now();
       this.apiErrorCount = 0;
+      this._isThrottled = false;
 
       return response;
     } catch(error) {
 
+      // Increment our API error count.
       this.apiErrorCount++;
 
-      if(error instanceof AbortError) {
+      // We aborted the connection.
+      if((error instanceof DOMException) && (error.name === "AbortError")) {
 
-        this.log.error("Access controller is taking too long to respond to a request. This error can usually be safely ignored.");
+        logError("Access controller is taking too long to respond to a request. This error can usually be safely ignored.");
         this.log.debug("Original request was: %s", url);
 
         return null;
       }
 
-      if(error instanceof FetchError) {
+      // We destroyed the pool due to a reset event and our inflight connections are failing.
+      if(error instanceof errors.ClientDestroyedError) {
 
-        switch(error.code) {
+        return null;
+      }
+
+      // We destroyed the pool due to a reset event and our inflight connections are failing.
+      if(error instanceof errors.RequestRetryError) {
+
+        logError("Unable to connect to the Access controller. This is usually temporary and will occur during device reboots.");
+
+        return null;
+      }
+
+      // Connection timed out.
+      if(error instanceof errors.ConnectTimeoutError) {
+
+        logError("Connection timed out.");
+
+        return null;
+      }
+
+      let cause;
+
+      if(error instanceof TypeError) {
+
+        cause = error.cause as NodeJS.ErrnoException;
+      }
+
+      if((error instanceof Error) && ("code" in error) && (typeof (error as NodeJS.ErrnoException).code === "string")) {
+
+        cause = error;
+      }
+
+      if(cause) {
+
+        switch(cause.code) {
 
           case "ECONNREFUSED":
-          case "ERR_HTTP2_STREAM_CANCEL":
+          case "EHOSTDOWN":
 
-            this.log.error("Connection refused.");
+            logError("Connection refused.");
 
             break;
 
           case "ECONNRESET":
 
-            // Retry on connection reset, but no more than once.
-            if(!isRetry) {
-
-              return this._retrieve(url, options, logErrors, decodeResponse, true);
-            }
-
-            this.log.error("Network connection to Access controller has been reset.");
+            logError("Network connection to Access controller has been reset.");
 
             break;
 
           case "ENOTFOUND":
 
-            this.log.error("Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Access controller is correct.",
-              this.address);
+            if(this.address) {
+
+              logError("Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Access controller is correct.", this.address);
+            } else {
+
+              logError("No hostname or IP address provided.");
+            }
 
             break;
 
           default:
 
             // If we're logging when we have an error, do so.
-            if(logErrors) {
-
-              this.log.error("Error: %s %s.", error.code, error.message);
-            }
+            logError("Error: %s | %s.", cause.code, cause.message);
 
             break;
         }
+
+        return null;
       }
+
+      logError("Unknown error: %s", util.inspect(error, { colors: true, depth: null, sorted: true}));
 
       return null;
     } finally {
 
-      // Clear out our response timeout if needed.
-      signal.clear();
+      // Clear out our response timeout.
+      clearTimeout(timer);
     }
   }
 
@@ -982,6 +1086,17 @@ export class AccessApi extends EventEmitter {
 
       this.log.error(logMessage);
     }
+  }
+
+  // Utility to check return status from a call to request.
+  public responseOk(code?: number): boolean {
+
+    if(code === undefined) {
+
+      return false;
+    }
+
+    return (code >= 200) && (code < 300);
   }
 
   /**
@@ -1069,7 +1184,7 @@ export class AccessApi extends EventEmitter {
    * @returns Returns the controller information JSON if the Access controller has been bootstrapped, `null` otherwise.
    */
   // Get the controller JSON.
-  public get controller(): AccessControllerConfig | null {
+  public get controller(): Nullable<AccessControllerConfig> {
 
     return this._controller;
   }
@@ -1080,7 +1195,7 @@ export class AccessApi extends EventEmitter {
    * @returns Returns the bootstrap JSON if the Access controller has been bootstrapped, `null` otherwise.
    */
   // Get the bootstrap JSON.
-  public get bootstrap(): AccessBootstrapConfig | null {
+  public get bootstrap(): Nullable<AccessBootstrapConfig> {
 
     return this._bootstrap;
   }
@@ -1091,7 +1206,7 @@ export class AccessApi extends EventEmitter {
    * @returns Returns an array of all the devices from all the UniFi Access hubs associated with this controller, `null` otherwise.
    */
   // Get the list of devices.
-  public get devices(): AccessDeviceConfig[] | null {
+  public get devices(): Nullable<AccessDeviceConfig[]> {
 
     return this._devices;
   }
@@ -1102,7 +1217,7 @@ export class AccessApi extends EventEmitter {
    * @returns Returns an array of all the doors from all the UniFi Access hubs associated with this controller, `null` otherwise.
    */
   // Get the list of doors.
-  public get doors(): AccessDoorConfig[] | null {
+  public get doors(): Nullable<AccessDoorConfig[]> {
 
     return this._doors;
   }
@@ -1113,7 +1228,7 @@ export class AccessApi extends EventEmitter {
    * @returns Returns an array of all the floors from all the UniFi Access hubs associated with this controller, `null` otherwise.
    */
   // Get the list of floors.
-  public get floors(): AccessFloorConfig[] | null {
+  public get floors(): Nullable<AccessFloorConfig[]> {
 
     return this._floors;
   }
@@ -1130,6 +1245,18 @@ export class AccessApi extends EventEmitter {
   }
 
   /**
+   * Utility method that returns whether our connection to the Access controller is currently throttled or not.
+   *
+   * @returns Returns `true` if the API has returned too many errors and is now throttled for a period of time, `false` otherwise.
+   *
+   * @category Utilities
+   */
+  public get isThrottled(): boolean {
+
+    return this._isThrottled;
+  }
+
+  /**
    * Utility method that returns a nicely formatted version of the Access controller name.
    *
    * @returns Returns the Access controller name in the following format:
@@ -1142,7 +1269,7 @@ export class AccessApi extends EventEmitter {
     // Our controller string, if it exists, appears as `Controller`. Otherwise, we appear as `address`.
     if(this._bootstrap?.alias?.length || this._bootstrap?.name?.length) {
 
-      return this._bootstrap.alias?.length ? this._bootstrap.alias : this._bootstrap.name;
+      return this._bootstrap.alias?.length ? this._bootstrap.alias : this._bootstrap.name ?? "Unknown";
     } else {
 
       return this.address;
