@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 1.5.0 (2025-11-10)
+  * Improvement: additional typings for recent Access releases.
+  * Housekeeping.
+
 ## 1.4.0 (2025-11-09)
   * Behavior change: we now use undici for the underlying network stack, resulting in some adjustments to our API options.
   * New feature: UniFi Access Gate Hub support.
