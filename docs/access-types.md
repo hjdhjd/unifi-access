@@ -777,6 +777,13 @@ type AccessEventPacket = {
      | AccessDeviceConfig;
   event: string;
   event_object_id: string;
+  meta?: {
+     all_field: boolean;
+     id: string;
+     object_type: string;
+     source: string;
+     target_field: string[];
+  };
   receiver_id: string;
   save_to_history: boolean;
 };
@@ -805,5 +812,11 @@ property.
 | <a id="data-1"></a> `data` | \| `Record`\<`string`, `string`\> \| `Record`\<`string`, `unknown`\> \| [`AccessControllerConfig`](#accesscontrollerconfig) \| [`AccessDeviceConfig`](#accessdeviceconfig) |
 | <a id="event"></a> `event` | `string` |
 | <a id="event_object_id"></a> `event_object_id` | `string` |
+| <a id="meta"></a> `meta?` | \{ `all_field`: `boolean`; `id`: `string`; `object_type`: `string`; `source`: `string`; `target_field`: `string`[]; \} |
+| `meta.all_field` | `boolean` |
+| `meta.id` | `string` |
+| `meta.object_type` | `string` |
+| `meta.source` | `string` |
+| `meta.target_field` | `string`[] |
 | <a id="receiver_id"></a> `receiver_id` | `string` |
 | <a id="save_to_history"></a> `save_to_history` | `boolean` |

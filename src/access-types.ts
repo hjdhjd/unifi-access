@@ -37,8 +37,16 @@ export type AccessApiResponse = {
 export type AccessEventPacket = {
 
   event: string;
-  receiver_id: string;
   event_object_id: string;
+  meta?: {
+
+    all_field: boolean;
+    id: string;
+    object_type: string;
+    source: string;
+    target_field: string[];
+  };
+  receiver_id: string;
   save_to_history: boolean;
   data: Record<string, string> | Record<string, unknown> | AccessControllerConfig | AccessDeviceConfig;
 };
