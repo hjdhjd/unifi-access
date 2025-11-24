@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 1.5.1 (2025-11-24)
+  * Housekeeping.
+
 ## 1.5.0 (2025-11-10)
   * Improvement: additional typings for recent Access releases.
   * Housekeeping.
