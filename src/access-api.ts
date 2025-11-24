@@ -409,8 +409,12 @@ export class AccessApi extends EventEmitter {
       // Handle any websocket errors.
       ws.addEventListener("error", (event: ErrorEvent): void => {
 
-        this.log.error("Events API error: %s", event.error.cause);
-        this.log.error(util.inspect(event.error, { colors: true, depth: null, sorted: true }));
+        // Check if this is a TypeError from undici's internal WebSocket handling. They're expected in certain disconnection scenarios.
+        if(!(event.error instanceof TypeError)) {
+
+          this.log.error("Events API error: %s", event.error.cause);
+          this.log.error(util.inspect(event.error, { colors: true, depth: null, sorted: true }));
+        }
 
         ws.close();
       }, { once: true });
