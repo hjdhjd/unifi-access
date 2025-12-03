@@ -322,6 +322,11 @@ export class AccessApi extends EventEmitter {
     // Retrieve the list of devices from all the doors the user has configured.
     this._devices = this._doors?.map(x => x.device_groups ?? []).flat(2).filter(Boolean) ?? null;
 
+    // In case some doors don't have any devices, add them in device_groups at the top level
+    // Guard against undefined `device_groups` so we don't call `.flat()`/`.filter()` on undefined.
+    const topLevelDeviceGroups = (this._bootstrap?.device_groups?.flat() ?? []).filter(Boolean);
+    this._devices = (this._devices ?? []).concat(topLevelDeviceGroups);
+
     // In case we end up with an empty floors array due to changes in the Access API, we can conceivably end up with an empty array here.
     this._devices = this._devices?.length ? this._devices : null;
 
