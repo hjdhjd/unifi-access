@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 1.5.3 (2026-01-23)
+  * Fix: resolve an issue where Gate Hubs were not discovered when multiple hub types exist.
+
 ## 1.5.2 (2026-01-23)
   * Housekeeping.
 
