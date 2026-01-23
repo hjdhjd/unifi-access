@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Copyright(C) 2019-2025, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * ufa.ts: UniFi Access API command line utility.
  */
