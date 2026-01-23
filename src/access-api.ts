@@ -322,13 +322,15 @@ export class AccessApi extends EventEmitter {
     // Retrieve the list of devices from all the doors the user has configured.
     this._devices = this._doors?.map(x => x.device_groups ?? []).flat(2).filter(Boolean) ?? null;
 
-    // UA 4.x fallback: some controllers expose device_groups at the top level without floors/doors.
+    // Some controllers expose device_groups at the top level in addition to (or instead of) within the floors/doors hierarchy. We merge them here.
     if(Array.isArray(this._bootstrap?.device_groups)) {
-      const topLevelDeviceGroups = (this._bootstrap?.device_groups?.flat() ?? []).filter(Boolean);
+
+      const topLevelDeviceGroups = this._bootstrap.device_groups.flat().filter(Boolean);
+
       this._devices = (this._devices ?? []).concat(topLevelDeviceGroups);
     }
 
-    // In case we end up with an empty floors array due to changes in the Access API, we can conceivably end up with an empty array here.
+    // In case we end up with an empty devices array due to changes in the Access API, we can conceivably end up with an empty array here.
     this._devices = this._devices?.length ? this._devices : null;
 
     // Account for Enterprise Access Hubs. What we do here is append to the devices array a transformed version of each extension (which in the case of an EAH amounts to
