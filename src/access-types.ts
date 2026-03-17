@@ -5,7 +5,7 @@
 /** @ignore */
 export type DeepPartial<T> = {
 
-  [P in keyof T]?: T[P] extends Array<infer I> ? Array<DeepPartial<I>> : DeepPartial<T[P]>
+  [P in keyof T]?: T[P] extends (infer I)[] ? DeepPartial<I>[] : DeepPartial<T[P]>
 };
 
 /** @ignore */
@@ -14,14 +14,14 @@ export type Nullable<T> = T | null;
 /**
  * UniFi Access API response JSON.
  */
-export type AccessApiResponse = {
+export interface AccessApiResponse {
 
   code: number;
   codeS: string;
   msg: string;
   error: string;
   data: Record<string, unknown> | Record<string, unknown>[] | string;
-};
+}
 
 /**
  * UniFi Access event packet.
@@ -34,7 +34,7 @@ export type AccessApiResponse = {
  * property.
  */
 // A complete description of the UniFi Access notification events API packet format.
-export type AccessEventPacket = {
+export interface AccessEventPacket {
 
   event: string;
   event_object_id: string;
@@ -49,10 +49,10 @@ export type AccessEventPacket = {
   receiver_id: string;
   save_to_history: boolean;
   data: Record<string, string> | Record<string, unknown> | AccessControllerConfig | AccessDeviceConfig;
-};
+}
 
 // Access doorbell ring event data payload.
-export type AccessEventDoorbellRing = {
+export interface AccessEventDoorbellRing {
 
   channel: string;
   clear_request_id: string;
@@ -73,14 +73,14 @@ export type AccessEventDoorbellRing = {
   room_id: string;
   support_feature: string[];
   token: string;
-};
+}
 
 // Access doorbell ring cancel event data payload.
-export type AccessEventDoorbellCancel = {
+export interface AccessEventDoorbellCancel {
 
   reason_code: number;
   remote_call_request_id: string;
-};
+}
 
 // An semi-complete description of the UniFi Access topology JSON, which we use to bootstrap.
 export interface AccessBootstrapConfigInterface {

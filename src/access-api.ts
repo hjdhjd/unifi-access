@@ -87,9 +87,9 @@ export class AccessApi extends EventEmitter {
       /* eslint-disable no-console */
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       debug: (_message: string, ..._parameters: unknown[]): void => { /* No debug logging by default. */ },
-      error: (message: string, ...parameters: unknown[]): void => console.error(message, ...parameters),
-      info: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters),
-      warn: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters)
+      error: (message: string, ...parameters: unknown[]): void => { console.error(message, ...parameters); },
+      info: (message: string, ...parameters: unknown[]): void => { console.log(message, ...parameters); },
+      warn: (message: string, ...parameters: unknown[]): void => { console.log(message, ...parameters); }
       /* eslint-enable no-console */
     };
 
@@ -105,10 +105,10 @@ export class AccessApi extends EventEmitter {
 
     this.log = {
 
-      debug: (message: string, ...parameters: unknown[]): void => log.debug(this.name + ": " + message, ...parameters),
-      error: (message: string, ...parameters: unknown[]): void => log.error(this.name + ": API error: " + message, ...parameters),
-      info: (message: string, ...parameters: unknown[]): void => log.info(this.name + ": " + message, ...parameters),
-      warn: (message: string, ...parameters: unknown[]): void => log.warn(this.name + ": " + message, ...parameters)
+      debug: (message: string, ...parameters: unknown[]): void => { log.debug(this.name + ": " + message, ...parameters); },
+      error: (message: string, ...parameters: unknown[]): void => { log.error(this.name + ": API error: " + message, ...parameters); },
+      info: (message: string, ...parameters: unknown[]): void => { log.info(this.name + ": " + message, ...parameters); },
+      warn: (message: string, ...parameters: unknown[]): void => { log.warn(this.name + ": " + message, ...parameters); }
     };
 
     this.apiErrorCount = 0;
@@ -340,7 +340,8 @@ export class AccessApi extends EventEmitter {
     const eahDevices = this._bootstrap?.device_groups?.flat().filter(device => device.device_type === "UAH-Ent").
       flatMap(({ extensions = [], alias, display_model, location_id, ...device }) => extensions.
         map(({ target_name, target_value, ...extension }) => ({...device, ...extension, alias: target_name ?? "Unknown",
-          display_model: display_model + ((extension.source_id !== undefined) ? " " + extension.source_id.replace(/(^\w|\s+\w)/g, match => match.toUpperCase()) : ""),
+          display_model: (display_model ?? "") +
+            ((extension.source_id !== undefined) ? " " + extension.source_id.replace(/(^\w|\s+\w)/g, match => match.toUpperCase()) : ""),
           location_id: target_value ?? location_id, name: alias })));
     /* eslint-enable camelcase */
 
@@ -459,7 +460,7 @@ export class AccessApi extends EventEmitter {
         try {
 
           // Emit the decoded packet for users.
-          this.emit("message", JSON.parse(event.data));
+          this.emit("message", JSON.parse(event.data as string));
         } catch(error) {
 
           this.log.error("Error processing message from the events API: %s", error);
@@ -893,7 +894,7 @@ export class AccessApi extends EventEmitter {
 
     // Create a signal handler to deliver the abort operation.
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), retrieveOptions.timeout);
+    const timer = setTimeout(() => { controller.abort(); }, retrieveOptions.timeout);
 
     options.dispatcher = this.dispatcher;
     options.headers = this.headers;

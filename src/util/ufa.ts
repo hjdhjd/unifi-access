@@ -118,13 +118,13 @@ class PropertyFilter implements EventFilter {
 
       if(resolvedId) {
 
-        const actualValue = String(packet.event_object_id);
+        const actualValue = packet.event_object_id;
 
         return this.negate ? actualValue.toLowerCase() !== resolvedId.toLowerCase() : actualValue.toLowerCase() === resolvedId.toLowerCase();
       }
 
       // If we can't resolve the name, try matching against the ID directly.
-      const actualValue = String(packet.event_object_id);
+      const actualValue = packet.event_object_id;
       const matches = actualValue.toLowerCase() === this.value.toLowerCase();
 
       return this.negate ? !matches : matches;
@@ -138,6 +138,7 @@ class PropertyFilter implements EventFilter {
       return this.negate;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     return this.compareValues(String(actualValue));
   }
 
@@ -228,7 +229,7 @@ class DeviceTypeFilter implements EventFilter {
   private readonly deviceType: string;
   private readonly negate: boolean;
 
-  constructor(deviceType: string, negate: boolean = false) {
+  constructor(deviceType: string, negate = false) {
 
     this.deviceType = deviceType;
     this.negate = negate;
@@ -438,9 +439,9 @@ const log = {
       console.error("[DEBUG] " + util.format(message, ...parameters));
     }
   },
-  error: (message: string, ...parameters: unknown[]): void => console.error(util.format(message, ...parameters)),
-  info: (message: string, ...parameters: unknown[]): void => console.log(util.format(message, ...parameters)),
-  warn: (message: string, ...parameters: unknown[]): void => console.log(util.format(message, ...parameters))
+  error: (message: string, ...parameters: unknown[]): void => { console.error(util.format(message, ...parameters)); },
+  info: (message: string, ...parameters: unknown[]): void => { console.log(util.format(message, ...parameters)); },
+  warn: (message: string, ...parameters: unknown[]): void => { console.log(util.format(message, ...parameters)); }
   /* eslint-enable no-console */
 };
 
@@ -580,7 +581,7 @@ function parseArguments(argv: string[]): ParsedOptions {
     }
 
     // Property filters in the form property=value, property!=value, property~value, etc.
-    const filterMatch = arg.match(/^([a-zA-Z0-9_.]+)(==|!=|~|!~|>=|<=|>|<|=)(.+)$/);
+    const filterMatch = /^([a-zA-Z0-9_.]+)(==|!=|~|!~|>=|<=|>|<|=)(.+)$/.exec(arg);
 
     if(filterMatch) {
 
@@ -1023,7 +1024,7 @@ async function handleUnlock(options: ParsedOptions): Promise<void> {
     process.exit(1);
   }
 
-  log.info("%s: unlocked%s.", ufa.getDeviceName(device), duration ? " for " + duration + " seconds" : "");
+  log.info("%s: unlocked%s.", ufa.getDeviceName(device), duration ? " for " + String(duration) + " seconds" : "");
 
   process.exit(0);
 }
@@ -1189,7 +1190,7 @@ async function main(): Promise<void> {
 }
 
 // Run main.
-main().catch((error) => {
+main().catch((error: unknown) => {
 
   log.error("Fatal error: %s", error);
 
