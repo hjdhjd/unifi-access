@@ -3,7 +3,7 @@
  *
  * ufa.ts: UniFi Access API command line utility.
  */
-import type { AccessBootstrapConfig, AccessEventPacket, Nullable } from "../index.js";
+import type { AccessBootstrapConfig, AccessDeviceConfig, AccessEventPacket, Nullable } from "../index.js";
 import { existsSync, readFileSync } from "fs";
 import { AccessApi } from "../index.js";
 import { homedir } from "os";
@@ -62,10 +62,46 @@ interface FilterContext {
   bootstrap: Nullable<AccessBootstrapConfig>;
 
   // Get device name by ID.
-  getDeviceName(id: string): string | null;
+  getDeviceName(id: string): Nullable<string>;
 
   // Resolve a device name to its ID. Returns the ID if found, null otherwise.
-  resolveDeviceName(name: string): string | null;
+  resolveDeviceName(name: string): Nullable<string>;
+}
+
+// Resolve a dot-path to a value within an event packet. Paths starting with "data." or "meta." resolve within those sub-objects...all other paths resolve from the
+// packet root.
+function getValueAtPath(packet: AccessEventPacket, path: string): unknown {
+
+  const parts = path.split(".");
+  let current: unknown = packet;
+
+  if(parts[0] === "data") {
+
+    current = packet.data;
+    parts.shift();
+  } else if(parts[0] === "meta") {
+
+    current = packet.meta;
+    parts.shift();
+  }
+
+  for(const part of parts) {
+
+    if((current === null) || (current === undefined)) {
+
+      return undefined;
+    }
+
+    if(typeof current === "object") {
+
+      current = (current as Record<string, unknown>)[part];
+    } else {
+
+      return undefined;
+    }
+  }
+
+  return current;
 }
 
 // Property filter for matching event properties.
@@ -74,7 +110,7 @@ class PropertyFilter implements EventFilter {
   private readonly negate: boolean;
   private readonly operator: FilterOperator;
   private readonly path: string;
-  private readonly regex: RegExp | null;
+  private readonly regex: Nullable<RegExp>;
   private readonly value: string;
 
   constructor(path: string, operator: FilterOperator, value: string) {
@@ -131,7 +167,7 @@ class PropertyFilter implements EventFilter {
     }
 
     // Get the value at the specified path.
-    const actualValue = this.getValueAtPath(packet, this.path);
+    const actualValue = getValueAtPath(packet, this.path);
 
     if(actualValue === undefined) {
 
@@ -187,40 +223,6 @@ class PropertyFilter implements EventFilter {
     }
   }
 
-  private getValueAtPath(packet: AccessEventPacket, path: string): unknown {
-
-    const parts = path.split(".");
-    let current: unknown = packet;
-
-    // Check if path starts with "data", otherwise search at the top level first.
-    if(parts[0] === "data") {
-
-      current = packet.data;
-      parts.shift();
-    } else if(parts[0] === "meta") {
-
-      current = packet.meta;
-      parts.shift();
-    }
-
-    for(const part of parts) {
-
-      if((current === null) || (current === undefined)) {
-
-        return undefined;
-      }
-
-      if(typeof current === "object") {
-
-        current = (current as Record<string, unknown>)[part];
-      } else {
-
-        return undefined;
-      }
-    }
-
-    return current;
-  }
 }
 
 // Device type filter for matching Access device types (UAH, UAH-Door, etc.).
@@ -242,7 +244,7 @@ class DeviceTypeFilter implements EventFilter {
 
   public matches(packet: AccessEventPacket): boolean {
 
-    const data = packet.data as Record<string, unknown> | null;
+    const data = packet.data as Nullable<Record<string, unknown>>;
 
     if(!data || (typeof data !== "object")) {
 
@@ -376,7 +378,7 @@ class FieldsFormatter implements OutputFormatter {
 
     for(const field of this.fields) {
 
-      const value = this.getValueAtPath(packet, field);
+      const value = getValueAtPath(packet, field);
 
       if(value !== undefined) {
 
@@ -385,40 +387,6 @@ class FieldsFormatter implements OutputFormatter {
     }
 
     return JSON.stringify(result);
-  }
-
-  private getValueAtPath(packet: AccessEventPacket, path: string): unknown {
-
-    const parts = path.split(".");
-    let current: unknown = packet;
-
-    if(parts[0] === "data") {
-
-      current = packet.data;
-      parts.shift();
-    } else if(parts[0] === "meta") {
-
-      current = packet.meta;
-      parts.shift();
-    }
-
-    for(const part of parts) {
-
-      if((current === null) || (current === undefined)) {
-
-        return undefined;
-      }
-
-      if(typeof current === "object") {
-
-        current = (current as Record<string, unknown>)[part];
-      } else {
-
-        return undefined;
-      }
-    }
-
-    return current;
   }
 }
 
@@ -638,9 +606,9 @@ function createFilterContext(): FilterContext {
 
     bootstrap: ufa.bootstrap,
 
-    getDeviceName: (id: string): string | null => deviceIdMap.get(id) ?? null,
+    getDeviceName: (id: string): Nullable<string> => deviceIdMap.get(id) ?? null,
 
-    resolveDeviceName: (name: string): string | null => {
+    resolveDeviceName: (name: string): Nullable<string> => {
 
       // First check if it's already an ID.
       if(deviceIdMap.has(name)) {
@@ -652,6 +620,24 @@ function createFilterContext(): FilterContext {
       return deviceNameMap.get(name.toLowerCase()) ?? null;
     }
   };
+}
+
+// Find a device by name or ID (case-insensitive name matching).
+function findDevice(nameOrId: string): Nullable<AccessDeviceConfig> {
+
+  return ufa.devices?.find(dev => {
+
+    if(dev.unique_id === nameOrId) {
+
+      return true;
+    }
+
+    // We use || instead of ?? intentionally - we want to skip empty strings, not just null/undefined.
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+    const name = dev.alias || dev.name || "";
+
+    return name.toLowerCase() === nameOrId.toLowerCase();
+  }) ?? null;
 }
 
 // Create the appropriate output formatter based on options.
@@ -849,7 +835,7 @@ function handleEvents(options: ParsedOptions): void {
   const stats: EventStats = { byEvent: {}, total: 0 };
 
   let eventCount = 0;
-  let timeoutHandle: NodeJS.Timeout | null = null;
+  let timeoutHandle: Nullable<NodeJS.Timeout> = null;
 
   // Graceful shutdown handler.
   const shutdown = (): void => {
@@ -923,35 +909,86 @@ function handleEvents(options: ParsedOptions): void {
   }
 }
 
-// Restart command - restart devices.
+// Restart command - restart all devices or a specific device.
 async function handleRestart(options: ParsedOptions): Promise<void> {
 
   if(options.help) {
 
-    log.error("Usage: ufa restart devices");
+    log.error("Usage: ufa restart TARGET");
     log.error("");
-    log.error("Restart all connected devices that are not currently rebooting.");
+    log.error("Restart all devices or a specific device.");
+    log.error("");
+    log.error("Targets:");
+    log.error("  devices              Restart all connected devices");
+    log.error("  DEVICE_NAME_OR_ID    Restart a specific device by name or ID");
 
     process.exit(0);
   }
 
-  if((options.args.length !== 1) || (options.args[0] !== "devices")) {
+  if(options.args.length !== 1) {
 
-    log.error("Usage: ufa restart devices");
+    log.error("Usage: ufa restart TARGET");
+    log.error("Run 'ufa restart --help' for more information.");
 
     process.exit(1);
   }
 
-  for(const device of ufa.devices?.filter(x => !x.is_rebooting && x.is_connected) ?? []) {
+  const target = options.args[0];
+  let devices = ufa.devices ?? [];
+
+  // If the target isn't "devices", find the specific device by name or ID.
+  if(target !== "devices") {
+
+    const device = findDevice(target);
+
+    if(!device) {
+
+      log.error("No device found matching: %s", target);
+      listDevices();
+
+      process.exit(1);
+    }
+
+    devices = [device];
+  }
+
+  // Filter to devices that are connected and not already rebooting.
+  devices = devices.filter(device => {
+
+    if(device.is_rebooting) {
+
+      log.warn("%s: already rebooting.", ufa.getDeviceName(device));
+
+      return false;
+    }
+
+    if(!device.is_connected) {
+
+      log.warn("%s: not connected.", ufa.getDeviceName(device));
+
+      return false;
+    }
+
+    return true;
+  });
+
+  if(devices.length === 0) {
+
+    log.info("No connected devices found to restart.");
+
+    process.exit(0);
+  }
+
+  for(const device of devices) {
 
     // eslint-disable-next-line no-await-in-loop
     const response = await ufa.retrieve(ufa.getApiEndpoint("device") + "/" + device.unique_id + "/restart", { body: JSON.stringify({}), method: "PUT" });
 
     if(!ufa.responseOk(response?.statusCode)) {
 
-      log.error("%s: unable to reboot: %s", ufa.getDeviceName(device), response);
+      log.warn("%s: unable to restart.", ufa.getDeviceName(device));
 
-      break;
+      continue;
     }
 
     log.info("%s: restarted.", ufa.getDeviceName(device));
@@ -984,14 +1021,7 @@ async function handleUnlock(options: ParsedOptions): Promise<void> {
   }
 
   const deviceName = options.args[0];
-  const device = ufa.devices?.find(dev => {
-
-    // We use || instead of ?? intentionally - we want to skip empty strings, not just null/undefined.
-    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-    const name = dev.alias || dev.name || "";
-
-    return name.toLowerCase() === deviceName.toLowerCase();
-  });
+  const device = findDevice(deviceName);
 
   if(!device) {
 

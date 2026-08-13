@@ -82,7 +82,7 @@ export interface AccessEventDoorbellCancel {
   remote_call_request_id: string;
 }
 
-// An semi-complete description of the UniFi Access topology JSON, which we use to bootstrap.
+// A semi-complete description of the UniFi Access topology JSON, which we use to bootstrap.
 export interface AccessBootstrapConfigInterface {
 
   alias?: string;
@@ -101,19 +101,19 @@ export interface AccessBootstrapConfigInterface {
   work_time: string[];
 }
 
-// An semi-complete description of the UniFi Access controller JSON.
+// A semi-complete description of the UniFi Access controller JSON.
 export interface AccessControllerConfigInterface {
 
   adopted_by_uid: boolean;
   agent_info: {
 
-    admin_portal: string | null;
+    admin_portal: Nullable<string>;
     company_id: string;
     company_logo: string;
     company_name: string;
     configured: boolean;
     controller_id: string;
-    current_admin_portal: string | null;
+    current_admin_portal: Nullable<string>;
     endpoints: {
 
       admin: string;
@@ -130,7 +130,7 @@ export interface AccessControllerConfigInterface {
     is_setup: boolean;
     is_workspace_consistent: boolean;
     mqtt_connected: boolean;
-    site_info: string | null;
+    site_info: Nullable<string>;
     software_version: string;
     token_valid: boolean;
   };
@@ -168,7 +168,7 @@ export interface AccessControllerConfigInterface {
   ucore_capabilities: string[];
   ui_cdn: string;
   uid_acess_portal: string;
-  uid_adopt_info: string | null;
+  uid_adopt_info: Nullable<string>;
   uid_capabilities: string[];
   ulp_capabilities: string[];
   ulp_version: string;
@@ -176,7 +176,7 @@ export interface AccessControllerConfigInterface {
   version: string;
 }
 
-// An semi-complete description of the UniFi Access device JSON.
+// A semi-complete description of the UniFi Access device JSON.
 export interface AccessDeviceConfigInterface {
 
   adopt_time: number;
@@ -301,7 +301,7 @@ export interface AccessDeviceConfigInterface {
   version: string;
 }
 
-// An semi-complete description of the UniFi Access device entry configuration JSON.
+// A semi-complete description of the UniFi Access device entry configuration JSON.
 export interface AccessDeviceEntryConfigInterface {
 
   device_id: string;
@@ -311,7 +311,7 @@ export interface AccessDeviceEntryConfigInterface {
   value: string;
 }
 
-// An semi-complete description of the UniFi Access device extras JSON.
+// A semi-complete description of the UniFi Access device extras JSON.
 export interface AccessDeviceExtrasConfigInterface {
 
   door_thumbnail: string;
@@ -321,7 +321,7 @@ export interface AccessDeviceExtrasConfigInterface {
   "uah-wiring_state_dps-pos": boolean;
 }
 
-// An semi-complete description of the UniFi Access door JSON.
+// A semi-complete description of the UniFi Access door JSON.
 export interface AccessDoorConfigInterface {
 
   camera_resource_ids: string[];
@@ -341,7 +341,7 @@ export interface AccessDoorConfigInterface {
   work_time: string[];
 }
 
-// An semi-complete description of the UniFi Access floor JSON.
+// A semi-complete description of the UniFi Access floor JSON.
 export interface AccessFloorConfigInterface {
 
   doors: AccessDoorConfigInterface[];
@@ -358,8 +358,7 @@ export interface AccessFloorConfigInterface {
   work_time_id: string;
 }
 
-// We use types instead of interfaces here because we can more easily set the entire thing as readonly. Unfortunately, interfaces can't be quickly set as readonly in
-// Typescript without marking each and every property as readonly along the way.
+// We use Readonly<> type aliases here to make the entire interface readonly in a single declaration, rather than marking each property individually.
 /** @interface */
 export type AccessBootstrapConfig = Readonly<AccessBootstrapConfigInterface>;
 /** @interface */

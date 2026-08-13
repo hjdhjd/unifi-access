@@ -11,3 +11,6 @@ export const ACCESS_API_RETRY_INTERVAL = 300;
 
 // Access API response timeout, in milliseconds. This should never be greater than 5000 ms.
 export const ACCESS_API_TIMEOUT = 3500;
+
+// Events API heartbeat timeout, in milliseconds. If no heartbeat is received within this interval, the connection is considered unresponsive and is reset.
+export const ACCESS_EVENTS_HEARTBEAT_TIMEOUT = 10000;
