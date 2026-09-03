@@ -1,0 +1,11 @@
+[**unifi-access**](../README.md)
+
+***
+
+[Home](../README.md) / ACCESS\_BOOTSTRAP\_REFRESH\_INTERVAL
+
+# Variable: ACCESS\_BOOTSTRAP\_REFRESH\_INTERVAL
+
+```ts
+const ACCESS_BOOTSTRAP_REFRESH_INTERVAL: 120000 = 120000;
+```

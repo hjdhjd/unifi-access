@@ -12,20 +12,20 @@
 </DIV>
 </SPAN>
 
-`unifi-access` is a library that enabled you to connect to and communicate with the Ubiquiti UniFi Access native API and ecosystem. [UniFi Access](https://www.ui.com/door-access) is [Ubiquiti's](https://www.ui.com) enterprise and small business solution for door access with a variety of controller hardware options, locks, and readers for you to choose from, as well as an app which you can use to manage door security.
+`unifi-access` is a TypeScript library for the Ubiquiti [UniFi Access](https://ui.com/door-access) door access platform, implementing both of the controller's API surfaces: the native interface the Access application itself speaks, and the published developer API as a complete typed reference.
+
+The library is built around a single model: the controller's state is a reducer over a typed realtime notification stream, with a periodic re-bootstrap as a permanent failsafe. `AccessClient.connect()` returns a fully-ready client or throws a typed error, devices are live projections whose getters always reflect the current state, every failure is a typed `AccessError`, and every long-lived resource is an `AsyncDisposable` that `await using` tears down at scope exit.
+
+A client connects with credentials, a token, or both. Credentials reach the native surface - the topology and the realtime firehose. A token reaches the official developer API at `client.official`, with a typed method for every documented endpoint, webhook payload types with signature verification, and door control, and its device and door listings seed the same state model. So the device projections answer in either mode, carrying what that mode's census established. With both, door commands route official-first and `client.capabilities` says what the connection established.
+
+The package also installs `ufa`, a command-line client that is the library's reference consumer by construction: every command reaches the controller through the public API surface and nothing else.
 
 ## Why use this library for UniFi Access support?
-In short - because I use it every day to support a popular [Homebridge](https://homebridge.io) plugin named [homebridge-unifi-access](https://www.npmjs.com/package/homebridge-unifi-access) that I maintain.
 
-Ubiquiti has made a public UniFi Access API available and suitable for end users and large-scale integration scenarios, focused almost entirely on authentication integration and the ability to unlock a door. It works, it's supported by Ubiquiti, and if you're looking for an official solution that's where I would point you to. It's also limited in what it can do and constrained to a handful of use cases.
+In short, because I use it every day to support a [Homebridge](https://homebridge.io) plugin named [homebridge-unifi-access](https://www.npmjs.com/package/homebridge-unifi-access) that I maintain. I package the core API library separately from the plugin so that other open source projects can take advantage of the work that has been done here to understand and decode the UniFi Access API.
 
-I prefer native API solutions when possible - they can be more feature-rich and there's a fun challenge in solving the puzzle of how it's all put together.
-
-This implementation is unique: it's a true native library for UniFi Access, in much the same vein as my [UniFi Protect](https://www.npmjs.com/package/unifi-protect) library. It will ultimately provide access to the native capabilities of the Access platform well beyond what Ubiquiti officially supports currently. It's well-tested, it is modern, and most importantly, *it just works*. It's quite easy to add support for UniFi Access in your project using this library, and you can rely on the fact that the code is used by a significant population of users out there who ensure its continued robustness.
-
-This implementation is also in its infancy. More capabilities will come with time.
+The native UniFi Access API is largely undocumented, and implementing a library like this one is the result of many hours of trial and error as well as community support.
 
 ### <A NAME="access-contribute"></A>How you can contribute and make this library even better
-This implementation is not yet feature complete. I strive to add support for meaningful features to a broad groups of people in order to avoid any unnecessary cruft and technical debt that may accrue over time.
 
-The native UniFi Access API is undocumented and implementing a library like this one is the result of many hours of trial and error as well as community support.
+I welcome inputs and perspective, particularly around hardware I cannot test against directly. Gate hubs are the notable case: their behavior is implemented from field reports rather than from captures, and it is marked as such wherever it is asserted.

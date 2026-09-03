@@ -1,81 +1,90 @@
-[**unifi-access**](README.md)
+[**unifi-access**](../README.md)
 
 ***
 
-[Home](README.md) / access-logging
+[Home](../README.md) / AccessLogging
 
-# access-logging
+# Interface: AccessLogging
 
-## Interfaces
+Logging interface, leveraging what we do for Homebridge and elsewhere as a good template.
 
-### AccessLogging
+## Remarks
 
-#### Methods
+The library is silent by default, falling back to a no-op logger. To route output somewhere, inject your own logging functions covering all the alert levels
+the library uses: `debug`, `error`, `info`, and `warn`.
 
-##### debug()
+## Methods
+
+### debug()
 
 ```ts
 debug(message, ...parameters): void;
 ```
 
-###### Parameters
+#### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
 | `message` | `string` |
 | ...`parameters` | `unknown`[] |
 
-###### Returns
+#### Returns
 
 `void`
 
-##### error()
+***
+
+### error()
 
 ```ts
 error(message, ...parameters): void;
 ```
 
-###### Parameters
+#### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
 | `message` | `string` |
 | ...`parameters` | `unknown`[] |
 
-###### Returns
+#### Returns
 
 `void`
 
-##### info()
+***
+
+### info()
 
 ```ts
 info(message, ...parameters): void;
 ```
 
-###### Parameters
+#### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
 | `message` | `string` |
 | ...`parameters` | `unknown`[] |
 
-###### Returns
+#### Returns
 
 `void`
 
-##### warn()
+***
+
+### warn()
 
 ```ts
 warn(message, ...parameters): void;
 ```
 
-###### Parameters
+#### Parameters
 
 | Parameter | Type |
 | ------ | ------ |
 | `message` | `string` |
 | ...`parameters` | `unknown`[] |
 
-###### Returns
+#### Returns
 
 `void`

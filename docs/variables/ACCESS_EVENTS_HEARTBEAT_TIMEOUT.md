@@ -1,0 +1,11 @@
+[**unifi-access**](../README.md)
+
+***
+
+[Home](../README.md) / ACCESS\_EVENTS\_HEARTBEAT\_TIMEOUT
+
+# Variable: ACCESS\_EVENTS\_HEARTBEAT\_TIMEOUT
+
+```ts
+const ACCESS_EVENTS_HEARTBEAT_TIMEOUT: 10000 = 10000;
+```

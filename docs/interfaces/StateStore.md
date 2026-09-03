@@ -1,0 +1,86 @@
+[**unifi-access**](../README.md)
+
+***
+
+[Home](../README.md) / StateStore
+
+# Interface: StateStore
+
+The canonical state holder. See the module documentation for the model. The composition root constructs it and consumers read it; [createStateStore](../functions/createStateStore.md) is the
+one documented exception, the factory a test harness uses to drive the real engine standalone.
+
+## Implements
+
+- `AsyncDisposable`
+
+## Methods
+
+### \[asyncDispose\]()
+
+```ts
+asyncDispose: Promise<void>;
+```
+
+Stop the refresh failsafe and terminate every open observer. Safe to call more than once. After it resolves the store is inert: nothing dispatches, nothing is
+notified, and a later observation completes immediately rather than registering.
+
+#### Returns
+
+`Promise`\<`void`\>
+
+#### Implementation of
+
+```ts
+AsyncDisposable.[asyncDispose]
+```
+
+***
+
+### observe()
+
+```ts
+observe<T>(selector, opts?): AsyncGenerator<T>;
+```
+
+Observe a selector over the state. The returned async iterable yields the selector's output once at every point the value *changes* by reference, and never on a
+dispatch that left the value unchanged. Pair it with [StateStore.snapshot](#snapshot) for the current value: snapshot for "what is it now", observe for "tell me when
+it changes".
+
+Termination: pass `opts.signal` to end the iteration - the iterator returns cleanly on abort - or simply `break` out of the `for await`. Either path
+unregisters the observer. An already-aborted signal yields nothing, and so does an observation begun on a disposed store.
+
+#### Type Parameters
+
+| Type Parameter | Description |
+| ------ | ------ |
+| `T` | The selector's output type. |
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `selector` | (`state`) => `T` | A pure function from state to the value of interest. Use the memoized selectors in `state/selectors.ts` so unchanged collections compare equal. |
+| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts.signal?` | `AbortSignal` | - |
+
+#### Returns
+
+`AsyncGenerator`\<`T`\>
+
+An async iterable of the selector's value at each change.
+
+***
+
+### snapshot()
+
+```ts
+snapshot(): AccessState;
+```
+
+The current state. Synchronous and reference-stable between dispatches - safe to read on a hot path and to compare with `Object.is`.
+
+#### Returns
+
+[`AccessState`](../type-aliases/AccessState.md)
+
+The current [AccessState](../type-aliases/AccessState.md).

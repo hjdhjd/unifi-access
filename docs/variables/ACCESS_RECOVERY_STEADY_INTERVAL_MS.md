@@ -1,0 +1,11 @@
+[**unifi-access**](../README.md)
+
+***
+
+[Home](../README.md) / ACCESS\_RECOVERY\_STEADY\_INTERVAL\_MS
+
+# Variable: ACCESS\_RECOVERY\_STEADY\_INTERVAL\_MS
+
+```ts
+const ACCESS_RECOVERY_STEADY_INTERVAL_MS: 60000 = 60000;
+```
