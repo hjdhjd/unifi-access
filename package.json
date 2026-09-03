@@ -1,9 +1,9 @@
 {
   "name": "unifi-access",
   "type": "module",
-  "version": "1.5.3",
+  "version": "2.0.0",
   "displayName": "UniFi Access API",
-  "description": "A soon-to-be-almost-complete implementation of the UniFi Access API.",
+  "description": "A complete UniFi Access API implementation - the native interface and the published developer API, with realtime events and typed door control.",
   "author": {
     "name": "HJD",
     "url": "https://github.com/hjdhjd"
@@ -18,15 +18,13 @@
     "url": "https://github.com/hjdhjd/unifi-access/issues"
   },
   "keywords": [
-    "camera",
+    "access control",
+    "door access",
     "doorbell",
-    "ubiquiti",
-    "unifi",
-    "unifi access",
-    "unifi door access",
-    "motion",
-    "motion sensor",
+    "nfc",
     "security",
+    "smart lock",
+    "ubiquiti",
     "uck",
     "uck g2",
     "uck g2+",
@@ -35,32 +33,44 @@
     "udm",
     "udm pro",
     "udm-pro",
+    "unifi",
+    "unifi access",
+    "unifi access api",
     "unifi cloud key",
+    "unifi door access",
     "unifi dream machine pro",
-    "unifios"
+    "unifios",
+    "webhook"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "bin": {
-    "ufa": "dist/util/ufa.js"
+    "ufa": "dist/util/cli/index.js"
   },
-  "main": "dist/index.js",
   "scripts": {
-    "build": "shx rm -rf ./dist && tsc && shx chmod a+x ./dist/util/**.js",
-    "build-docs": "shx rm -f ./docs/[^CO]*.md && npx typedoc",
-    "clean": "shx rm -rf ./dist",
-    "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs src/**.ts src/util/**.ts",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/util/cli/index.js',0o755)\"",
+    "build-docs": "node -e \"for(const p of ['docs/classes', 'docs/functions', 'docs/interfaces', 'docs/modules', 'docs/type-aliases', 'docs/variables', 'docs/README.md'])require('node:fs').rmSync(p,{force:true,recursive:true})\" && npx typedoc",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{force:true,recursive:true})\"",
+    "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"0\"} eslint.config.mjs \"src/**/*.ts\"",
     "postpublish": "npm run clean",
-    "prepublishOnly": "npm run lint && npm run build",
-    "test": "eslint src/**.ts"
+    "prepublishOnly": "npm run lint && npm run typecheck && npm run build",
+    "test": "node --strip-types --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-exclude='src/**/*.test.ts' --test-coverage-exclude='src/**/*.fixtures.ts' --test-coverage-exclude='src/**/*.helpers.ts' --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=85 --test-timeout=15000 \"src/**/*.test.ts\"",
+    "test:watch": "node --strip-types --test --watch \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "5.10.0",
     "@types/node": "26.2.0",
     "eslint": "9.39.2",
     "homebridge-plugin-utils": "file:../homebridge-plugin-utils",
-    "shx": "0.4.0",
     "typedoc": "0.28.20",
     "typedoc-plugin-markdown": "4.12.0",
     "typescript": "5.9.3",
@@ -68,8 +78,5 @@
   },
   "dependencies": {
     "undici": "8.10.0"
-  },
-  "overrides": {
-    "@types/readable-stream": "4.0.23"
   }
 }

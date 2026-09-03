@@ -1,12 +1,11 @@
 {
 
   "$schema": "https://typedoc-plugin-markdown.org/schema.json",
-  "categoryOrder": ["Constructor", "API Access" , "Utilities"],
+  "categoryOrder": ["Client", "Devices", "State", "Events", "Transport", "Protocol", "Official", "Errors", "Diagnostics", "Utilities", "Other", "Reducer"],
   "cleanOutputDir": false,
   "disableSources": true,
-  "entryPoints": ["src/*.ts"],
+  "entryPoints": ["src/index.ts"],
   "enumMembersFormat": "table",
-  "exclude": [ "src/index.ts", "src/settings.ts"],
   "excludeExternals": true,
   "excludeInternal": true,
   "excludeNotDocumented": false,
@@ -18,7 +17,7 @@
   "indexFormat": "table",
   "mergeReadme": true,
   "out": "docs",
-  "outputFileStrategy": "modules",
+  "outputFileStrategy": "members",
   "parametersFormat": "table",
   "plugin": ["typedoc-plugin-markdown"],
   "propertiesFormat": "table",
@@ -28,5 +27,10 @@
     "breadcrumbs.home": "Home"
   },
   "typeDeclarationFormat": "table",
-  "useCodeBlocks": true
+  "useCodeBlocks": true,
+  "validation": {
+
+    "invalidLink": true,
+    "notExported": false
+  }
 }

@@ -2,11 +2,53 @@
  *
  * eslint.config.mjs: Linting defaults for Homebridge plugins.
  */
-import hbPluginUtils from "homebridge-plugin-utils/build/eslint-rules.mjs";
+import hbPluginUtils from "homebridge-plugin-utils/eslint";
 
 export default hbPluginUtils({
 
   allowDefaultProject: ["eslint.config.mjs"],
+
+  // Test, fixture, and helper files are co-located with production code under src/. They follow the same modern style rules as production but legitimately
+  // use a few patterns that the strict production preset would flag:
+  //
+  // - `describe()` / `test()` from `node:test` return promises whose lifecycle the runner itself manages, so a top-level `test(...)` looks like a floating
+  //   promise to the linter even though it is the canonical test definition shape.
+  //
+  // - Tests routinely narrow `unknown` inputs through guards that, after narrowing, leave subsequent member access as "definitely defined" - the linter then
+  //   flags the safety-net optional chain as "unnecessary" even though it is the chain that *enabled* the narrowing.
+  //
+  // - Test helpers compose mocks with `mock.fn()` and other return values whose types are intentionally permissive; requiring explicit return-type annotations
+  //   on every inline test arrow function adds noise without catching real bugs.
+  //
+  // - Some test callbacks are declared with `Promise<T>` return signatures (because the helper they pass to is async-shaped) but have no meaningful body to
+  //   await internally. Enforcing `require-await` here would force a cosmetic `await Promise.resolve()` inside every such callback - we'd rather let the test
+  //   express the intent directly. The test code paths are exercised by the runner regardless of the keyword.
+  //
+  // We turn off only the rules called out above for test infrastructure, so the rest of the strict preset still applies.
+  extraConfigs: [ {
+
+    files: [ "**/*.test.ts", "**/*.fixtures.ts", "**/*.helpers.ts" ],
+    rules: {
+
+      "@typescript-eslint/explicit-function-return-type": "off",
+      "@typescript-eslint/no-floating-promises": "off",
+      "@typescript-eslint/no-unnecessary-condition": "off",
+      "@typescript-eslint/require-await": "off"
+    }
+  },
+
+  // Fixture modules embed captured controller output verbatim, so their object keys sit in the order the controller sent them. That ordering is the evidence: a
+  // fixture reordered to satisfy the linter stops being a faithful record of what the wire carried, and the comparison it backs would be testing our tidying rather
+  // than the controller's behavior. Key sorting is therefore off for fixtures alone, and stays on for tests, which construct their own objects and should be
+  // alphabetical like production code.
+  {
+
+    files: ["**/*.fixtures.ts"],
+    rules: {
+
+      "sort-keys": "off"
+    }
+  } ],
   js: ["eslint.config.mjs"],
-  ts: [ "src/**.ts", "src/util/**.ts" ]
+  ts: ["src/**/*.ts"]
 });
