@@ -240,7 +240,8 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
 }
 
 // Build the fake official facade: exactly the domain methods the commands consume, each recording its invocation - method name and arguments, in call order - into
-// the shared call record before answering from the spec.
+// the shared call record before answering from the spec. Every method takes its arguments as one rest list, so the record is written the same way everywhere and a
+// change to the real facade's parameters touches no signature here.
 function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<string, unknown> {
 
   const record = (method: FakeOfficialMethod, ...args: unknown[]): void => void calls.official.push({ args, method });
@@ -255,21 +256,22 @@ function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<stri
     },
     devices: {
 
-      fetchAll: async (): Promise<unknown> => {
+      fetchAll: async (...args: unknown[]): Promise<unknown> => {
 
-        record("devices.fetchAll");
+        record("devices.fetchAll", ...args);
 
         return Promise.resolve(spec.deviceGroups ?? []);
       },
-      fetchSettings: async (id: string, call: unknown): Promise<unknown> => {
+      fetchSettings: async (...args: unknown[]): Promise<unknown> => {
 
-        record("devices.fetchSettings", id, call);
+        record("devices.fetchSettings", ...args);
 
-        return Promise.resolve(spec.settings ?? { "access_methods": {}, "device_id": id });
+        // The facade puts the device identifier first, so the default answer echoes that position back the way a real settings document carries it.
+        return Promise.resolve(spec.settings ?? { "access_methods": {}, "device_id": args[0] });
       },
-      updateSettings: async (id: string, opts: unknown, call: unknown): Promise<void> => {
+      updateSettings: async (...args: unknown[]): Promise<void> => {
 
-        record("devices.updateSettings", id, opts, call);
+        record("devices.updateSettings", ...args);
 
         if(spec.updateError !== undefined) {
 
@@ -287,15 +289,15 @@ function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<stri
     },
     logs: {
 
-      export: async (opts: unknown, call: unknown): Promise<Buffer> => {
+      export: async (...args: unknown[]): Promise<Buffer> => {
 
-        record("logs.export", opts, call);
+        record("logs.export", ...args);
 
         return Promise.resolve(spec.exportBytes ?? Buffer.from("csv"));
       },
-      fetch: async (opts: unknown, call: unknown): Promise<unknown> => {
+      fetch: async (...args: unknown[]): Promise<unknown> => {
 
-        record("logs.fetch", opts, call);
+        record("logs.fetch", ...args);
 
         return Promise.resolve({ data: { hits: spec.hits ?? [] } });
       }
@@ -308,9 +310,9 @@ function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<stri
     },
     spaces: {
 
-      fetchAll: async (call: unknown): Promise<unknown> => {
+      fetchAll: async (...args: unknown[]): Promise<unknown> => {
 
-        record("spaces.fetchAll", call);
+        record("spaces.fetchAll", ...args);
 
         if(spec.doorsError !== undefined) {
 
@@ -319,90 +321,94 @@ function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<stri
 
         return Promise.resolve(spec.doors ?? []);
       },
-      fetchEmergency: async (call: unknown): Promise<unknown> => {
+      fetchEmergency: async (...args: unknown[]): Promise<unknown> => {
 
-        record("spaces.fetchEmergency", call);
+        record("spaces.fetchEmergency", ...args);
 
         return Promise.resolve(spec.emergency ?? { "evacuation": false, "lockdown": false });
       },
-      fetchLockRule: async (id: string, call: unknown): Promise<unknown> => {
+      fetchLockRule: async (...args: unknown[]): Promise<unknown> => {
 
-        record("spaces.fetchLockRule", id, call);
+        record("spaces.fetchLockRule", ...args);
 
         return Promise.resolve(spec.lockRule ?? { "ended_time": 0, "type": "" });
       },
-      setEmergency: async (state: string, call: unknown): Promise<void> => {
+      setEmergency: async (...args: unknown[]): Promise<void> => {
 
-        record("spaces.setEmergency", state, call);
-
-        return Promise.resolve();
-      },
-      setLockRule: async (id: string, rule: unknown, call: unknown): Promise<void> => {
-
-        record("spaces.setLockRule", id, rule, call);
+        record("spaces.setEmergency", ...args);
 
         return Promise.resolve();
       },
-      unlock: async (id: string, opts: unknown, call: unknown): Promise<void> => {
+      setLockRule: async (...args: unknown[]): Promise<void> => {
 
-        record("spaces.unlock", id, opts, call);
+        record("spaces.setLockRule", ...args);
+
+        return Promise.resolve();
+      },
+      unlock: async (...args: unknown[]): Promise<void> => {
+
+        record("spaces.unlock", ...args);
 
         return Promise.resolve();
       }
     },
     users: {
 
-      fetch: async (id: string, opts: unknown, call: unknown): Promise<unknown> => {
+      fetch: async (...args: unknown[]): Promise<unknown> => {
 
-        record("users.fetch", id, opts, call);
+        record("users.fetch", ...args);
 
-        return Promise.resolve((spec.users ?? []).find((user) => user["id"] === id) ?? { "id": id });
+        // The facade puts the user identifier first, so that position is what the spec's roster is searched by.
+        return Promise.resolve((spec.users ?? []).find((user) => user["id"] === args[0]) ?? { "id": args[0] });
       },
-      fetchAll: async (opts: unknown, call: unknown): Promise<unknown> => {
+      fetchAll: async (...args: unknown[]): Promise<unknown> => {
 
-        record("users.fetchAll", opts, call);
+        record("users.fetchAll", ...args);
 
         return Promise.resolve({ data: spec.users ?? [] });
       },
-      uploadAvatar: async (id: string, opts: unknown, call: unknown): Promise<unknown> => {
+      uploadAvatar: async (...args: unknown[]): Promise<unknown> => {
 
-        record("users.uploadAvatar", id, opts, call);
+        record("users.uploadAvatar", ...args);
 
-        return Promise.resolve(spec.avatar ?? { "avatar_url": "/avatar/" + id });
+        // The facade puts the user identifier first, so the minted avatar path is built from that position.
+        return Promise.resolve(spec.avatar ?? { "avatar_url": "/avatar/" + String(args[0]) });
       }
     },
     visitors: {
 
-      fetch: async (id: string, call: unknown): Promise<unknown> => {
+      fetch: async (...args: unknown[]): Promise<unknown> => {
 
-        record("visitors.fetch", id, call);
+        record("visitors.fetch", ...args);
 
-        return Promise.resolve((spec.visitors ?? []).find((visitor) => visitor["id"] === id) ?? { "id": id });
+        // The facade puts the visitor identifier first, so that position is what the spec's roster is searched by.
+        return Promise.resolve((spec.visitors ?? []).find((visitor) => visitor["id"] === args[0]) ?? { "id": args[0] });
       },
-      fetchAll: async (opts: unknown, call: unknown): Promise<unknown> => {
+      fetchAll: async (...args: unknown[]): Promise<unknown> => {
 
-        record("visitors.fetchAll", opts, call);
+        record("visitors.fetchAll", ...args);
 
         return Promise.resolve({ data: spec.visitors ?? [] });
       }
     },
     webhooks: {
 
-      createEndpoint: async (opts: Record<string, unknown>, call: unknown): Promise<unknown> => {
+      createEndpoint: async (...args: unknown[]): Promise<unknown> => {
 
-        record("webhooks.createEndpoint", opts, call);
+        record("webhooks.createEndpoint", ...args);
 
-        return Promise.resolve(spec.createdEndpoint ?? { ...opts, "id": "wh-1", "secret": "minted-secret" });
+        // The facade puts the endpoint payload first, and the default answer echoes it back with the identifier and secret a controller mints.
+        return Promise.resolve(spec.createdEndpoint ?? { ...(args[0] as Record<string, unknown>), "id": "wh-1", "secret": "minted-secret" });
       },
-      deleteEndpoint: async (id: string, call: unknown): Promise<void> => {
+      deleteEndpoint: async (...args: unknown[]): Promise<void> => {
 
-        record("webhooks.deleteEndpoint", id, call);
+        record("webhooks.deleteEndpoint", ...args);
 
         return Promise.resolve();
       },
-      fetchAllEndpoints: async (call: unknown): Promise<unknown> => {
+      fetchAllEndpoints: async (...args: unknown[]): Promise<unknown> => {
 
-        record("webhooks.fetchAllEndpoints", call);
+        record("webhooks.fetchAllEndpoints", ...args);
 
         return Promise.resolve(spec.webhookEndpoints ?? []);
       }
