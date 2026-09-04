@@ -132,6 +132,7 @@ interface Harness {
     setNextUptime: (value: number) => void;
     setParkedStep: (step: Nullable<RecoveryStep>) => void;
     setReBootstrapError: (error: Nullable<Error>) => void;
+    setRelaunchError: (error: Nullable<Error>) => void;
     setVerifyError: (error: Nullable<Error>) => void;
     verifyCalls: () => number;
   };
@@ -166,6 +167,7 @@ async function harness(options: { initialUptime?: number; log?: AccessLogging; t
   let verifyError: Nullable<Error> = null;
   let reBootstrapCalls = 0;
   let reBootstrapError: Nullable<Error> = null;
+  let relaunchError: Nullable<Error> = null;
   let nextUptime = initialUptime;
   let parkedStep: Nullable<RecoveryStep> = null;
   let adminNeverResolves = false;
@@ -225,6 +227,13 @@ async function harness(options: { initialUptime?: number; log?: AccessLogging; t
 
   const eventStreamFactory = (signal?: AbortSignal): EventStream => {
 
+    // A test that sets this is asking the relaunch step to fail with the value it supplied, which is the only way a failure outside the error hierarchy reaches the
+    // monitor. It is set after the channel is open, so the initial stream is never the one that raises.
+    if(relaunchError !== null) {
+
+      throw relaunchError;
+    }
+
     // A relaunch the test parks on gets a socket that never reaches its open event, which is what leaves the attempt inside that await when disposal lands.
     const ws = new FakeWebSocket({ autoOpen: parkedStep !== "relaunch" });
 
@@ -274,6 +283,7 @@ async function harness(options: { initialUptime?: number; log?: AccessLogging; t
       setNextUptime: (value: number): void => void (nextUptime = value),
       setParkedStep: (step: Nullable<RecoveryStep>): void => void (parkedStep = step),
       setReBootstrapError: (error: Nullable<Error>): void => void (reBootstrapError = error),
+      setRelaunchError: (error: Nullable<Error>): void => void (relaunchError = error),
       setVerifyError: (error: Nullable<Error>): void => void (verifyError = error),
       verifyCalls: (): number => verifyCalls
     },
@@ -723,6 +733,36 @@ describe("ConnectionMonitor", () => {
       await pump(clock);
 
       await expectAt(() => monitor.state === "healthy");
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a failure at the relaunch step that is not an AccessError is announced as a network error carrying it", async () => {
+
+      const { clock, control, events, monitor, streams } = await harness();
+
+      await monitor.opened;
+      await settle();
+
+      /* The one recovery failure that does not already belong to the error hierarchy: a relaunch that raises something raw. A consumer branches on that hierarchy, so
+       * announcing a loss with a bare Error would be a hole in the contract every other announcement honors. The wrap is what closes it, and the cause is what keeps
+       * the original failure readable.
+       */
+      const raw = new Error("the notification socket could not be built");
+
+      control.setRelaunchError(raw);
+      streams[0]?.emitError(new Error("socket dropped"));
+      await pump(clock);
+
+      await expectAt(() => monitor.state === "lost");
+      assert.equal(events.lost.length, 1);
+
+      const fault = events.lost[0];
+
+      assert.ok(fault instanceof AccessNetworkError, "a raw failure reaches the consumer through the typed hierarchy");
+      assert.equal(fault.cause, raw, "the failure that actually happened is carried rather than discarded");
+
+      control.setRelaunchError(null);
 
       await monitor[Symbol.asyncDispose]();
     });
