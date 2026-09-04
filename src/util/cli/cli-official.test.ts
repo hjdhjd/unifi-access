@@ -363,17 +363,26 @@ describe("the api hatch", () => {
 
   test("the flag and path refusals happen before anything connects", async () => {
 
-    const cases: string[][] = [ [ "get", "doors" ], [ "fetch", "/doors" ], [ "get", "/doors", "--json", "{}" ], [ "get", "/doors", "--print" ],
-      [ "put", "/doors", "--out", "f" ], [ "put", "/doors", "--json", "{nope" ] ];
+    const cases: { args: string[]; sentence: string }[] = [
+      { args: [ "get", "doors" ], sentence: "The path must start with \"/\", below the official API's application prefix, but received \"doors\"." },
+      { args: [ "fetch", "/doors" ], sentence: "The verb must be one of: delete, get, post, put, but received \"fetch\"." },
+      { args: [ "get", "/doors", "--json", "{}" ], sentence: "A get carries no body, so --json applies to mutations only." },
+      { args: [ "get", "/doors", "--print" ], sentence: "A get always prints its result, so --print applies to mutations only." },
+      { args: [ "put", "/doors", "--out", "f" ], sentence: "The --out byte sink applies to gets only." },
+      { args: [ "get", "/doors", "--scrub", "--out", "f" ], sentence: "The --scrub flag applies to document output, and --out fetches raw bytes." },
+      { args: [ "put", "/doors", "--scrub" ], sentence: "A mutation prints no document without --print, so --scrub has nothing to act on." },
+      { args: [ "put", "/doors", "--json", "{nope" ], sentence: "The --json body is not valid JSON." }
+    ];
 
-    for(const args of cases) {
+    for(const { args, sentence } of cases) {
 
       const { calls, client } = makeFakeClient({ official: {} });
       const { ctx } = makeCommandContext({ args, calls, client });
 
-      // Sequential by intent: each refusal is asserted on its own invocation.
+      // Sequential by intent: each refusal is asserted on its own invocation, and the sentence is what tells one refusal apart from the check before it.
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => api.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2), args.join(" "));
+      await assert.rejects(async () => api.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
+        (error.message === sentence), args.join(" "));
 
       assert.equal(calls.opens.length, 0, args.join(" "));
     }
@@ -666,23 +675,5 @@ describe("the capture scrub across the official groups", () => {
 
     assert.equal(rendered(printed)[0]?.includes("482913"), false, "the minted credential does not survive");
     assert.match(rendered(printed)[0] ?? "", /^"REDACTED-[0-9a-f]{8}-"$/, "the envelope shape - a bare scalar - is what a capture of that endpoint is for");
-  });
-
-  test("the api hatch refuses the flag where no document is printed", async () => {
-
-    // Both combinations mean nothing rather than something surprising, so each is a stated usage error before anything connects.
-    const cases: string[][] = [ [ "get", "/doors", "--scrub", "--out", "f" ], [ "put", "/doors/od-1/unlock", "--scrub" ] ];
-
-    for(const args of cases) {
-
-      const { calls, client } = makeFakeClient({ official: {} });
-      const { ctx } = makeCommandContext({ args, calls, client });
-
-      // Sequential by intent: each refusal is asserted on its own invocation.
-      // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => api.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2), args.join(" "));
-
-      assert.equal(calls.opens.length, 0, args.join(" "));
-    }
   });
 });
