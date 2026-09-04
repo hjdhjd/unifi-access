@@ -8,23 +8,29 @@ import { ACCESS_AUTHENTICATION_TYPES, ACCESS_DOORBELL_REASON_CODES, isMacAddress
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-/* The address pair's contract as a table of exact pairs rather than as a description of a pattern: every shape the wire has produced for a hardware address, and
- * what the library spells each one as. The colon-bearing rows are the case flip the controller performs on one device's address between reads; the colon-free rows
- * are the shape the official API's device identifier and the camera-class records carry, and the uppercase one is already the library's own spelling; the
- * mixed-case row is the fold being indifferent to where the case varies.
+/* The address pair's contract as a table of exact pairs rather than as a description of a pattern: every shape a hardware address is written in, and what the
+ * library spells each one as. The colon-bearing rows are the case flip the controller performs on one device's address between reads; the colon-free rows are the
+ * shape the official API's device identifier and the camera-class records carry, and the uppercase one is already the library's own spelling; the mixed-case row
+ * is the fold being indifferent to where the case varies; and the hyphen and dot rows are the spellings other tools write, which fold onto the same value the
+ * wire's own spellings do.
  */
 const ADDRESS_ROWS: [string, string][] = [
   [ "02:FF:EE:00:00:01", "02FFEE000001" ],
   [ "02:ff:ee:00:00:01", "02FFEE000001" ],
   [ "02FFEE000002", "02FFEE000002" ],
   [ "02ffee000002", "02FFEE000002" ],
-  [ "02:Ff:Ee:00:00:02", "02FFEE000002" ]
+  [ "02:Ff:Ee:00:00:02", "02FFEE000002" ],
+  [ "AA-BB-CC-DD-EE-FF", "AABBCCDDEEFF" ],
+  [ "aa-bb-cc-dd-ee-ff", "AABBCCDDEEFF" ],
+  [ "AABB.CCDD.EEFF", "AABBCCDDEEFF" ],
+  [ "aabb.ccdd.eeff", "AABBCCDDEEFF" ]
 ];
 
-// Values that are not an address in either shape: the controller's camera-class identifier, a location identifier, nothing at all, misplaced separators, a digit
-// short and a digit over in each shape, and a character outside the hexadecimal alphabet.
+// Values that are not an address in any accepted shape: the controller's camera-class identifier, a location identifier, nothing at all, misplaced separators, a
+// digit short and a digit over in each shape, a character outside the hexadecimal alphabet, a pair short of six, separators mixed within one value, and a word
+// with a hyphen in it.
 const NOT_ADDRESSES = [ "ffffffffffffffff00000000", "0ace0000-0000-4000-8000-000000000007", "", "02:ff:ee00:00:aa", "02:ff:ee:00:00:a", "02:ff:ee:00:00:aaa",
-  "02FFEE0000A", "02FFEE0000AAA", "zz:ff:ee:00:00:aa" ];
+  "02FFEE0000A", "02FFEE0000AAA", "zz:ff:ee:00:00:aa", "aa:bb:cc:dd:ee", "aa-bb:cc-dd:ee-ff", "aabb.ccdd.eef", "not-an-address" ];
 
 describe("normalizeActorType", () => {
 
@@ -60,7 +66,7 @@ describe("normalizeActorType", () => {
 
 describe("normalizeMacAddress", () => {
 
-  test("spells every shape the wire produces one way", () => {
+  test("spells every accepted shape one way", () => {
 
     for(const [ wire, spelled ] of ADDRESS_ROWS) {
 
@@ -89,7 +95,7 @@ describe("normalizeMacAddress", () => {
 
 describe("isMacAddress", () => {
 
-  test("recognizes both shapes the wire produces, in either case", () => {
+  test("recognizes every accepted spelling, in either case", () => {
 
     for(const [wire] of ADDRESS_ROWS) {
 

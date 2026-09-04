@@ -270,13 +270,17 @@ describe("the capture scrub", () => {
 
     /* The controller spells one device's address in either case and with or without separators, from one record to the next. A memory keyed by the raw text would
      * mint a second stand-in for the second spelling and split one device in two; keying it by the library's own folded spelling and styling the answer to the
-     * occurrence is what keeps the device whole and each occurrence readable in the form it arrived in.
+     * occurrence is what keeps the device whole and each occurrence readable in the form it arrived in. The hyphen and dot spellings are what an operator's own
+     * material carries rather than what the wire sends, and they reach the same stand-in through the same fold.
      */
     const context = createScrubContext();
-    const result = scrub({ bare: { mac: "02ffee000002" }, colons: { mac: "02:FF:EE:00:00:02" }, upper: { mac: "02FFEE000002" } }, context) as {
+    const result = scrub({ bare: { mac: "02ffee000002" }, colons: { mac: "02:FF:EE:00:00:02" }, dots: { mac: "02ff.ee00.0002" },
+      hyphens: { mac: "02-FF-EE-00-00-02" }, upper: { mac: "02FFEE000002" } }, context) as {
 
       bare: { mac: string };
       colons: { mac: string };
+      dots: { mac: string };
+      hyphens: { mac: string };
       upper: { mac: string };
     };
 
@@ -284,6 +288,8 @@ describe("the capture scrub", () => {
     assert.equal(result.bare.mac, result.upper.mac.toLowerCase(), "a lowercase occurrence answers in lowercase");
     assert.equal(result.colons.mac, (result.upper.mac.match(/.{2}/g) ?? []).join(":"), "an occurrence with separators answers with them");
     assert.equal(result.colons.mac.replaceAll(":", ""), result.upper.mac, "every spelling is one address underneath");
+    assert.equal(result.hyphens.mac, result.upper.mac, "a hyphen-spelled address does not survive, and answers with the same stand-in");
+    assert.equal(result.dots.mac, result.upper.mac.toLowerCase(), "a dot-spelled address does not survive, and answers with the same stand-in");
   });
 
   test("an address, a UUID, an email, and a hostname each keep their own shape", () => {

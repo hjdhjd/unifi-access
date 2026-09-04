@@ -54,20 +54,23 @@ export function normalizeActorType(actorType: string): AccessActorType {
   return (actorType === ACTOR_TYPE_WEBHOOK_API) ? "open_api" : actorType;
 }
 
-/* The two shapes the controller gives a hardware address: the six pairs joined by colons, or the twelve digits run together. Either arrives in either case, and the
- * same device can arrive in both cases from one read to the next.
+/* The shapes a hardware address is written in: the six pairs joined by colons, the twelve digits run together, the six pairs joined by hyphens, and the three quads
+ * joined by dots. Only the first two come from the controller - either arrives in either case, and the same device can arrive in both cases from one read to the
+ * next - while the hyphen and dot spellings are what other tools and operators write, recognized here so that a value a consumer hands in folds the same way the
+ * wire's own does.
  */
-const MAC_ADDRESS = /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$|^[0-9a-f]{12}$/i;
+const MAC_ADDRESS = /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$|^(?:[0-9a-f]{2}-){5}[0-9a-f]{2}$|^(?:[0-9a-f]{4}\.){2}[0-9a-f]{4}$|^[0-9a-f]{12}$/i;
 
 /**
- * Whether a value is a hardware address in either shape the controller produces.
+ * Whether a value is a hardware address. The accepted spellings are the six pairs joined by colons, the twelve digits run together, the six pairs joined by
+ * hyphens, and the three quads joined by dots, in either case.
  *
  * The official API's device identifier is the address with its separators removed, so this is also the test for whether an identifier licenses an address at all:
  * the controller addresses camera-class hardware by an identifier that is not one.
  *
  * @param value - The value exactly as a channel carried it.
  *
- * @returns `true` when the value is a hardware address, in either shape and either case.
+ * @returns `true` when the value is a hardware address, in any of the four spellings and either case.
  *
  * @category Protocol
  */
@@ -77,7 +80,8 @@ export function isMacAddress(value: string): boolean {
 }
 
 /**
- * Fold a hardware address into the library's single spelling of it: uppercase, with no separators.
+ * Fold a hardware address into the library's single spelling of it: uppercase, with no separators. Every spelling {@link isMacAddress} accepts folds the same way,
+ * whether the digits are joined by colons, by hyphens, by dots, or by nothing at all.
  *
  * The controller spells one device's address with the case varying from record to record and from one read to the next, and the official API carries it with the
  * separators removed. Uppercase without separators is the spelling this library carries because it is the spelling the companion UniFi Protect controller and its
@@ -94,7 +98,7 @@ export function isMacAddress(value: string): boolean {
  */
 export function normalizeMacAddress(value: string): string {
 
-  return MAC_ADDRESS.test(value) ? value.replaceAll(":", "").toUpperCase() : value;
+  return MAC_ADDRESS.test(value) ? value.replaceAll(/[:.-]/g, "").toUpperCase() : value;
 }
 
 /**

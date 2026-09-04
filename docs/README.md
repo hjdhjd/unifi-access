@@ -105,9 +105,9 @@ I welcome inputs and perspective, particularly around hardware I cannot test aga
 | [AccessActorType](type-aliases/AccessActorType.md) | Who or what an action is attributed to. |
 | [ACCESS\_AUTHENTICATION\_TYPES](variables/ACCESS_AUTHENTICATION_TYPES.md) | What each of an unlock's authentication types means, in words fit to show a person. |
 | [ACCESS\_DOORBELL\_REASON\_CODES](variables/ACCESS_DOORBELL_REASON_CODES.md) | What each of a doorbell call's reason codes means, in words fit to show a person. |
-| [isMacAddress](functions/isMacAddress.md) | Whether a value is a hardware address in either shape the controller produces. |
+| [isMacAddress](functions/isMacAddress.md) | Whether a value is a hardware address. The accepted spellings are the six pairs joined by colons, the twelve digits run together, the six pairs joined by hyphens, and the three quads joined by dots, in either case. |
 | [normalizeActorType](functions/normalizeActorType.md) | Fold an actor type into the library's single spelling of it. |
-| [normalizeMacAddress](functions/normalizeMacAddress.md) | Fold a hardware address into the library's single spelling of it: uppercase, with no separators. |
+| [normalizeMacAddress](functions/normalizeMacAddress.md) | Fold a hardware address into the library's single spelling of it: uppercase, with no separators. Every spelling [isMacAddress](functions/isMacAddress.md) accepts folds the same way, whether the digits are joined by colons, by hyphens, by dots, or by nothing at all. |
 
 ## Official
 

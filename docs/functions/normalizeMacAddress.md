@@ -10,7 +10,8 @@
 function normalizeMacAddress(value): string;
 ```
 
-Fold a hardware address into the library's single spelling of it: uppercase, with no separators.
+Fold a hardware address into the library's single spelling of it: uppercase, with no separators. Every spelling [isMacAddress](isMacAddress.md) accepts folds the same way,
+whether the digits are joined by colons, by hyphens, by dots, or by nothing at all.
 
 The controller spells one device's address with the case varying from record to record and from one read to the next, and the official API carries it with the
 separators removed. Uppercase without separators is the spelling this library carries because it is the spelling the companion UniFi Protect controller and its
