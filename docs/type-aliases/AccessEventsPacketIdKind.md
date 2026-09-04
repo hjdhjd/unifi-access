@@ -13,5 +13,5 @@ type AccessEventsPacketIdKind = Extract<AccessWireEvent, {
 ```
 
 The event kinds that carry an entity identifier, derived from the wire-event union itself rather than restated, so this vocabulary cannot drift from the
-classifier that produces it. Deriving from [AccessWireEvent](AccessWireEvent.md) also excludes the synthetic bootstrap member by construction, because that member never
-rides the notification stream.
+classifier that produces it. Deriving from [AccessWireEvent](AccessWireEvent.md) also excludes the synthetic bootstrap member by construction, because that member is never
+carried by the notification stream.

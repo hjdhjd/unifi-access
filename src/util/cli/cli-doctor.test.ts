@@ -85,11 +85,11 @@ describe("the mode-aware check sets", () => {
     assert.equal(token.report.results[0]?.detail, "connected to the controller in token mode");
   });
 
-  test("a pinned override joins the connect detail", async () => {
+  test("an api override joins the connect detail", async () => {
 
     const { report } = await runDoctor({ ...healthy, capabilities: { mode: "credential", official: false, override: "direct-only" }, packets: [] });
 
-    assert.equal(report.results[0]?.detail, "connected to Test Name 1 in credential mode, pinned to direct-only");
+    assert.equal(report.results[0]?.detail, "connected to Test Name 1 in credential mode, held to direct-only");
   });
 
   test("the capabilities line reports mode, official, and override, varying by mode", async () => {

@@ -180,7 +180,7 @@ const USAGE = [
   "Subcommands:",
   ...commandList(SUBCOMMANDS),
   "",
-  "Replacing an endpoint's whole registration rides the api hatch (PUT /webhooks/endpoints/:id takes the full record). Official API surface.",
+  "Replacing an endpoint's whole registration goes through the api hatch (PUT /webhooks/endpoints/:id takes the full record). Official API surface.",
   "",
   "Run \"ufa webhook <subcommand> --help\" for subcommand options."
 ].join("\n");

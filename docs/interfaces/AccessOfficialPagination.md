@@ -6,7 +6,7 @@
 
 # Interface: AccessOfficialPagination
 
-The pagination a list endpoint reports beside its results. It rides at the top level of the envelope rather than inside the results, on every paginated endpoint
+The pagination a list endpoint reports beside its results. It sits at the top level of the envelope rather than inside the results, on every paginated endpoint
 the wire has been observed to answer - including the one the reference documents as nesting it, which it does not.
 
 ## Properties

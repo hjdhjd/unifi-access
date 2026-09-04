@@ -41,8 +41,8 @@ export const channels = {
 
   /** The connection state machine moved. Published by the `AccessClient` from the one bridge it subscribes to the connection monitor's own rail, so every edge the
    * monitor reports reaches a consumer here with the controller it belongs to stamped on. The monitor itself publishes nothing: it is built to be host-agnostic,
-   * and the client is the layer that knows which controller it addresses. The reconnecting announcement rides this channel too rather than having one of its own,
-   * because it is one of the edges rather than a separate kind of event.
+   * and the client is the layer that knows which controller it addresses. The reconnecting announcement goes through this channel too rather than having one of its
+   * own, because it is one of the edges rather than a separate kind of event.
    */
   connectionTransition: diagnosticsChannel.channel<AccessConnectionTransitionPayload>("unifi-access:connection:transition"),
 
@@ -137,8 +137,8 @@ export interface AccessEventsClosedPayload {
 
 /**
  * The event kinds that carry an entity identifier, derived from the wire-event union itself rather than restated, so this vocabulary cannot drift from the
- * classifier that produces it. Deriving from {@link AccessWireEvent} also excludes the synthetic bootstrap member by construction, because that member never
- * rides the notification stream.
+ * classifier that produces it. Deriving from {@link AccessWireEvent} also excludes the synthetic bootstrap member by construction, because that member is never
+ * carried by the notification stream.
  *
  * @category Diagnostics
  */

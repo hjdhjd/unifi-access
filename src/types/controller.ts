@@ -50,7 +50,7 @@ export interface AccessControllerConfigInterface {
   bt_config_revision: number;
   capabilities: string[];
   configured: boolean;
-  // The element shape is not pinned: this list has only ever been observed empty, so the open JSON type admits whatever the controller sends.
+  // The element shape is not settled: this list has only ever been observed empty, so the open JSON type admits whatever the controller sends.
   critical_logs: AccessKnownJsonValue[];
   disabled_by_uid: boolean;
   face_sdk: boolean;

@@ -8,7 +8,7 @@
 
 A page of log entries.
 
-The pagination is NOT in here - it rides at the top level of the envelope, exactly as it does on every other paginated endpoint, and reaches the caller beside
+The pagination is NOT in here - it sits at the top level of the envelope, exactly as it does on every other paginated endpoint, and reaches the caller beside
 this payload. The reference documents page counters inside the payload instead, which the wire does not do.
 
 Live-verified.

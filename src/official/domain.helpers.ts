@@ -3,7 +3,7 @@
  * domain.helpers.ts: The shared test rig for the official API's domain suites - the mocked controller each domain is driven against, the recording wrappers that
  * observe what a domain asked the layer below it for, the table runner every domain suite is written as, and a multipart reader for the upload rows.
  *
- * Every domain suite is the same test written ten times over different rows: arrange an interception pinning a verb and a path, call the method, assert what came
+ * Every domain suite is the same test written ten times over different rows: arrange an interception naming a verb and a path, call the method, assert what came
  * back, and establish that the call really went out. Writing that once here is what keeps a domain's own suite down to its table - the part that differs - and what
  * makes the census below possible at all.
  */
@@ -108,7 +108,7 @@ export interface DomainRig<T> {
  * Build a domain class over a mocked official controller.
  *
  * The transport is constructed with the address the endpoints module derives rather than with the bare host, which is what a composition root does and what binds
- * the connection pool to the origin every official URL resolves to - so this construction is itself the pin on the two agreeing.
+ * the connection pool to the origin every official URL resolves to - so this construction is itself the assertion that the two agree.
  *
  * @param build - Constructs the domain class under test from its options.
  *
@@ -138,7 +138,7 @@ export interface DomainRow<T> {
   /** What the method should return. Omitted for a row whose method returns nothing. */
   expected?: unknown;
 
-  /** Asserts against the request as the controller received it, for a row whose body cannot be pinned as an exact string. */
+  /** Asserts against the request as the controller received it, for a row whose body cannot be stated as an exact string. */
   inspect?: (request: SeenRequest) => void;
 
   /** The class method the row covers. The census reconciles these against the class's own prototype. */
@@ -166,12 +166,12 @@ export interface DomainRow<T> {
 /**
  * Register a domain suite from its endpoint table.
  *
- * Each row becomes one test that pins the verb, the path, and where applicable the exact body, then establishes three things beyond the returned value: that the
+ * Each row becomes one test that asserts the verb, the path, and where applicable the exact body, then establishes three things beyond the returned value: that the
  * interception was consumed, so a method that never dispatched cannot pass by returning the right nothing; that the method passed the retry argument its row
  * declares, so a stray hard-coded override in either direction fails here; and, once across the whole table, that the rows and the class's own methods are the same
  * set, so neither a new method without a row nor a lost row survives review.
  *
- * The same table is then run a second time with a caller's abort signal in the per-call options, which is what pins the convention every domain method shares.
+ * The same table is then run a second time with a caller's abort signal in the per-call options, which is what asserts the convention every domain method shares.
  * Deriving both passes from one row list is deliberate: a second hand-written list would restate every method's minimal arguments, and the two would drift.
  *
  * @param opts             - The suite to register.
@@ -191,8 +191,8 @@ export function describeDomainTable<T>(opts: { domainClass: new (options: Offici
 
         let seen: SeenRequest | undefined;
 
-        /* The callback reply form is what makes the request itself readable. A row whose body is deterministic pins it through the interception's own matcher, but
-         * a multipart body carries a boundary minted per request, so its row reads the bytes and the headers back here instead.
+        /* The callback reply form is what makes the request itself readable. A row whose body is deterministic states it through the interception's own matcher,
+         * but a multipart body carries a boundary minted per request, so its row reads the bytes and the headers back here instead.
          */
         rig.pool.intercept({ ...((row.body !== undefined) && { body: row.body }), method: row.verb, path: row.path }).reply((request) => {
 
@@ -241,7 +241,7 @@ export function describeDomainTable<T>(opts: { domainClass: new (options: Offici
 
         const rig = domainRig((options) => new opts.domainClass(options));
 
-        /* The interception is the row's own, matched on the same verb, path, and exact body it declares. That is what makes this a parity pin as well as a
+        /* The interception is the row's own, matched on the same verb, path, and exact body it declares. That is what makes this a parity assertion as well as a
          * forwarding one: a per-call member that had leaked into the query or the body would miss this matcher, leave the interception pending, and fail below.
          */
         rig.pool.intercept({ ...((row.body !== undefined) && { body: row.body }), method: row.verb, path: row.path }).reply(() => ({

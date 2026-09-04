@@ -116,7 +116,7 @@ const EXPORT_USAGE = [
   "Usage: ufa logs export --topic TOPIC --since WHEN --until WHEN [--out FILE] [--timezone TZ] [--actor ID] [--debug]",
   "",
   "Export log entries as CSV. The wire requires the whole window - topic, since, and until - and a timezone to render timestamps in; the window",
-  "cannot exceed one month, which the controller itself enforces. The bytes ride --out: a path writes the file, - (or a pipe) writes stdout.",
+  "cannot exceed one month, which the controller itself enforces. The bytes go to --out: a path writes the file, - (or a pipe) writes stdout.",
   "",
   "Options:",
   "  --topic TOPIC   Required. One of: " + LOG_TOPICS.join(", ") + ".",

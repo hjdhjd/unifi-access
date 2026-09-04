@@ -189,7 +189,7 @@ describe("a token-only client", () => {
     assert.equal(client.controllerName, null);
     assert.equal(client.controllerInfo, null);
 
-    // The escape hatch belongs to the credential surface, and the official API's own hatches ride the facade instead.
+    // The escape hatch belongs to the credential surface, and the official API's own hatches go through the facade instead.
     assert.equal(client.transport, null);
   });
 
@@ -438,7 +438,7 @@ describe("a token-only client", () => {
 
   test("remembers the refusal rather than re-asking on every re-seed", async () => {
 
-    /* The latch, pinned by positive observability rather than by a swallowed rejection: the refresh loop absorbs a failed re-seed, so an unmatched request would
+    /* The latch, asserted by positive observability rather than by a swallowed rejection: the refresh loop absorbs a failed re-seed, so an unmatched request would
      * prove nothing. Registering a second devices interceptor that must never be consumed, and watching the doors one get consumed on the same tick, does.
      */
     const { agent, official } = mockController();
@@ -532,7 +532,7 @@ describe("a token-only client's lifecycle signals", () => {
 
   test("an aborted connect cancels the official seed still in flight", async () => {
 
-    /* The seed is what verifies a token, and it rides the connect caller's signal, so a caller that gives up partway is not left waiting on a read it has already
+    /* The seed is what verifies a token, and it carries the connect caller's signal, so a caller that gives up partway is not left waiting on a read it has already
      * abandoned. The held-open reply is what puts the abort inside the request rather than before or after one: with the signal going nowhere, this connect would
      * wait out the delay and then succeed.
      */
@@ -616,7 +616,7 @@ describe("a token-only client's lifecycle signals", () => {
     assert.equal(client.connection.isThrottled, false, "the controller answered, so recovery closes the breaker within one poll rather than after the cooldown");
   });
 
-  test("a recovery re-seed rides the monitor's own lifetime signal", async () => {
+  test("a recovery re-seed carries the monitor's own lifetime signal", async () => {
 
     /* The re-seed is the same coalesced read the connect seed runs, bound as the monitor's re-bootstrap, and what it receives is the monitor's lifetime signal.
      * Disposal is what fires that signal, so holding the re-seed open across a disposal is what makes its arrival observable: the recovery attempt then fails with
@@ -833,7 +833,7 @@ describe("a dual-mode client", () => {
   test("never reads the device listing, because the topology is its census", async () => {
 
     /* The complement of the token path's own seed. Where a topology exists it owns the records and the official listings contribute only door facts, so the device
-     * listing is not asked for at all - pinned by an interceptor that must still be waiting when the connect is done.
+     * listing is not asked for at all - asserted by an interceptor that must still be waiting when the connect is done.
      */
     const { agent, official, pool } = mockController();
 
@@ -898,7 +898,7 @@ describe("a dual-mode client", () => {
   });
 });
 
-// A connect that also records every event kind the store dispatched, which is how the write-path cardinality is pinned rather than inferred.
+// A connect that also records every event kind the store dispatched, which is how the write-path cardinality is asserted rather than inferred.
 async function connectCapturingWithDispatch(agent: MockAgent, identity: Partial<ConnectOptions>, kinds: string[]): Promise<CapturedConnect> {
 
   const channel = (await import("node:diagnostics_channel")).default.channel("unifi-access:store:dispatch");
@@ -964,7 +964,7 @@ describe("what every mode has in common", () => {
         official.intercept({ method: "GET", path: DOORS_PATH }).reply(200, doorsBody([officialDoor(DOOR_MINI, "close")]));
       }
 
-      // Only a client with no topology reads the device listing, which is what makes the dual row's absence of this intercept a pin in its own right.
+      // Only a client with no topology reads the device listing, which is what makes the dual row's absence of this intercept an assertion in its own right.
       if(row.official && !row.withCredentials) {
 
         official.intercept({ method: "GET", path: DEVICES_PATH }).reply(200, devicesBody());
@@ -994,7 +994,7 @@ describe("what every mode has in common", () => {
 
   test("monitors the throttle of whichever transport backs the channel it is watching", async () => {
 
-    /* The monitor takes a structural throttle source rather than a concrete transport, so connect wires whichever one this mode's channel and probes actually ride:
+    /* The monitor takes a structural throttle source rather than a concrete transport, so connect wires whichever one this mode's channel and probes actually use:
      * the direct transport where there is one, the official transport otherwise. This drives the official transport's own breaker open and asserts the verdict
      * surfaces on the client's connection - which it can only do if that is the transport the monitor was handed.
      */
@@ -1006,7 +1006,7 @@ describe("what every mode has in common", () => {
 
     assert.equal(client.connection.isThrottled, false);
 
-    // The breaker opens on a run of consecutive failures. Each probe here is the mode's own reachability probe, which rides the official transport.
+    // The breaker opens on a run of consecutive failures. Each probe here is the mode's own reachability probe, which goes through the official transport.
     for(let attempt = 0; attempt < 12; attempt++) {
 
       official.intercept({ method: "GET", path: DOORS_PATH }).reply(500, "");
@@ -1080,7 +1080,7 @@ describe("the capability map and the options that produce it", () => {
 
       assert.equal(client.capabilities.mode, row.expected);
       assert.equal(client.capabilities.official, row.official);
-      assert.equal(client.capabilities.override, "auto", "the default is the routing default rather than a pin");
+      assert.equal(client.capabilities.override, "auto", "the default is the routing default rather than an override");
     }
   });
 
@@ -1096,7 +1096,7 @@ describe("the capability map and the options that produce it", () => {
     assert.equal(client.capabilities.override, "direct-only");
   });
 
-  test("refuses a pin the supplied identities cannot honor, before anything is sent", async () => {
+  test("refuses an override the supplied identities cannot honor, before anything is sent", async () => {
 
     /* Both contradictions, as construction-time errors rather than failures at first command. They are value-level facts - which identity was supplied paired with
      * which override - so the compiler cannot catch them and this is where they are caught instead.

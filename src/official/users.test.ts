@@ -1,8 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * users.test.ts: Unit tests for the official API's user domain. Beyond the per-endpoint rows, these pin the three shapes this domain is easiest to get wrong on:
- * the bare-array bodies that carry no wrapper member, the string-valued expansion parameter the reference's field table mislabels, and the avatar upload's
- * multipart framing.
+ * users.test.ts: Unit tests for the official API's user domain. Beyond the per-endpoint rows, these assert the three shapes this domain is easiest to get wrong on: the
+ * bare-array bodies that carry no wrapper member, the string-valued expansion parameter the reference's field table mislabels, and the avatar upload's multipart
+ * framing.
  */
 import type { AccessOfficialUser, AccessOfficialUserCreated, AccessOfficialUserExpand, AccessOfficialUserGroupMember, AccessOfficialUserUpdate } from "./users.ts";
 import { describe, test } from "node:test";

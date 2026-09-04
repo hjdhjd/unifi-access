@@ -218,9 +218,9 @@ non-2xx classifies and throws, and a 2xx whose envelope reports anything other t
 
 #### Throws
 
-[AccessCapabilityError](../classes/AccessCapabilityError.md) when this client has no path that can carry the restart - one pinned to the official API, which cannot express it, or
-  one holding only a token, whose credentials the Access application's own endpoints require. [AccessRequestError](../classes/AccessRequestError.md) when the controller accepts the
-  request but reports the restart unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
+[AccessCapabilityError](../classes/AccessCapabilityError.md) when this client has no path that can carry the restart - one held to the official API, which cannot express it, or one
+  holding only a token, whose credentials the Access application's own endpoints require. [AccessRequestError](../classes/AccessRequestError.md) when the controller accepts the request but
+  reports the restart unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
 
 ***
 
@@ -254,6 +254,6 @@ The device record as the controller echoed it.
 
 #### Throws
 
-[AccessCapabilityError](../classes/AccessCapabilityError.md) when this client has no path that can carry the write - one pinned to the official API, which cannot express it, or one
+[AccessCapabilityError](../classes/AccessCapabilityError.md) when this client has no path that can carry the write - one held to the official API, which cannot express it, or one
   holding only a token, whose credentials the Access application's own endpoints require. The classified `FatalError` on a non-2xx -
   [AccessAuthorizationError](../classes/AccessAuthorizationError.md) when the account lacks the privilege the write requires - or a transport-level `AccessError` on failure.

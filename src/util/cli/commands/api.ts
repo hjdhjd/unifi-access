@@ -23,7 +23,7 @@ const USAGE = [
   "classification, and encoding the typed commands get. This is how everything the named commands do not cover stays reachable.",
   "",
   "A get prints the endpoint's result - the payload, plus its pagination when the endpoint paginates - as one line of wire-order JSON; with",
-  "--out, the raw bytes ride the byte sink instead (a path writes the file, - or a pipe writes stdout). A mutation prints a confirmation to",
+  "--out, the raw bytes go to the byte sink instead (a path writes the file, - or a pipe writes stdout). A mutation prints a confirmation to",
   "stderr and nothing to stdout, or the echoed payload with --print.",
   "",
   "Options:",
@@ -57,9 +57,9 @@ function emitResult(output: Output, result: AccessOfficialResult<unknown>, scrub
 }
 
 /**
- * `ufa api`. Maps the verb onto the facade's three arms: a get rides `request` (or `download` with --out), and a mutation rides `command` - success with nothing
- * worth reading - unless --print asks for the echoed payload through `request`. The path is taken verbatim below the application prefix, and the controller is the
- * validator of everything beyond its shape.
+ * `ufa api`. Maps the verb onto the facade's three arms: a get goes through `request` (or `download` with --out), and a mutation goes through `command` - success
+ * with nothing worth reading - unless --print asks for the echoed payload through `request`. The path is taken verbatim below the application prefix, and the
+ * controller is the validator of everything beyond its shape.
  *
  * @category CLI
  */

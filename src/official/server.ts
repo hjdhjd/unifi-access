@@ -40,8 +40,8 @@ export class OfficialApiServer {
    * later.
    *
    * This applies to the developer port alone, and the Access application must be restarted before the new certificate is presented. That restart takes down the
-   * very port every official request rides, so a caller should expect requests to fail for the length of the restart - and repeated failures across that window
-   * trip the transport's throttle cooldown exactly as any other stretch of an unreachable controller does.
+   * very port every official request goes to, so a caller should expect requests to fail for the length of the restart - and repeated failures across that
+   * window trip the transport's throttle cooldown exactly as any other stretch of an unreachable controller does.
    *
    * A key that does not match its certificate is refused as a parameter error.
    *

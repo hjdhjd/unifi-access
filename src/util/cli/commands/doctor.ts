@@ -179,7 +179,7 @@ const doctorHandler: CommandHandler = async (ctx) => {
       client = await ctx.openClient({ debug: values.debug === true, signal: ctx.signal });
 
       const caps = client.capabilities;
-      const pinned = (caps.override !== "auto") ? (", pinned to " + caps.override) : "";
+      const pinned = (caps.override !== "auto") ? (", held to " + caps.override) : "";
 
       results.push({ detail: "connected to " + (client.controllerName ?? "the controller") + " in " + caps.mode + " mode" + pinned,
         name: "Connect and authenticate", status: "pass" });

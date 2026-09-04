@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * identity.test.ts: Unit tests for the official API's UniFi Identity domain. Nothing here is live-verified - the endpoints need an Identity-joined controller - so
- * these rows pin the documented shapes, including the invitation body that is a bare array and the response key set that is wider than the query's own.
+ * these rows assert the documented shapes, including the invitation body that is a bare array and the response key set that is wider than the query's own.
  */
 import { describe, test } from "node:test";
 import { describeDomainTable, domainRig, officialPath } from "./domain.helpers.ts";
@@ -57,7 +57,7 @@ describe("OfficialIdentity vocabularies", () => {
     assert.equal(outside, "camera");
   });
 
-  test("a partial invitation failure rides a success envelope", async () => {
+  test("a partial invitation failure arrives in a success envelope", async () => {
 
     const failure = { "error_code": "", "error_msg": "invalid email", "user_email": "nope", "user_id": "u-2" };
     const rig = domainRig((options) => new OfficialIdentity(options));

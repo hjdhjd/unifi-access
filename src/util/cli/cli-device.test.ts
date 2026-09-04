@@ -180,7 +180,7 @@ describe("the device restart command", () => {
 
   test("the device group does not accept the --api flag", async () => {
 
-    // The routing override rides the door group alone - no device command routes - so the strict parser refuses the flag here rather than carrying it inert.
+    // The routing override belongs to the door group alone - no device command routes - so the strict parser refuses the flag here rather than carrying it inert.
     const { calls, client } = makeFakeClient({ devices: [{ id: HUB_ID, name: "Acme Name 6" }] });
     const { ctx } = makeCommandContext({ args: [ "restart", "all", "--api", "auto" ], calls, client });
 

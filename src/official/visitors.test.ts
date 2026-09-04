@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * visitors.test.ts: Unit tests for the official API's visitor domain - the per-endpoint rows, and the type pins on the integer status code and the two distinct
+ * visitors.test.ts: Unit tests for the official API's visitor domain - the per-endpoint rows, and the type assertions on the integer status code and the two distinct
  * spellings the reference uses for a visit's weekly pattern on the way in and on the way out.
  */
 import type { AccessOfficialVisitor, AccessOfficialVisitorCreate, AccessOfficialVisitorResource, AccessOfficialVisitorSchedule } from "./visitors.ts";

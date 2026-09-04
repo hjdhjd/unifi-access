@@ -14,7 +14,7 @@ const OFFICIAL_SUCCESS_CODE = "SUCCESS";
 const JSON_CONTENT_TYPE = "application/json";
 
 /**
- * The pagination a list endpoint reports beside its results. It rides at the top level of the envelope rather than inside the results, on every paginated endpoint
+ * The pagination a list endpoint reports beside its results. It sits at the top level of the envelope rather than inside the results, on every paginated endpoint
  * the wire has been observed to answer - including the one the reference documents as nesting it, which it does not.
  */
 export interface AccessOfficialPagination {
@@ -126,7 +126,7 @@ interface OfficialEnvelope {
 }
 
 /**
- * The one path every official request rides.
+ * The one path every official request takes.
  *
  * The official API answers in a uniform envelope - a result code, the payload, a message, and pagination on the endpoints that page - and it reports its refusals
  * *inside* that envelope with a 2xx status. So a caller that read the status alone would treat a refused request as a successful one carrying a payload it never
@@ -143,7 +143,7 @@ interface OfficialEnvelope {
  * null depending on what the endpoint does, and pagination sits at the top level even where the reference documents it inside the results. Reading one uniform
  * envelope is what lets every endpoint share this path.
  *
- * Three arms ride the class because the API answers in three shapes: {@link OfficialDispatch.request} for an endpoint that returns a typed payload,
+ * Three arms hang off the class because the API answers in three shapes: {@link OfficialDispatch.request} for an endpoint that returns a typed payload,
  * {@link OfficialDispatch.command} for a mutation whose success carries nothing worth reading, and {@link OfficialDispatch.download} for the endpoints that answer
  * raw bytes. Outbound encoding is owned here too, so a caller hands typed values and parts rather than a serialized body.
  */
@@ -178,8 +178,8 @@ export class OfficialDispatch {
     const body = this.#requireSuccess((await this.#transport.send(url, await this.#encode(opts, call))).ensureOk().json<unknown>());
 
     /* This arm's contract is a payload of type `T`, so an envelope carrying no `data` member cannot satisfy it: resolving would hand the caller `undefined` under
-     * whatever type it asked for, which is the assertion-into-a-lie the typed return exists to prevent. A mutation whose success genuinely carries nothing rides
-     * `command` instead, which never reads the member at all - so this guard costs those endpoints nothing.
+     * whatever type it asked for, which is the assertion-into-a-lie the typed return exists to prevent. A mutation whose success genuinely carries nothing goes
+     * through `command` instead, which never reads the member at all - so this guard costs those endpoints nothing.
      */
     if(!("data" in body)) {
 
@@ -338,10 +338,11 @@ export class OfficialDispatch {
  *
  * The platform's own serializer does the framing, and the reason it can be trusted here is that its output is taken as BYTES before anything else sees it. That
  * matters because of a property of the dependency rather than a preference. Every Node process holds two undici implementations: the platform's globals belong to
- * the runtime's own bundled copy, which also pre-registers its dispatcher as the process-wide default, while this package pins a second, independently versioned
- * one. A form container is admitted by the serializer inside the DISPATCHER's copy only through an `instanceof` check against that copy's own class, so a container
- * built from the other copy passes the duck-typed routing gate, fails the brand check, and yields a body stream that never ends - a silent hang rather than an
- * error. The transport accepts a dispatcher injected by the consumer, from whatever copy the consumer holds, so that coupling is not this library's to guarantee.
+ * the runtime's own bundled copy, which also pre-registers its dispatcher as the process-wide default, while this package depends on a second, independently
+ * versioned one. A form container is admitted by the serializer inside the DISPATCHER's copy only through an `instanceof` check against that copy's own class, so a
+ * container built from the other copy passes the duck-typed routing gate, fails the brand check, and yields a body stream that never ends - a silent hang rather
+ * than an error. The transport accepts a dispatcher injected by the consumer, from whatever copy the consumer holds, so that coupling is not this library's to
+ * guarantee.
  *
  * Serializing EAGERLY is what makes the question moot. The container, the files, and the response all come from one copy, and the serialization completes here,
  * before any dispatcher exists in the flow - so no container ever reaches undici, and the coupling cannot engage. Bytes deliver correctly under every dispatcher.

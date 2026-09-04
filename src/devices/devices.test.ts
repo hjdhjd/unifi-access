@@ -1,8 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * devices.test.ts: Tests for the device projections - liveness (a held handle reflects later store changes), the absent-record guard, the door-state read-through,
- * and the write-through commands. Every command test pins the wire shape through an intercepted request rather than through the projection's own return value, so
- * what is being checked is what the controller would actually receive.
+ * and the write-through commands. Every command test asserts the wire shape through an intercepted request rather than through the projection's own return value,
+ * so what is being checked is what the controller would actually receive.
  */
 import { AccessAuthorizationError, AccessCapabilityError, AccessOfficialApiError, AccessProtocolError, AccessRequestError } from "../errors.ts";
 import type { AccessBootstrapConfig, AccessEventPacket } from "../types/index.ts";
@@ -643,7 +643,7 @@ describe("device projections", () => {
 
   describe("the hub commands under routing", () => {
 
-    /* What each path puts on the wire, asserted per path. The direct bodies here are the same bytes the direct-path rows above pin, which is the point: routing
+    /* What each path puts on the wire, asserted per path. The direct bodies here are the same bytes the direct-path rows above assert, which is the point: routing
      * chooses between two expressions of a command and changes neither of them.
      */
     /* The record shape carries a name of its own so that the factory below still declares its return type on one line - spelling the widened unlock options out
@@ -722,7 +722,7 @@ describe("device projections", () => {
     test("falls back to the direct path's own body when the device sits below the endpoint's firmware floor", async () => {
 
       /* The floor case end to end: the official path is attempted first, refused for this device, and the direct expression is what the door actually receives -
-       * byte for byte the same request the direct-path row above pins.
+       * byte for byte the same request the direct-path row above asserts.
        */
       const fixture = routedFixture({ refuse: () => new AccessOfficialApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) });
 
@@ -765,7 +765,7 @@ describe("device projections", () => {
       assert.ok(hub);
       await hub.setLockRule({ interval: 2, type: "custom" });
 
-      // The direct wire shape is unchanged by routing: the same device-keyed resource and the same body the direct-path rows pin.
+      // The direct wire shape is unchanged by routing: the same device-keyed resource and the same body the direct-path rows assert.
       assert.equal(fixture.captured[0]?.path, "/proxy/access/api/v2/device/" + HUB + "/lock_rule?get_result=true");
       assert.equal(String(fixture.captured[0].body), JSON.stringify({ interval: 2, type: "custom" }));
     });
@@ -798,9 +798,9 @@ describe("device projections", () => {
       assert.equal(captured.body, undefined, "and the close command's body-absent shape is untouched by routing");
     });
 
-    test("refuses the direct-only commands outright on a client pinned to the official API", async () => {
+    test("refuses the direct-only commands outright on a client held to the official API", async () => {
 
-      // The pin reaches the projections whole: a command the pinned channel cannot express is refused where it is issued, before the direct transport sees it.
+      // The override reaches the projections whole: a command that channel cannot express is refused where it is issued, before the direct transport sees it.
       const fixture = routedFixture({ override: "official-only" });
       const hub = fixture.registry.hub(HUB);
 
@@ -818,7 +818,7 @@ describe("device projections", () => {
 
           assert.ok(error instanceof AccessCapabilityError);
           assert.match(error.message, command.operation, "the message names the operation");
-          assert.match(error.message, /pinned to the official API/, "and the pin that left it nowhere to go");
+          assert.match(error.message, /held to the official API/, "and the override that left it nowhere to go");
 
           return true;
         });
@@ -827,9 +827,9 @@ describe("device projections", () => {
       assert.equal(fixture.captured.length, 0, "nothing reached the direct transport");
     });
 
-    test("closes through the official gate control command on a client pinned away from the direct path", async () => {
+    test("closes through the official gate control command on a client held away from the direct path", async () => {
 
-      // The pin leaves no direct expression, and the published API's own control command is what carries the close instead.
+      // The override leaves no direct expression, and the published API's own control command is what carries the close instead.
       const fixture = routedFixture({ override: "official-only" });
       const hub = fixture.registry.hub(HUB);
 
@@ -879,8 +879,8 @@ describe("device projections", () => {
 
     test("carries a named door onto the official call beside an actor and an entry direction", async () => {
 
-      /* All three options ride one unlock: the target is the door the call addresses, while the other two travel in the payload beside it. A change that threaded
-       * one of them through at the cost of another shows here rather than in the rows that exercise each alone.
+      /* All three options travel on one unlock: the target is the door the call addresses, while the other two travel in the payload beside it. A change that
+       * threaded one of them through at the cost of another shows here rather than in the rows that exercise each alone.
        */
       const fixture = routedFixture();
       const hub = fixture.registry.hub(HUB);
@@ -1184,8 +1184,8 @@ describe("device projections", () => {
       await done;
     });
 
-    /* The uplink pins live beside the port matrix because the port is what makes the question hard. Every other record answers it out of its own fields; a
-     * synthesized port cannot, so the whole classification is pinned here against real synthesis and against the captured devices that give it its contrast.
+    /* The uplink assertions live beside the port matrix because the port is what makes the question hard. Every other record answers it out of its own fields; a
+     * synthesized port cannot, so the whole classification is asserted here against real synthesis and against the captured devices that give it its contrast.
      */
     test("a synthesized port reports no uplink, and neither does the hub whose hardware it is", () => {
 
@@ -1236,14 +1236,14 @@ describe("device projections", () => {
 
       assert.ok(group && hub);
       assert.equal(hub.unique_id, HUB);
-      assert.ok(hub.capabilities.includes("is_hub"), "this pin needs a record the controller marks hub-capable");
+      assert.ok(hub.capabilities.includes("is_hub"), "this assertion needs a record the controller marks hub-capable");
 
       group[0] = { ...hub, "connected_uah_id": DOOR_MINI };
 
       const { registry } = deviceFixture(bootstrap);
 
       // Hub capability is not the question. A port is exempt because of how it came to exist, not because of what it can do, and every port inherits its hub's
-      // capabilities through the expansion - so classifying on capability would pass every other pin here and fail this one.
+      // capabilities through the expansion - so classifying on capability would pass every other assertion here and fail this one.
       assert.equal(registry.device(HUB)?.uplinkId, DOOR_MINI);
     });
   });

@@ -36,11 +36,11 @@ import { visitor } from "./commands/visitor.ts";
 import { watch } from "./commands/watch.ts";
 import { webhook } from "./commands/webhook.ts";
 
-// The command table's twelve names, pinned as a literal expected array rather than derived from the COMMANDS object it checks - a pin derived from its own subject
+// The command table's names, stated as a literal expected array rather than derived from the COMMANDS object it checks - an expectation derived from its own subject
 // would be vacuous against an accidental removal.
 const COMMAND_NAMES = [ "api", "bootstrap", "classify", "device", "doctor", "door", "info", "logs", "user", "visitor", "watch", "webhook" ];
 
-// The command table as this suite reaches it, one spec per pinned name.
+// The command table as this suite reaches it, one spec per named entry.
 const COMMAND_TABLE: [ string, CommandSpec ][] = [ [ "api", api ], [ "bootstrap", bootstrap ], [ "classify", classify ], [ "device", device ],
   [ "doctor", doctor ], [ "door", door ], [ "info", info ], [ "logs", logs ], [ "user", user ], [ "visitor", visitor ], [ "watch", watch ],
   [ "webhook", webhook ] ];
@@ -512,7 +512,7 @@ describe("the surface gates", () => {
     assert.equal(requireOfficial(up.client as never, "user commands"), (up.client as { official: unknown }).official);
   });
 
-  test("the opener refuses an api pin the identities contradict, before anything connects", async () => {
+  test("the opener refuses an api override the identities contradict, before anything connects", async () => {
 
     await assert.rejects(async () => openClient({ api: "direct-only", credentials: CREDENTIALS_TOKEN }),
       (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("direct-only"));
@@ -558,7 +558,7 @@ describe("the read commands", () => {
 
     await bootstrap.run(ctx);
 
-    // The captured document's keys are not in alphabetical order, so a rendering that sorted them would differ from this - which is what makes the assertion a pin on
+    // The captured document's keys are not in alphabetical order, so a rendering that sorted them would differ from this - which is what makes the assertion one about
     // wire order rather than one that any serialization would satisfy.
     assert.notDeepEqual(Object.keys(document), [...Object.keys(document)].sort());
     assert.equal(rendered(lines)[0], JSON.stringify(document));

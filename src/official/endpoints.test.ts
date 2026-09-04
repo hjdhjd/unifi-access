@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * endpoints.test.ts: Unit tests for the official API's address construction. Everything official is addressed through one host derivation, so these tests pin the
- * shape that derivation produces and pin that every builder above it composes from that one shape rather than from a second copy of it.
+ * endpoints.test.ts: Unit tests for the official API's address construction. Everything official is addressed through one host derivation, so these tests assert
+ * the shape that derivation produces and assert that every builder above it composes from that one shape rather than from a second copy of it.
  */
 import { ACCESS_OFFICIAL_API_PATH_PREFIX, ACCESS_OFFICIAL_API_PORT } from "../settings.ts";
 import { describe, test } from "node:test";

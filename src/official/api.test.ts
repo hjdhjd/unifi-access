@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * api.test.ts: Unit tests for the official API facade. The domains are composed here rather than constructed by a consumer, so what these pin is that every member
- * is wired to its own class over the one shared request path, and that the three escape hatches address the same prefix the typed methods do.
+ * api.test.ts: Unit tests for the official API facade. The domains are composed here rather than constructed by a consumer, so what these assert is that every
+ * member is wired to its own class over the one shared request path, and that the three escape hatches address the same prefix the typed methods do.
  */
 import { HOST, officialPath } from "./domain.helpers.ts";
 import type { Interceptable, MockAgent } from "undici";
@@ -24,8 +24,9 @@ const SUCCESS = { "code": "SUCCESS", "data": [], "msg": "success" };
 
 describe("OfficialApi", () => {
 
-  /* One representative call per domain member. Reaching the interception at all is the pin: it establishes that the member exists, that it was constructed with
-   * the shared dispatch and the right host, and that its methods address the official prefix - a member wired to nothing would leave its interception pending.
+  /* One representative call per domain member. Reaching the interception at all is the assertion: it establishes that the member exists, that it was constructed
+   * with the shared dispatch and the right host, and that its methods address the official prefix - a member wired to nothing would leave its interception
+   * pending.
    */
   const reachable: readonly [ string, string, (api: OfficialApi) => Promise<unknown> ][] = [
 

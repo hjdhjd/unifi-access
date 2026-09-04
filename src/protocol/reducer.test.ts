@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * reducer.test.ts: Unit tests for the state reducer. The reducer's guarantees are immutability, structural sharing, and no-op fidelity, so alongside the value
- * assertions these tests pin reference identity in both directions: a change must mint a new reference on the path it touched, and a no-change must return the
+ * assertions these tests assert reference identity in both directions: a change must mint a new reference on the path it touched, and a no-change must return the
  * very same object. The topology fixtures are real controller documents, so the flattening and pruning assertions run against wire material rather than mock shapes.
  */
 import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig } from "../types/index.ts";
@@ -220,7 +220,7 @@ describe("applyBootstrap door-state seeding", () => {
 
   test("seeds each door with exactly what its own serving hardware establishes", () => {
 
-    /* The per-door values, pinned against what the catalog predicts for the hardware this real document carries, because an assertion that entries merely exist
+    /* The per-door values, asserted against what the catalog predicts for the hardware this real document carries, because an assertion that entries merely exist
      * would pass just as well against a derivation that read the wrong flags. The Ultra reports no wiring pair, so it establishes its lock alone; the other two
      * report their pairs dark, which is a sensor that is not connected; and all three relays are at rest.
      */
@@ -464,14 +464,14 @@ describe("applyBootstrap capability normalization", () => {
     assert.deepEqual(admitted.capabilities, [], "admission supplies the array the record arrived without");
 
     // The substitution is selective rather than a rewrite of everything that passes through: a record that arrived with the array keeps the very array the document
-    // carried. The record itself is a copy, because its address takes the library's spelling on the way in, and the array rides that copy by reference.
+    // carried. The record itself is a copy, because its address takes the library's spelling on the way in, and the array is held in that copy by reference.
     assert.equal(Object.is(state.devices.get(HUB_ID)?.capabilities, carrier.capabilities), true, "a record carrying capabilities keeps its own array");
   });
 
   test("re-applying a document carrying that record returns the very same state", () => {
 
-    // Two independently built documents, so a pass here cannot come from the two applications sharing input objects. Each application normalizes into a fresh
-    // object, so this is what pins that a substituted record still reconciles down to the stored one rather than minting state on every refresh.
+    // Two independently built documents, so a pass here cannot come from the two applications sharing input objects. Each application normalizes into a fresh object,
+    // so this is what asserts that a substituted record still reconciles down to the stored one rather than minting state on every refresh.
     const state = applyBootstrap(createInitialState(), capabilityLessBootstrap());
     const again = applyBootstrap(state, capabilityLessBootstrap());
 
@@ -499,7 +499,7 @@ describe("applyBootstrap capability normalization", () => {
 describe("applyBootstrap address spelling", () => {
 
   // The 2026 document spells this reader's address in uppercase where it spells its siblings' in lowercase, which is the wire's own inconsistency and what makes it
-  // the specimen. The premise is pinned first, so the test cannot pass vacuously if the fixture is ever re-captured.
+  // the specimen. The premise is asserted first, so the test cannot pass vacuously if the fixture is ever re-captured.
   const G2_ID = "aabbcc000003";
 
   // One record of a document by identity, failing loudly rather than skipping if the document ever stops carrying it. The record is the document's own object,
@@ -525,7 +525,7 @@ describe("applyBootstrap address spelling", () => {
 
   test("a record that already carries the library's spelling is admitted as the very object the document carried", () => {
 
-    // No captured topology document spells an address the library's way, so the record is prepared on a clone: the pin is that the fold hands back the very
+    // No captured topology document spells an address the library's way, so the record is prepared on a clone: the assertion is that the fold hands back the very
     // object when it has nothing to do, which is what keeps a canonical record from being rebuilt on every pass.
     const document = clone(accessBootstrap2026Fixture);
     const carrier = documentRecord(document, HUB_ID);
@@ -556,7 +556,7 @@ describe("applyBootstrap address spelling", () => {
 
     // A hub embeds the camera records it serves - the companion Protect controller's own material, which this library does not model. Those are wire material inside
     // the record rather than the record's own identity, so they are kept exactly as sent. The wire happens to spell them the library's way already, which would make
-    // a pin on the captured value vacuous, so the nested address is re-spelled on a clone and must come back untouched.
+    // an assertion on the captured value vacuous, so the nested address is re-spelled on a clone and must come back untouched.
     const document = clone(accessBootstrap2026Fixture);
     const camera = documentRecord(document, HUB_ID).cameras?.[0];
 
@@ -687,7 +687,7 @@ describe("deviceChanged", () => {
     const stored = state.devices.get(HUB_ID);
 
     assert.ok(stored);
-    // The premise, pinned so the row cannot pass on a value the record already holds: the firmware below is a real change to this record.
+    // The premise, asserted so the row cannot pass on a value the record already holds: the firmware below is a real change to this record.
     assert.notEqual(stored.firmware, "v9.9.9");
 
     const event: AccessTypedEvent = { eventName: "access.data.device.update", id: HUB_ID, kind: "deviceChanged",
@@ -981,7 +981,7 @@ describe("doorStateChanged", () => {
 
     assert.ok(merged);
 
-    // Field-level pins rather than a reference comparison: the facet's own translated values have to land, and the fields it did not mention have to survive.
+    // Field-level assertions rather than a reference comparison: the facet's own translated values have to land, and the fields it did not mention have to survive.
     assert.equal(merged.revision, event.device.payload.revision);
     assert.notEqual(merged.revision, before, "the facet really did advance the record");
     assert.equal(merged.ip, "192.0.2.17");
@@ -1136,9 +1136,9 @@ describe("controllerChanged", () => {
 
 describe("the door state entry's honest unknowns", () => {
 
-  /* These rows are compile-surface rather than behavior: they pin that a consumer cannot read a member of a door state entry as though it were always there. A
-   * seeded entry states only what its source established, so every member but the door's own identity may be absent, and the compiler is what makes a consumer
-   * reckon with that rather than reading a value the entry never carried.
+  /* These rows are compile-surface rather than behavior: they assert that a consumer cannot read a member of a door state entry as though it were always there. A
+   * seeded entry states only what its source established, so every member but the door's own identity may be absent, and the compiler is what makes a consumer reckon
+   * with that rather than reading a value the entry never carried.
    */
   test("refuses an unguarded read of a member a seeded entry may not carry", () => {
 
@@ -1208,7 +1208,7 @@ describe("censusApplied", () => {
   test("admits a device carrying the canonical address, composed by the census before dispatch", () => {
 
     // The census boundary applies no reducer-side fold: the projection composes the address in the library's spelling from the listing's identifier, so what the
-    // state holds here is what the projection produced. Pinned at the state rather than at the projection so the boundary itself is on record.
+    // state holds here is what the projection produced. Asserted at the state rather than at the projection so the boundary itself is on record.
     assert.equal(reduce(createInitialState(), census()).devices.get(HUB_ID)?.mac, "AABBCC000001");
   });
 

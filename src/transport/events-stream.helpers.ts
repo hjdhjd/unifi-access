@@ -186,7 +186,7 @@ export interface LoopbackServer extends AsyncDisposable {
  * then behave in ways no library would - accepting a close frame and never answering it is the condition the stream's disposal contract has to hold under.
  *
  * Every accepted socket is put in flowing mode at accept whatever the dial says, because a socket that is never read may never emit `close` once the peer severs
- * it, and `close` is the event the disposal pins wait on. The server offers `h2` ahead of `http/1.1` in ALPN so that a client which offered both would negotiate
+ * it, and `close` is the event the disposal tests wait on. The server offers `h2` ahead of `http/1.1` in ALPN so that a client which offered both would negotiate
  * `h2`, which is what makes the negotiated protocol worth asserting.
  *
  * @param behavior - How the peer answers a connected client.
@@ -220,8 +220,8 @@ export async function createLoopbackServer(behavior: LoopbackPeerBehavior): Prom
 
     socket.on("data", (chunk: Buffer) => {
 
-      // The peer that never upgrades reads and discards, which leaves the client's connect in flight - the pre-open condition one of the disposal pins tears
-      // down from.
+      // The peer that never upgrades reads and discards, which leaves the client's connect in flight - the pre-open condition one of the disposal tests tears down
+      // from.
       if(behavior === "neverUpgrades") {
 
         return;

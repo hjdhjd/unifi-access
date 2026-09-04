@@ -12,7 +12,7 @@ import { inspect } from "node:util";
 import { loadCredentials } from "./credentials.ts";
 
 /**
- * Options for {@link openClient}. `api` pins the routed door commands to one of the controller's APIs; `credentials` is a pre-loaded identity from
+ * Options for {@link openClient}. `api` holds the routed door commands to one of the controller's APIs; `credentials` is a pre-loaded identity from
  * {@link loadUfaIdentity}, which a mode-gated command supplies so the file is read exactly once per invocation; `cwd`/`home` are forwarded to credential discovery
  * (tests point them at a fixture); `log` is the logger the library emits through; `debug` turns on verbose logging in the default stderr logger and has no effect when
  * the caller supplies its own `log`; `refreshIntervalMs` overrides the bootstrap-refresh failsafe cadence (a one-shot command passes `false` to skip the failsafe
@@ -107,18 +107,18 @@ export async function loadUfaIdentity(opts: LoadCredentialsOptions = {}): Promis
 
 /**
  * Refuse an operation the supplied identities cannot reach, before anything connects. The one home for the CLI's surface-gating policy: the credential arm guards the
- * Access application's own endpoints (the topology, the device projections), the official arm guards the published API - and the official arm also honors an
- * `--api direct-only` pin, because the pin means "stay off the official channel" and an operation with no direct expression cannot honor it. Commands never restate
+ * Access application's own endpoints (the topology, the device projections), the official arm guards the published API - and the official arm also honors an `--api
+ * direct-only` choice, because that choice means "stay off the official channel" and an operation with no direct expression cannot honor it. Commands never restate
  * this refusal wording anywhere; they name their operation and let the message compose here.
  *
  * The presence checks read the identity union's own shape, so the union stays the single model with no parallel booleans maintained beside it.
  *
  * @param credentials - The loaded identity file.
- * @param surface     - Which of the controller's APIs the operation rides.
+ * @param surface     - Which of the controller's APIs the operation runs on.
  * @param operation   - The operation, as the refusal names it (e.g. "info command").
- * @param apiOverride - The `--api` pin in force, when the command accepts one.
+ * @param apiOverride - The `--api` choice in force, when the command accepts one.
  *
- * @throws {@link CliError} when the identities cannot reach the surface (exit 1), or when a pin contradicts it (exit 2).
+ * @throws {@link CliError} when the identities cannot reach the surface (exit 1), or when an api choice contradicts it (exit 2).
  *
  * @category CLI
  */
@@ -137,12 +137,12 @@ export function requireSurface(credentials: UfaCredentials, surface: "credential
 
   if(apiOverride === "direct-only") {
 
-    throw new CliError("The " + operation + " rides the official API alone, so it cannot run with --api direct-only.", { exitCode: 2 });
+    throw new CliError("The " + operation + " runs on the official API alone, so it cannot run with --api direct-only.", { exitCode: 2 });
   }
 
   if(!("token" in credentials.identity)) {
 
-    throw new CliError("The " + operation + " rides the official API, which requires a token the ufa.json configuration does not carry.");
+    throw new CliError("The " + operation + " runs on the official API, which requires a token the ufa.json configuration does not carry.");
   }
 }
 
@@ -166,7 +166,7 @@ export function requireOfficial(client: AccessClient, operation: string): NonNul
 
   if(official === null) {
 
-    throw new CliError("The " + operation + " rides the official API, which this controller did not offer the client's token.");
+    throw new CliError("The " + operation + " runs on the official API, which this controller did not offer the client's token.");
   }
 
   return official;
@@ -179,7 +179,7 @@ export function requireOfficial(client: AccessClient, operation: string): NonNul
  *
  * @param ctx       - The command context's injected hooks and lifetime signal.
  * @param operation - The operation, as a refusal names it.
- * @param opts      - The api pin and debug flag to thread through.
+ * @param opts      - The api choice and debug flag to thread through.
  *
  * @returns A connected client.
  *
@@ -204,15 +204,15 @@ export async function openOfficialClient(ctx: Pick<CommandContext, "loadCredenti
  * site while the credential loading and connect assembly live in exactly one place. A caller that already loaded the identity file (through {@link loadUfaIdentity},
  * to gate on it) passes it in `credentials` and the load is skipped.
  *
- * An `api` pin the identities cannot honor is refused here as a calm usage error, before anything is sent - the library raises the same contradiction as a
+ * An `api` choice the identities cannot honor is refused here as a calm usage error, before anything is sent - the library raises the same contradiction as a
  * `TypeError`, which is its correct answer to a programming error, but an operator's typo deserves a usage error rather than a stack. The two rails serve different
  * audiences by design.
  *
- * @param opts - The api pin, pre-loaded credentials or discovery overrides, logger, refresh cadence, and the Ctrl-C signal.
+ * @param opts - The api choice, pre-loaded credentials or discovery overrides, logger, refresh cadence, and the Ctrl-C signal.
  *
  * @returns A connected client.
  *
- * @throws {@link CliError} when credentials cannot be loaded or contradict the api pin, or the typed `FatalError` the library throws on a failed connect.
+ * @throws {@link CliError} when credentials cannot be loaded or contradict the api choice, or the typed `FatalError` the library throws on a failed connect.
  *
  * @category CLI
  */

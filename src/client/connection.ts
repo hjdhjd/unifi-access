@@ -711,9 +711,9 @@ export class ConnectionMonitor {
    * prior uptime, which is days on any controller that has been up - so a decrease past the floor is the signal, and anything smaller is treated as skew from a
    * mechanism whose magnitude was never bounded by observation.
    *
-   * This is graded best-effort diagnostics, and nothing correctness-bearing rides it. It produces an informational line, an event, and a wake for a parked recovery
-   * wait. A missed restart costs the line and the event, because the recovery loop is already polling on its own cadence during any real outage; a false one costs
-   * one wrong line, one event, and one early probe that finds a healthy controller.
+   * This is graded best-effort diagnostics, and nothing correctness-bearing depends on it. It produces an informational line, an event, and a wake for a parked
+   * recovery wait. A missed restart costs the line and the event, because the recovery loop is already polling on its own cadence during any real outage; a false one
+   * costs one wrong line, one event, and one early probe that finds a healthy controller.
    */
   async #watchRestarts(): Promise<void> {
 
@@ -732,8 +732,8 @@ export class ConnectionMonitor {
 
         this.#log.info("The UniFi Access controller appears to have restarted.");
 
-        // A detected restart proves the controller is answering again, because this reading rode a successful fetch. Wake any parked recovery so it relaunches now
-        // rather than sleeping out a backoff, and wake before announcing so a slow or throwing listener cannot cost us the wake.
+        // A detected restart proves the controller is answering again, because this reading came back on a successful fetch. Wake any parked recovery so it relaunches
+        // now rather than sleeping out a backoff, and wake before announcing so a slow or throwing listener cannot cost us the wake.
         this.#wakeRecovery();
         this.#bus.emit("controllerRebooted", { newUptime: uptime, previousUptime });
       }

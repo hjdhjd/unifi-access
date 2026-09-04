@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * devices.test.ts: Unit tests for the official API's device domain. The two shapes this domain exists to get right are both pinned here: the grouped device payload
+ * devices.test.ts: Unit tests for the official API's device domain. The two shapes this domain exists to get right are both asserted here: the grouped device payload
  * the reference's own schema table describes flat, and the access-method map that is sparse rather than complete.
  */
 import type { AccessOfficialAccessMethodFace, AccessOfficialAccessMethodFaceUpdate, AccessOfficialAccessMethodValue } from "./devices.ts";

@@ -213,7 +213,7 @@ export class AccessDevice extends Projection<AccessStateDevice> {
    *
    * @returns The device record as the controller echoed it.
    *
-   * @throws {@link AccessCapabilityError} when this client has no path that can carry the write - one pinned to the official API, which cannot express it, or one
+   * @throws {@link AccessCapabilityError} when this client has no path that can carry the write - one held to the official API, which cannot express it, or one
    *   holding only a token, whose credentials the Access application's own endpoints require. The classified `FatalError` on a non-2xx -
    *   {@link AccessAuthorizationError} when the account lacks the privilege the write requires - or a transport-level `AccessError` on failure.
    */
@@ -225,7 +225,7 @@ export class AccessDevice extends Projection<AccessStateDevice> {
      */
     const kind = isHub(this.config) ? "configs" : "settings";
 
-    /* Where the echoed record is caught. It rides a holder rather than a bare binding because the routed call is what runs the expression that fills it: a
+    /* Where the echoed record is caught. It lives on a holder rather than a bare binding because the routed call is what runs the expression that fills it: a
      * property read is not narrowed across that call, which is exactly the truth of the situation, where a binding the compiler could see assigned nowhere else
      * would read as permanently empty.
      */
@@ -264,9 +264,9 @@ export class AccessDevice extends Projection<AccessStateDevice> {
    *
    * @param opts - Optional abort signal.
    *
-   * @throws {@link AccessCapabilityError} when this client has no path that can carry the restart - one pinned to the official API, which cannot express it, or
-   *   one holding only a token, whose credentials the Access application's own endpoints require. {@link AccessRequestError} when the controller accepts the
-   *   request but reports the restart unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
+   * @throws {@link AccessCapabilityError} when this client has no path that can carry the restart - one held to the official API, which cannot express it, or one
+   *   holding only a token, whose credentials the Access application's own endpoints require. {@link AccessRequestError} when the controller accepts the request but
+   *   reports the restart unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
    */
   async restart(opts: { signal?: AbortSignal } = {}): Promise<void> {
 
@@ -330,8 +330,8 @@ export class AccessDevice extends Projection<AccessStateDevice> {
   /**
    * Read a command's result envelope and throw when the controller reports the operation unsuccessful.
    *
-   * A 2xx means the controller accepted the request and answered; what it answered can still report that the operation did not succeed, and that verdict rides the
-   * envelope rather than the status. This lives beside the dispatch helper so that every command reading an envelope reads it the same way, rather than each one
+   * A 2xx means the controller accepted the request and answered; what it answered can still report that the operation did not succeed, and that verdict is in the
+   * envelope rather than in the status. This lives beside the dispatch helper so that every command reading an envelope reads it the same way, rather than each one
    * spelling out its own idea of what success looks like.
    *
    * The thrown error carries the response's real status code, which is what the library's request error is for: this is the controller's own report of a refusal,

@@ -5,7 +5,7 @@
  * (closed -> open -> half-open -> closed).
  *
  * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, and a fake Clock advances breaker time
- * without real-time waits. The injected dispatcher and clock let these tests pin the controller's throttle and retry behavior - the established behavioral
+ * without real-time waits. The injected dispatcher and clock let these tests assert the controller's throttle and retry behavior - the established behavioral
  * contract - exactly and without flakiness.
  */
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL } from "../settings.ts";

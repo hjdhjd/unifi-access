@@ -688,7 +688,7 @@ describe("EventStream", () => {
       const payloads: AccessEventsPacketPayload[] = [];
       const onPacket = (message: unknown): void => void payloads.push(message as AccessEventsPacketPayload);
 
-      // A door-state report names each of the doors it carries rather than one subject, so it rides the same identifier-free arm the ring cancellation does.
+      // A door-state report names each of the doors it carries rather than one subject, so it goes through the same identifier-free arm the ring cancellation does.
       const doorState = findPacket((entry) => (entry.event === "access.data.v2.location.update") && (entry.data?.["state"] !== undefined),
         "a v2 location update carrying door state");
 
@@ -951,8 +951,8 @@ describe("EventStream", () => {
 
       const connection = await arriving;
 
-      // The peer offers h2 ahead of http/1.1, so it would negotiate h2 against a client that offered both. What it reports is therefore a pin on the client's own
-      // offer staying http/1.1-only, which is what a WebSocket upgrade requires.
+      // The peer offers h2 ahead of http/1.1, so it would negotiate h2 against a client that offered both. What it reports is therefore an assertion on the
+      // client's own offer staying http/1.1-only, which is what a WebSocket upgrade requires.
       assert.equal(connection.alpnProtocol, "http/1.1");
 
       /* The ordering here is the whole point. The peer-side promise was armed when the connection was accepted, so it cannot be missed; close() is awaited first

@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * logs.test.ts: Unit tests for the official API's system-log domain. The two shapes worth pinning are the pagination the reference documents in the wrong place,
+ * logs.test.ts: Unit tests for the official API's system-log domain. The two shapes worth asserting are the pagination the reference documents in the wrong place,
  * and the split between the query string carrying the page and the body carrying the filter.
  */
 import { describe, test } from "node:test";
@@ -28,7 +28,7 @@ const RESOURCE = { "created_at": 1786815868, "updated_at": 1786815869, "video_re
 
 const rows: readonly DomainRow<OfficialSystemLogs>[] = [
 
-  /* The page rides the query string and the filter rides the body, which is the endpoint's own split. This is a POST-shaped read, so it opts back in to the
+  /* The page goes in the query string and the filter goes in the body, which is the endpoint's own split. This is a POST-shaped read, so it opts back in to the
    * transparent retry the surface's genuinely-minting POSTs opt out of.
    */
   { body: "{\"actor_id\":\"u-1\",\"since\":1786815000,\"topic\":\"door_openings\",\"until\":1786816000}",

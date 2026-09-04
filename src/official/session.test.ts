@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * session.test.ts: Unit tests for the official API's token session. The session's whole surface is the closures a transport is wired with, so these tests pin
+ * session.test.ts: Unit tests for the official API's token session. The session's whole surface is the closures a transport is wired with, so these tests assert
  * what each of them produces - the exact header the controller authenticates on, and the answer that makes a token's 401 terminal.
  */
 import { describe, test } from "node:test";
@@ -15,7 +15,7 @@ describe("TokenSession", () => {
 
     const session = new TokenSession({ token: TOKEN });
 
-    // An exact comparison rather than a membership check: the official API authenticates on this header alone, and anything else riding along would be this
+    // An exact comparison rather than a membership check: the official API authenticates on this header alone, and anything else traveling along would be this
     // library adding to a request the controller never asked for.
     assert.deepEqual(session.authHeaders(), { authorization: "Bearer " + TOKEN });
   });

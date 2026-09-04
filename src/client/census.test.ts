@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * census.test.ts: Unit tests for the official-listing projections. These are pure functions over real captured records, so what is pinned is the exact shape each
- * one produces: which members it carries, which it leaves absent, and that the identity it hands the state is the identity the topology addresses the same
+ * census.test.ts: Unit tests for the official-listing projections. These are pure functions over real captured records, so what is asserted is the exact shape
+ * each one produces: which members it carries, which it leaves absent, and that the identity it hands the state is the identity the topology addresses the same
  * hardware by. That last group runs both fixture corpora against each other, which is the only way to establish that the two censuses describe one controller.
  */
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
@@ -100,7 +100,7 @@ describe("officialDeviceRecord", () => {
 
   test("fills an empty capabilities array for a record that carries none, both ways a record can lack one", () => {
 
-    /* Both shapes the rule tells apart. A presence-only check passes the second and fails only the first, so pinning the key-absent case alone would leave a
+    /* Both shapes the rule tells apart. A presence-only check passes the second and fails only the first, so asserting the key-absent case alone would leave a
      * regression to a `in` test invisible.
      */
     const { capabilities: _stripped, ...keyAbsent } = listed(HUB);
@@ -179,7 +179,8 @@ describe("officialDoorRecord", () => {
 
     const projected = officialDoorRecord(listedDoor(DOOR_HUB));
 
-    // The lock and the position ride door state; the extras and the hub binding are reachable on the official surface and establish nothing this record needs.
+    // The lock and the position belong to door state; the extras and the hub binding are reachable on the official surface and establish nothing this record
+    // needs.
     for(const member of [ "door_lock_relay_status", "door_position_status", "extras", "is_bind_hub", "device_groups", "level", "timezone" ]) {
 
       assert.equal(Object.hasOwn(projected, member), false, member + " does not belong on the stored door record");

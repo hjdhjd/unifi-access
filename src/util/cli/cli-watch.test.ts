@@ -2,7 +2,7 @@
  *
  * cli-watch.test.ts: Tests for the ufa watch group - the compiled filter engine over the capture corpus, the events grammar, the raw capture rail, and the
  * door-state rail. Every test runs offline against the structural fake; the filter tests run against the committed capture corpus rather than hand-written packets,
- * so what they pin is the wire as it actually arrived.
+ * so what they assert is the wire as it actually arrived.
  */
 import type { AccessDoorStateEntry, AccessEventPacket } from "../../index.ts";
 import { CliError, compileEventFilters, packetSubjectId } from "./shared.ts";
@@ -32,7 +32,7 @@ const DOOR_MINI_ID = "aabbcc000004";
 const DOOR_MINI_DOOR_ID = "00000000-0000-0000-0000-00000000000e";
 
 /* The one wire name in the unlock vocabulary that no capture in hand contains. The library's own classifier models it because earlier consumers filtered on it, and
- * its own suite pins it with a synthetic packet for exactly this reason (src/protocol/events.test.ts). We follow that precedent here: the captured remote-unlock
+ * its own suite asserts it with a synthetic packet for exactly this reason (src/protocol/events.test.ts). We follow that precedent here: the captured remote-unlock
  * specimen carries the shortcut's positive case, and this stands in for the second name the same classified kind admits.
  */
 const SYNTHETIC_DOOR_UNLOCK: AccessEventPacket = {
@@ -356,7 +356,7 @@ describe("the watch events command", () => {
 
     const lines = await runEvents([ "--stats", "--json" ], [ RING, CANCEL, CANCEL ]);
 
-    // The format flag is inert under stats rather than in conflict with it, so the pin is that no packet was rendered at all.
+    // The format flag is inert under stats rather than in conflict with it, so the assertion is that no packet was rendered at all.
     assert.equal(lines.filter((line) => line.trim().startsWith("{")).length, 0);
 
     // The tally itself, in full: the order is by count descending, so the two-count name precedes the one-count name.

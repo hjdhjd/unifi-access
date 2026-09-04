@@ -85,7 +85,7 @@ export function officialDeviceRecord(device: AccessOfficialDevice): AccessStateD
  * The identity translates directly: the listing's `id` is the `unique_id` the topology addresses the same door by, its `floor_id` is the identity of the floor
  * above it, and its `type` is that document's `location_type`.
  *
- * The lock and position members are deliberately not projected here. They are door STATE rather than door configuration, and they ride the door-state facts through
+ * The lock and position members are deliberately not projected here. They are door STATE rather than door configuration, and they reach the door-state facts through
  * the existing folds, which is what keeps one door's condition in one collection. `extras` and `is_bind_hub` are not projected either: the door-state facts already
  * carry what the extras would establish, and the official surface keeps the whole record reachable for a consumer that wants the rest.
  *
@@ -112,9 +112,9 @@ export function officialDoorRecord(door: AccessOfficialDoor): AccessStateDoor {
 /**
  * Project one door from the official API's door listing into the door-state facts it establishes.
  *
- * The lock and position vocabularies are translated through the protocol tier's one home for them rather than here, which is what keeps a spelling from the
- * official channel out of a member the notification stream fills with its own. Each member rides only where the read established it: a door the listing has no
- * position for carries no position member at all, rather than a null or an invented one.
+ * The lock and position vocabularies are translated through the protocol tier's one home for them rather than here, which is what keeps a spelling from the official
+ * channel out of a member the notification stream fills with its own. Each member appears only where the read established it: a door the listing has no position for
+ * carries no position member at all, rather than a null or an invented one.
  *
  * @param door - One door as the official listing carried it.
  *

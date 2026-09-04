@@ -69,7 +69,7 @@ export interface AccessLocationConfigInterface {
   level: number;
   location_type: string;
   name: string;
-  // Carried by 2026 firmware and absent from earlier controllers. The element shape is not pinned: the array has only ever been observed empty, so the open JSON type
+  // Carried by 2026 firmware and absent from earlier controllers. The element shape is not settled: the array has only ever been observed empty, so the open JSON type
   // admits whatever the controller puts in it.
   previous_name?: AccessKnownJsonValue[];
   timezone: string;

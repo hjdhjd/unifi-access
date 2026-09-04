@@ -229,13 +229,13 @@ close(opts?): Promise<void>;
 Close the door this hub drives, ending an unlock that is holding it open. This is the other half of the two-button surface a gate or a door with a held-open
 unlock presents: `unlock` begins, this ends.
 
-The request deliberately carries no body at all, which is the field-proven shape for this command - the controller reads the command from the query parameter,
-and a body is what distinguishes an unlock from a close on the same resource. The wire shape is proven from hardware rather than from a capture, so no recorded
-specimen pins it.
+The request deliberately carries no body at all, which is the field-proven shape for this command - the controller reads the command from the query parameter, and a
+body is what distinguishes an unlock from a close on the same resource. The wire shape is proven from hardware rather than from a capture, so no recorded specimen
+confirms it.
 
-**Which API carries this depends on the client.** Every client holding a direct path takes the hardware-proven command above. A client with none - one
-holding only a token, or one pinned to the official API - reaches the published API's gate control command instead, which the reference documents for UA Hub
-Gate hardware in three-button mode on UniFi Access 4.2.16 or later and no capture pins on other door families.
+**Which API carries this depends on the client.** Every client holding a direct path takes the hardware-proven command above. A client with none - one holding only
+a token, or one held to the official API - reaches the published API's gate control command instead, which the reference documents for UA Hub Gate hardware in
+three-button mode on UniFi Access 4.2.16 or later and no capture confirms on other door families.
 
 **Close belongs to gate hardware.** A door hub refuses the command on both APIs - field-verified against live hardware - which fits the functional split:
 a gate has a close motion to command, and a door's lock does not. Ending a held-open unlock on a door hub is [AccessHub.setLockRule](#setlockrule) with the
@@ -346,9 +346,9 @@ non-2xx classifies and throws, and a 2xx whose envelope reports anything other t
 
 #### Throws
 
-[AccessCapabilityError](../classes/AccessCapabilityError.md) when this client has no path that can carry the restart - one pinned to the official API, which cannot express it, or
-  one holding only a token, whose credentials the Access application's own endpoints require. [AccessRequestError](../classes/AccessRequestError.md) when the controller accepts the
-  request but reports the restart unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
+[AccessCapabilityError](../classes/AccessCapabilityError.md) when this client has no path that can carry the restart - one held to the official API, which cannot express it, or one
+  holding only a token, whose credentials the Access application's own endpoints require. [AccessRequestError](../classes/AccessRequestError.md) when the controller accepts the request but
+  reports the restart unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
 
 #### Inherited from
 
@@ -368,10 +368,10 @@ Set the rule governing this hub's lock.
 application's own endpoint can express - `reset`, `keep_unlock`, and `custom`. The other three are official-only, so a client with no working official path
 refuses them rather than approximating.
 
-**A rule can name the door it governs.** `doorId` defaults to this handle's own door, and a rule targeting any other door rides the official path alone: the
-Access application's own rule resource is keyed by the device rather than by the door, so it can only ever govern the door that device resolves for itself.
-A client with no working official path refuses such a rule rather than writing it to a door the caller did not ask for. A target that resolves to this
-handle's own door is the same write the default is, and takes the direct path exactly as the default does.
+**A rule can name the door it governs.** `doorId` defaults to this handle's own door, and a rule targeting any other door takes the official path alone: the Access
+application's own rule resource is keyed by the device rather than by the door, so it can only ever govern the door that device resolves for itself. A client with
+no working official path refuses such a rule rather than writing it to a door the caller did not ask for. A target that resolves to this handle's own door is the
+same write the default is, and takes the direct path exactly as the default does.
 
 #### Parameters
 
@@ -405,9 +405,9 @@ stop(opts?): Promise<void>;
 
 Halt this hub's gate mid-transition, leaving it where it stands rather than completing the travel it is running.
 
-The reference documents this command for UA Hub Gate hardware in three-button mode on UniFi Access 4.2.16 or later, and no capture pins it, so what other
-hardware makes of it is what field reports will establish. It is official-only: the Access application's own resource has no proven stop spelling, and this
-library does not invent direct-API behavior, so a client with no working official path refuses rather than approximating.
+The reference documents this command for UA Hub Gate hardware in three-button mode on UniFi Access 4.2.16 or later, and no capture confirms it, so what other
+hardware makes of it is what field reports will establish. It is official-only: the Access application's own resource has no proven stop spelling, and this library
+does not invent direct-API behavior, so a client with no working official path refuses rather than approximating.
 
 Which gate is halted is this handle's own door unless `doorId` picks out another of the doors the hardware drives.
 
@@ -438,16 +438,16 @@ unlock(opts?): Promise<void>;
 
 Unlock the door this hub drives.
 
-**Which API carries this depends on the client and on what is asked.** A plain unlock takes the official path where one is available and the direct path
-otherwise, which is the routing default; on a client holding both identities that means the controller attributes the unlock to the token's own identity rather
-than to the credential account. Pin `api` at connect to hold it to one channel.
+**Which API carries this depends on the client and on what is asked.** A plain unlock takes the official path where one is available and the direct path otherwise,
+which is the routing default; on a client holding both identities that means the controller attributes the unlock to the token's own identity rather than to the
+credential account. Set `api` at connect to hold it to one channel.
 
 Supplying `actor` is what makes an automation legible in the controller's logs and webhook deliveries as the automation rather than as whatever it
 authenticated with, and `entryMethod` is which of a double-driveway gate's two approaches the unlock is for. Only the official API can express either one, so
 an unlock carrying one has no direct-path fallback and a client without a working official path refuses it rather than quietly dropping what it cannot say.
 
-On a token-only client this projection exists over the official inventory, and this unlock rides the official path - the only path such a client holds. So
-does its `close`, which reaches that path as the gate control command.
+On a token-only client this projection exists over the official inventory, and this unlock takes the official path - the only path such a client holds. So does its
+`close`, which reaches that path as the gate control command.
 
 `doorId` is which door to unlock where the hardware drives more than one, and it defaults to the door this handle resolves for itself. Both paths address the
 door rather than the hardware, so the target holds whichever one carries the unlock, and the id travels as given: the controller is the authority on what a
@@ -504,7 +504,7 @@ The device record as the controller echoed it.
 
 #### Throws
 
-[AccessCapabilityError](../classes/AccessCapabilityError.md) when this client has no path that can carry the write - one pinned to the official API, which cannot express it, or one
+[AccessCapabilityError](../classes/AccessCapabilityError.md) when this client has no path that can carry the write - one held to the official API, which cannot express it, or one
   holding only a token, whose credentials the Access application's own endpoints require. The classified `FatalError` on a non-2xx -
   [AccessAuthorizationError](../classes/AccessAuthorizationError.md) when the account lacks the privilege the write requires - or a transport-level `AccessError` on failure.
 

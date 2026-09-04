@@ -160,7 +160,7 @@ describe("the routing decision", () => {
     assert.deepEqual(credentialCalls.direct, []);
   });
 
-  test("carries an actor and an entry direction together, and names the attribution when both ride a refused unlock", async () => {
+  test("carries an actor and an entry direction together, and names the attribution when both travel on a refused unlock", async () => {
 
     const calls = newCalls();
     const { service } = makeService({ calls });
@@ -202,7 +202,7 @@ describe("the routing decision", () => {
       AccessCapabilityError);
   });
 
-  test("closes on the direct path wherever the client holds one, including under a direct-only pin", async () => {
+  test("closes on the direct path wherever the client holds one, including under a direct-only override", async () => {
 
     const calls = newCalls();
     const { service } = makeService({ calls });
@@ -223,14 +223,14 @@ describe("the routing decision", () => {
 
   test("closes through the official gate control command on a client with no direct path", async () => {
 
-    // The pin removes the direct expression, so the close reaches the published API's own control command rather than refusing.
+    // The override removes the direct expression, so the close reaches the published API's own control command rather than refusing.
     const pinnedCalls = newCalls();
     const pinned = makeService({ calls: pinnedCalls, capabilities: { override: "official-only" } });
 
     await pinned.service.routedClose({ deviceId: HUB, direct: direct(pinnedCalls, "close"), doorId: DOOR_HUB });
 
     assert.deepEqual(pinnedCalls.unlocks, [{ call: {}, id: DOOR_HUB, opts: { controlCmd: "close" } }]);
-    assert.deepEqual(pinnedCalls.direct, [], "the pin is what makes the direct expression unavailable rather than merely unused");
+    assert.deepEqual(pinnedCalls.direct, [], "the override is what makes the direct expression unavailable rather than merely unused");
 
     // A token client never held a direct path at all, and reaches the same command by the same route.
     const tokenCalls = newCalls();
@@ -259,7 +259,7 @@ describe("the routing decision", () => {
     assert.deepEqual(calls.direct, [], "a refused close issues nothing at all");
   });
 
-  test("honors the direct-only pin by never reaching for the official path", async () => {
+  test("honors the direct-only override by never reaching for the official path", async () => {
 
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { override: "direct-only" } });
@@ -267,7 +267,7 @@ describe("the routing decision", () => {
     await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
     assert.deepEqual(calls.direct, ["unlock"]);
-    assert.deepEqual(calls.unlocks, [], "a pinned client does not attempt the channel it was pinned away from");
+    assert.deepEqual(calls.unlocks, [], "a client held to one channel does not attempt the channel it was held away from");
 
     // And an operation only the official path can express is refused rather than quietly demoted.
     await assert.rejects(async () => service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB, direct: direct(calls, "unlock"),
@@ -294,8 +294,8 @@ describe("the capability error's message", () => {
       official: boolean; operation: RegExp; reason: RegExp; refuse?: () => Error; }[] = [
       { capabilities: { mode: "credential", official: false }, issue: attributedUnlock, label: "no official path", official: false,
         operation: /an unlock attributed to an actor/, reason: /requires the official API/ },
-      { capabilities: { mode: "dual", override: "direct-only" }, issue: attributedUnlock, label: "pinned direct", official: true,
-        operation: /an unlock attributed to an actor/, reason: /pinned to the direct API/ },
+      { capabilities: { mode: "dual", override: "direct-only" }, issue: attributedUnlock, label: "held direct", official: true,
+        operation: /an unlock attributed to an actor/, reason: /held to the direct API/ },
       { capabilities: { mode: "dual" }, issue: attributedUnlock, label: "revoked", official: true, operation: /an unlock attributed to an actor/,
         reason: /no longer available to this session/,
         refuse: () => new AccessOfficialApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) },
@@ -328,9 +328,9 @@ describe("the capability error's message", () => {
     }
   });
 
-  test("describes the official-only pin in terms that cover a refused device as well as an inexpressible one", async () => {
+  test("describes the official-only override in terms that cover a refused device as well as an inexpressible one", async () => {
 
-    // Under this pin there are two ways to end up with nothing: an operation the official API models nowhere, and one it models but refused for this device. A
+    // Under this override there are two ways to end up with nothing: an operation the official API models nowhere, and one it models but refused for this device. A
     // message naming only the first would misdescribe the second.
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { override: "official-only" } });
@@ -653,9 +653,9 @@ describe("a command only the direct path can carry", () => {
     }
   });
 
-  test("refuses it on a client pinned to the official API, which cannot express it", async () => {
+  test("refuses it on a client held to the official API, which cannot express it", async () => {
 
-    // A pin is a pin, whatever identities the client holds and however the command is spelled: what the pinned channel cannot carry, the client refuses.
+    // The override means one channel, whatever identities the client holds and however the command is spelled: what that channel cannot carry, the client refuses.
     for(const mode of [ "dual", "token" ] as const) {
 
       const calls = newCalls();
@@ -668,14 +668,14 @@ describe("a command only the direct path can carry", () => {
 
           assert.ok(error instanceof AccessCapabilityError);
           assert.match(error.message, new RegExp(operation), "the message names the operation");
-          assert.match(error.message, /pinned to the official API/, "and the pin that left it nowhere to go");
+          assert.match(error.message, /held to the official API/, "and the override that left it nowhere to go");
           assert.match(error.message, new RegExp("\\(connected in " + mode + " mode\\)"), "and the mode");
 
           return true;
         });
       }
 
-      assert.deepEqual(calls.direct, [], "no direct expression ran on a client pinned in " + mode + " mode");
+      assert.deepEqual(calls.direct, [], "no direct expression ran on a client held to one channel in " + mode + " mode");
     }
   });
 

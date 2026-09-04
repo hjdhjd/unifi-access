@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * server.test.ts: Unit tests for the official API's own certificate management. The upload row is the third multipart consumer, and it pins the two-part framing
- * and the caller-supplied filenames - the reference's own sample names are deliberately not what the fixture sends.
+ * server.test.ts: Unit tests for the official API's own certificate management. The upload row is the third multipart consumer, and it asserts the two-part
+ * framing and the caller-supplied filenames - the reference's own sample names are deliberately not what the fixture sends.
  */
 import { describeDomainTable, officialPath, parseMultipart } from "./domain.helpers.ts";
 import type { DomainRow } from "./domain.helpers.ts";

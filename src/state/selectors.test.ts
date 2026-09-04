@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * selectors.test.ts: Unit tests for the memoized derived views. Two things are pinned throughout: the values each view derives, against named entries of the real
+ * selectors.test.ts: Unit tests for the memoized derived views. Two things are asserted throughout: the values each view derives, against named entries of the real
  * topology documents rather than counts re-derived from the same fixture, and the reference identity that makes the observer dedup work - stable across a change the
  * view does not depend on, fresh across one it does.
  */
@@ -40,7 +40,7 @@ const EAH_FRONT_READER = "aabbcc000006";
 const EAH_NORTHEAST_READER = "aabbcc00000a";
 const EAH_NORTHWEST_READER = "aabbcc00000c";
 
-// The port-2 extension of the Enterprise Access Hub, the named access point the per-field mapping is pinned against.
+// The port-2 extension of the Enterprise Access Hub, the named access point the per-field mapping is asserted against.
 const EAH_PORT_2_EXTENSION = "00000000-0000-0000-0000-00000000002a";
 
 // A second Enterprise Access Hub and its one port, synthesized for the isolation case: no captured topology carries two of them, and the question of whether one
@@ -118,8 +118,8 @@ describe("isHub", () => {
 
     assert.ok(admitted, "the record has to be in the map to be classified at all");
 
-    /* The record is a clone of the document's hub-capable UA Ultra, so the capability read is what decides it rather than anything else the record carries. Each
-     * of these three reads the member off the record, directly or through the view, so reaching an answer at all is half of what they pin and the answer itself is
+    /* The record is a clone of the document's hub-capable UA Ultra, so the capability read is what decides it rather than anything else the record carries. Each of
+     * these three reads the member off the record, directly or through the view, so reaching an answer at all is half of what they assert and the answer itself is
      * the other half.
      */
     assert.equal(isHub(admitted), false);

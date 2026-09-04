@@ -49,7 +49,9 @@ export type FakeOfficialMethod = "command" | "devices.fetchAll" | "devices.fetch
   "users.fetch" | "users.fetchAll" | "users.uploadAvatar" | "visitors.fetch" | "visitors.fetchAll" | "webhooks.createEndpoint" | "webhooks.deleteEndpoint" |
   "webhooks.fetchAllEndpoints";
 
-/** What a fake's commands recorded, by verb. Asserting on these is what pins the wire shape a command chose, rather than on whatever it printed afterwards. */
+/**
+ * What a fake's commands recorded, by verb. Asserting on these is what establishes the wire shape a command chose, rather than on whatever it printed afterwards.
+ */
 export interface FakeCalls {
 
   closes: string[];
@@ -65,7 +67,7 @@ export interface FakeCalls {
 
 /**
  * One door in a fake state snapshot. The identity and both names are required because every door-naming line in the CLI reads one of them, so a fixture that omits
- * one cannot compile rather than rendering an empty spelling. Anything else a test wants a door record to carry rides alongside.
+ * one cannot compile rather than rendering an empty spelling. Anything else a test wants a door record to carry sits alongside.
  */
 export interface FakeDoorSpec {
 
@@ -420,9 +422,9 @@ function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<stri
  * Build a fake client and the call record its commands write into.
  *
  * The capability map defaults from the spec's own shape: an official spec makes a dual-mode client with the official path up, and nothing makes a credential-only
- * one; a test states `capabilities` itself to pin any other combination, the folded-official dual client included. Device handles are built from the spec whatever
- * the mode, mirroring the library's own contract: a token client's inventory is seeded from the official listings and answers through the same projections a
- * topology-seeded one does.
+ * one; a test states `capabilities` itself to establish any other combination, the folded-official dual client included. Device handles are built from the spec
+ * whatever the mode, mirroring the library's own contract: a token client's inventory is seeded from the official listings and answers through the same projections
+ * a topology-seeded one does.
  */
 export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; client: Record<string, unknown> } {
 
@@ -534,7 +536,8 @@ export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; c
 
 /**
  * A command context wired to a capturing output, an injected credential loader, and a fake client. `lines` holds what the command wrote, one entry per write. The
- * loader answers the dual identity unless a test narrows it, so both surface gates pass by default and each refusal is a deliberate act of the test that pins it.
+ * loader answers the dual identity unless a test narrows it, so both surface gates pass by default and each refusal is a deliberate act of the test that asserts
+ * it.
  */
 export function makeCommandContext(opts: { args?: string[]; client?: Record<string, unknown>; calls?: FakeCalls; credentials?: UfaCredentials;
   loadCredentials?: LoadCredentials; openClient?: OpenClient; signal?: AbortSignal; } = {}): { ctx: CommandContext; lines: string[] } {

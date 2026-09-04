@@ -8,7 +8,7 @@
 
 The options common to every way of connecting: the controller address, and the injected dependencies that each have a default.
 
-- `api` pins which of the controller's two APIs routed commands take; it defaults to `auto`, which prefers the official path and falls back to the direct one.
+- `api` holds routed commands to one of the controller's two APIs; it defaults to `auto`, which prefers the official path and falls back to the direct one.
 - `clock` is the time source threaded into every subsystem; it defaults to the wall clock, and a test injects a fake to drive time deterministically.
 - `dispatcher` substitutes the transport's connection pool; when omitted the transport builds and owns one.
 - `log` is the structured logger; it defaults to a sink that discards.

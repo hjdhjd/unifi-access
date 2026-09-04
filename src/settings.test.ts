@@ -2,7 +2,8 @@
  *
  * settings.test.ts: Unit tests for the project-wide constants in settings.ts. The constants are externally observable behavior - the error limit and retry interval
  * govern how aggressively the client retries against a controller, the API timeout bounds each request, and the heartbeat timeout governs how quickly a silent
- * realtime channel is declared dead. Pinning them prevents an accidental edit (a misplaced zero, a unit confusion) from silently changing behavior on every consumer.
+ * realtime channel is declared dead. Asserting them prevents an accidental edit (a misplaced zero, a unit confusion) from silently changing behavior on every
+ * consumer.
  */
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT, ACCESS_BOOTSTRAP_REFRESH_INTERVAL, ACCESS_EVENTS_HEARTBEAT_TIMEOUT,
   ACCESS_OFFICIAL_API_PATH_PREFIX, ACCESS_OFFICIAL_API_PORT } from "./settings.ts";

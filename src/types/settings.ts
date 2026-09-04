@@ -40,7 +40,7 @@ export interface AccessControllerSettingsConfigInterface {
     answer_key: string;
     unlock_key: string;
   };
-  // The element shape is not pinned: this list has only ever been observed empty, so the open JSON type admits whatever the controller sends.
+  // The element shape is not settled: this list has only ever been observed empty, so the open JSON type admits whatever the controller sends.
   disabled_live_view_for_clients: AccessKnownJsonValue[];
   discovery_broadcast_ips: string[];
   door_bell_ring_expire_second: number;

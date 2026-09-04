@@ -45,9 +45,9 @@ export type AccessApiMode = "credential" | "dual" | "token";
 /**
  * Which API a routed command should prefer.
  *
- * `auto` is the default and the ordinary case: the official path where it is available and capable, the direct path otherwise. The two pins exist for a consumer
- * that needs to know exactly which channel its commands take - to hold attribution to one identity, or to stay off a channel entirely - and they are pins rather
- * than preferences, so an operation the pinned channel cannot express fails rather than quietly taking the other one.
+ * `auto` is the default and the ordinary case: the official path where it is available and capable, the direct path otherwise. The two overrides exist for a consumer
+ * that needs to know exactly which channel its commands take - to hold attribution to one identity, or to stay off a channel entirely - and they hold the client to a
+ * channel rather than merely preferring one, so an operation that channel cannot express fails rather than quietly taking the other one.
  *
  * @category Client
  */
@@ -95,8 +95,8 @@ export interface AccessRoutingView {
  * One routed command that the Access application's own endpoints alone can carry: the device it addresses, how to issue it directly, and what to call it in a
  * refusal. A device restart and a device configuration write are each this shape - the published API models neither.
  *
- * Routing a command with exactly one path is the same decision every routed command faces: a client pinned to the official API refuses what that channel cannot
- * carry, a client holding no credentials has no direct path to take at all, and both are the one refusal every unroutable command gets, spoken in one vocabulary.
+ * Routing a command with exactly one path is the same decision every routed command faces: a client held to the official API refuses what that channel cannot carry, a
+ * client holding no credentials has no direct path to take at all, and both are the one refusal every unroutable command gets, spoken in one vocabulary.
  *
  * @category Client
  */
@@ -277,8 +277,8 @@ export class AccessRoutingService implements AccessRoutingView {
   /**
    * Unlock a door on whichever path can carry it.
    *
-   * An unlock carrying an actor or an entry direction is official-only, because the direct endpoint can say neither who acted nor which approach of a driveway
-   * gate was taken. A plain unlock rides the official path when one is available and falls back to the direct path when it is not.
+   * An unlock carrying an actor or an entry direction is official-only, because the direct endpoint can say neither who acted nor which approach of a driveway gate
+   * was taken. A plain unlock takes the official path when one is available and falls back to the direct path when it is not.
    *
    * @param request - The door, the device driving it, the optional actor and entry direction, and the direct-path expression.
    *
@@ -303,7 +303,7 @@ export class AccessRoutingService implements AccessRoutingView {
       official: async (official: AccessOfficialDoorSurface): Promise<void> => official.spaces.unlock(request.doorId, officialExtras,
         { ...((request.signal !== undefined) && { signal: request.signal }) }),
 
-      // Both official-only options can ride one unlock, and the attribution is the more particular fact about the command, so its arm speaks first.
+      // Both official-only options can travel on one unlock, and the attribution is the more particular fact about the command, so its arm speaks first.
       operation: (request.actor !== undefined) ? "an unlock attributed to an actor" :
         ((request.entryMethod !== undefined) ? "an unlock carrying an entry direction" : "an unlock")
     });
@@ -312,10 +312,10 @@ export class AccessRoutingService implements AccessRoutingView {
   /**
    * Close a door on whichever path can carry it.
    *
-   * The Access application's own close command is proven against the hardware, so it keeps serving every client that holds a direct path, byte for byte. The
-   * official half is the published API's gate control command - documented for UA Hub Gate hardware in three-button mode on UniFi Access 4.2.16 or later, with no
-   * capture pinning it on other door families - and it is what makes a close reachable at all on a client that holds no direct path. Composing that half only
-   * where the direct one cannot serve is the same conditional-half idiom an attributed unlock and a direct-inexpressible lock rule use.
+   * The Access application's own close command is proven against the hardware, so it keeps serving every client that holds a direct path, byte for byte. The official
+   * half is the published API's gate control command - documented for UA Hub Gate hardware in three-button mode on UniFi Access 4.2.16 or later, with no capture
+   * confirming it on other door families - and it is what makes a close reachable at all on a client that holds no direct path. Composing that half only where the
+   * direct one cannot serve is the same conditional-half idiom an attributed unlock and a direct-inexpressible lock rule use.
    *
    * @param request - The door, the device driving it, and the direct-path expression.
    *
@@ -388,14 +388,14 @@ export class AccessRoutingService implements AccessRoutingView {
   /**
    * Issue a command the Access application's own endpoints alone can carry, on a client that has a path to them.
    *
-   * This is the routing decision with no official half. The command reaches its direct expression on a client that holds credentials and is not pinned away from
-   * them, and the capability error otherwise. A pin is a pin here as it is everywhere else: a client told to speak only the official API does not quietly speak
-   * the other one for the commands that channel cannot express.
+   * This is the routing decision with no official half. The command reaches its direct expression on a client that holds credentials and is not held away from them,
+   * and the capability error otherwise. The override means one channel here as it does everywhere else: a client told to speak only the official API does not quietly
+   * speak the other one for the commands that channel cannot express.
    *
    * @param request - The device, the direct-path expression, and what to call the operation in a refusal.
    *
-   * @throws {@link AccessCapabilityError} when the client is pinned to the official API, which cannot carry this command, or holds no credentials, and therefore
-   *   has no path this command could take.
+   * @throws {@link AccessCapabilityError} when the client is held to the official API, which cannot carry this command, or holds no credentials, and therefore has no
+   *   path this command could take.
    */
   async routedDirect(request: AccessRoutedDirectRequest): Promise<void> {
 
@@ -404,9 +404,10 @@ export class AccessRoutingService implements AccessRoutingView {
 
   /* The one routing decision every routed command passes through.
    *
-   * Official first where the map, the latch, the override, and the floor recorded for this command on this device all allow it; the direct path where the command
-   * has one and the client is not pinned away from it; and the capability error where neither is left. The two capability refusals are caught here and nowhere
-   * else, which is what keeps a raw result code from ever reaching a consumer as the answer to a routed call - any other official failure is a genuine fault about
+   * Official first where the map, the latch, the override, and the floor recorded for this command on this device all allow it; the direct path where the command has
+   * one and the client is not held away from it; and the capability error where neither is left. The two capability refusals are caught here and nowhere else, which
+   * is what keeps a raw result code from ever reaching a consumer as the answer to a routed call - any other official failure is a genuine fault about this request
+   * and propagates as itself.
    * this request and propagates as itself.
    *
    * An operation reaching here with no official half is not a special case, merely one whose official half is absent for this client: it reaches the direct path
@@ -432,9 +433,10 @@ export class AccessRoutingService implements AccessRoutingView {
       }
     }
 
-    /* The pin is what makes the fallback unavailable rather than merely unused: a client told to speak only the official API does not quietly speak the other one.
-     * The mode gate beside it says something stronger: a client with no credentials holds no direct path, so a direct closure it was handed expresses a path that
-     * does not exist, and declining to call it is what keeps the refusal's reason the routing decision's own rather than whatever the transport would have said.
+    /* Holding the client to one channel is what makes the fallback unavailable rather than merely unused: a client told to speak only the official API does not
+     * quietly speak the other one. The mode gate beside it says something stronger: a client with no credentials holds no direct path, so a direct closure it was
+     * handed expresses a path that does not exist, and declining to call it is what keeps the refusal's reason the routing decision's own rather than whatever the
+     * transport would have said.
      */
     if((operation.direct !== undefined) && (this.#capabilities.override !== "official-only") && (this.#capabilities.mode !== "token")) {
 
@@ -502,10 +504,10 @@ export class AccessRoutingService implements AccessRoutingView {
     return this.#store.snapshot().devices.get(deviceId)?.firmware ?? "";
   }
 
-  /* Why no path was left, in the words the capability error reports. The overrides are named ahead of everything else because a pinned client is refusing something
-   * it could otherwise do, which is a different thing for a consumer to read than a client that never had the channel at all.
+  /* Why no path was left, in the words the capability error reports. The overrides are named ahead of everything else because a client held to one channel is refusing
+   * something it could otherwise do, which is a different thing for a consumer to read than a client that never had the channel at all.
    *
-   * The official-only arm is worded to cover both ways that pin leaves nothing: an operation the official API models nowhere, and one it models perfectly well but
+   * The official-only arm is worded to cover both ways that choice leaves nothing: an operation the official API models nowhere, and one it models perfectly well but
    * refused for the addressed device. Naming only the first would misdescribe the second, where the API can express the operation and simply would not.
    */
   #absenceReason(): string {
@@ -514,11 +516,11 @@ export class AccessRoutingService implements AccessRoutingView {
 
       case "direct-only":
 
-        return "it is pinned to the direct API, which cannot carry that operation";
+        return "it is held to the direct API, which cannot carry that operation";
 
       case "official-only":
 
-        return "it is pinned to the official API, which either cannot express that operation or refused it for this device";
+        return "it is held to the official API, which either cannot express that operation or refused it for this device";
 
       default:
 

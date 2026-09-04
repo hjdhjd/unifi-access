@@ -2,7 +2,7 @@
  *
  * dispatch.test.ts: Unit tests for the official API's one request path. The dispatch is what stands between every official caller and an API that reports its
  * refusals inside a 2xx, so these tests drive each envelope shape the wire has actually produced - every payload type, the truncated message, pagination where the
- * reference says it is not - and pin that a refusal throws rather than resolving to a payload that was never sent.
+ * reference says it is not - and assert that a refusal throws rather than resolving to a payload that was never sent.
  *
  * Everything runs against an undici MockAgent through the real transport, so the request travels the same path a live official call would, without a controller.
  */
@@ -31,7 +31,7 @@ function officialPath(path: string): string {
  *
  * The transport is constructed with the address the endpoints module derives rather than with the bare host, which is what a composition root does and what binds
  * the connection pool to the origin every official URL resolves to. Building it with the bare host would pool against a different origin, and nothing set up here
- * would ever be reached - so this construction is itself the pin on the two agreeing.
+ * would ever be reached - so this construction is itself the assertion that the two agree.
  */
 function officialRig(): { dispatch: OfficialDispatch; pool: Interceptable } {
 
@@ -96,7 +96,7 @@ describe("OfficialDispatch", () => {
       const { dispatch, pool } = officialRig();
 
       // A number of endpoints send "succ" rather than "success". It is the controller's own quirk rather than a corruption, so a dispatch that read the message at
-      // all would have to tolerate it - and this one does not read it on success, which this pins.
+      // all would have to tolerate it - and this one does not read it on success, which this asserts.
       pool.intercept({ method: "GET", path: officialPath("/credentials/nfc_cards/tokens") }).reply(200, { "code": "SUCCESS", "data": [], "msg": "succ" });
 
       const result = await dispatch.request<unknown[]>(officialEndpoint(HOST, "/credentials/nfc_cards/tokens"));
@@ -108,8 +108,8 @@ describe("OfficialDispatch", () => {
 
       const { dispatch, pool } = officialRig();
 
-      /* The typed read's contract is a payload, so an envelope with no data member cannot satisfy it: resolving would hand the caller undefined under whatever
-       * type it asked for, which is the one outcome the typed return exists to prevent. A mutation that genuinely answers with nothing rides `command`.
+      /* The typed read's contract is a payload, so an envelope with no data member cannot satisfy it: resolving would hand the caller undefined under whatever type
+       * it asked for, which is the one outcome the typed return exists to prevent. A mutation that genuinely answers with nothing goes through `command`.
        */
       pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "code": "SUCCESS", "msg": "success" });
 
@@ -304,7 +304,7 @@ describe("OfficialDispatch", () => {
       const result = await dispatch.request<string>(officialEndpoint(HOST, "/doors/abc/unlock"),
         { body: "{\"actor_name\":\"the automation\"}", method: "PUT" });
 
-      assert.equal(result.data, "success", "the interception matches on the method and body, so reaching it at all is the pin that both were carried");
+      assert.equal(result.data, "success", "the interception matches on the method and body, so reaching it at all is the proof that both were carried");
     });
   });
 });
@@ -686,10 +686,10 @@ describe("OfficialDispatch: outbound encoding", () => {
     assert.match(stamped, (/^multipart\/form-data; boundary=/));
   });
 
-  test("rides the encoded options through to the transport untouched", async () => {
+  test("carries the encoded options through to the transport untouched", async () => {
 
-    /* The encode step owns exactly one member of the request options - the retry policy it re-derives - and every other member reaches the transport as the
-     * caller wrote it. The abort signal is the member the routed door commands rest on, so it is the one pinned here.
+    /* The encode step owns exactly one member of the request options - the retry policy it re-derives - and every other member reaches the transport as the caller
+     * wrote it. The abort signal is the member the routed door commands rest on, so it is the one asserted here.
      */
     const { dispatch, pool, transport } = recordingRig();
     const controller = new AbortController();
@@ -879,8 +879,9 @@ describe("the passthrough JSON vocabulary", () => {
 
   test("admits no function value, so a loosened declaration would not compile", () => {
 
-    // Every open passthrough member on this surface - the unlock body's extra, the door and location extras, the identity metadata - rides this one vocabulary. A
-    // declaration loosened to an unknown-valued record would accept things that cannot survive serialization, and this row is what makes that a build failure.
+    // Every open passthrough member on this surface - the unlock body's extra, the door and location extras, the identity metadata - goes through this one
+    // vocabulary. A declaration loosened to an unknown-valued record would accept things that cannot survive serialization, and this row is what makes that a build
+    // failure.
     // @ts-expect-error - a function is not a JSON value.
     const extras: Readonly<Record<string, AccessKnownJsonValue>> = { "handler": (): void => undefined };
 

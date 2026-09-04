@@ -302,7 +302,7 @@ describe("the webhook group", () => {
 
 describe("the api hatch", () => {
 
-  test("a get rides the request arm and renders the payload as wire-order JSON", async () => {
+  test("a get reaches the request arm and renders the payload as wire-order JSON", async () => {
 
     const { calls, client } = makeFakeClient({ official: { requestResult: { data: [{ "id": "od-1" }] } } });
     const { ctx, lines } = makeCommandContext({ args: [ "get", "/doors" ], calls, client });
@@ -323,7 +323,7 @@ describe("the api hatch", () => {
     assert.equal(rendered(lines)[0], JSON.stringify({ data: [], pagination: { "page_num": 1, "page_size": 25, "total": 0 } }));
   });
 
-  test("a get with --out rides the download arm to the byte sink", async () => {
+  test("a get with --out reaches the download arm to the byte sink", async () => {
 
     const dir = await mkdtemp(path.join(tmpdir(), "ufa-download-"));
     const file = path.join(dir, "avatar.jpg");
@@ -336,7 +336,7 @@ describe("the api hatch", () => {
     assert.equal(await readFile(file, "utf8"), "jpeg");
   });
 
-  test("a mutation rides the command arm, confirms on stderr, and prints nothing to stdout", async () => {
+  test("a mutation reaches the command arm, confirms on stderr, and prints nothing to stdout", async () => {
 
     const { calls, client } = makeFakeClient({ official: {} });
     const { ctx, lines } = makeCommandContext({ args: [ "put", "/doors/od-1/unlock" ], calls, client });
@@ -349,7 +349,7 @@ describe("the api hatch", () => {
     assert.match(stderr.text, /The PUT request to \/doors\/od-1\/unlock succeeded\./);
   });
 
-  test("a mutation with a body sends it, and --print rides the request arm instead", async () => {
+  test("a mutation with a body sends it, and --print reaches the request arm instead", async () => {
 
     const { calls, client } = makeFakeClient({ official: { requestResult: { data: { "id": "vis-1" } } } });
     const { ctx, lines } = makeCommandContext({ args: [ "post", "/visitors", "--json", "{\"first_name\": \"Guest\"}", "--print" ], calls, client });
@@ -526,8 +526,8 @@ describe("the official-consumer connect chokepoint", () => {
     const { calls, client } = makeFakeClient({});
     const { ctx } = makeCommandContext({ args: [], calls, client });
 
-    // Every official-consumer group (user, visitor, logs, webhook, the api hatch) rides this one opener, so the one-shot convention is proven here at the chokepoint
-    // rather than restated per group.
+    // Every official-consumer group (user, visitor, logs, webhook, the api hatch) goes through this one opener, so the one-shot convention is proven here at the
+    // chokepoint rather than restated per group.
     await using opened = await openOfficialClient(ctx, "chokepoint probe");
 
     assert.equal(opened, client);
@@ -663,7 +663,7 @@ describe("the capture scrub across the official groups", () => {
     const got = await run(api, [ "get", "/users", "--scrub" ], official);
 
     assertNothingPlantedSurvives(got, "api get");
-    assert.ok((rendered(got)[0] ?? "").includes("\"pagination\""), "the pagination still rides beside the payload");
+    assert.ok((rendered(got)[0] ?? "").includes("\"pagination\""), "the pagination still arrives beside the payload");
     assertNothingPlantedSurvives(await run(api, [ "post", "/users", "--print", "--scrub" ], official), "api post --print");
   });
 

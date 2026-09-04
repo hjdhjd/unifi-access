@@ -21,7 +21,7 @@
  *   client's routing decision and its transport, while the store stays a generic engine that knows nothing about devices.
  * - `official` is the published API's facade, and `capabilities` is what this client can reach.
  * - `transport` is the documented escape hatch for calls the typed surface does not cover.
- * - `on`, `once`, and `stream` are the event surface, with the realtime firehose riding the packet rail.
+ * - `on`, `once`, and `stream` are the event surface, with the realtime firehose carried on the packet rail.
  *
  * @module AccessClient
  */
@@ -66,7 +66,7 @@ import { wallClock } from "../clock.ts";
 /**
  * The options common to every way of connecting: the controller address, and the injected dependencies that each have a default.
  *
- * - `api` pins which of the controller's two APIs routed commands take; it defaults to `auto`, which prefers the official path and falls back to the direct one.
+ * - `api` holds routed commands to one of the controller's two APIs; it defaults to `auto`, which prefers the official path and falls back to the direct one.
  * - `clock` is the time source threaded into every subsystem; it defaults to the wall clock, and a test injects a fake to drive time deterministically.
  * - `dispatcher` substitutes the transport's connection pool; when omitted the transport builds and owns one.
  * - `log` is the structured logger; it defaults to a sink that discards.
@@ -305,20 +305,20 @@ export class AccessClient implements AsyncDisposable {
    *
    * **A token-only client is a first-class client with a smaller surface, not a degraded one.** What a token reaches on the wire is exactly what it exposes. Its
    * device and door inventory is seeded from the official API's own listings, so `devices`, `hubs`, `device()`, and `hub()` answer with records carrying what those
-   * listings establish and nothing they do not. `accessPoints` reads empty and an Enterprise Access Hub is withheld from the hub views, because the per-port
-   * expansion and the hub's own placement are read from topology the listing does not carry. A hub's door commands ride the official path, `close()` among them as the
-   * gate control command, while `restart()`, `updateDevice()`, and `fetchBootstrap` refuse with a capability error. A token refused the device listing connects with
-   * an empty inventory and says so once in the log. `isAdmin`, `controllerName`, and `controllerInfo` read `null`, because a token has no account whose privilege
-   * could be determined and the controller document is not something the published API serves. Restart detection is inert for that same reason - it watches the
-   * controller document's uptime, and there is none - while recovery from a dropped notification channel runs exactly as it does in any other mode. Door state and
-   * the inventory are seeded from the official reads, corrected live by the official notification socket, and re-read by the refresh failsafe and on recovery.
+   * listings establish and nothing they do not. `accessPoints` reads empty and an Enterprise Access Hub is withheld from the hub views, because the per-port expansion
+   * and the hub's own placement are read from topology the listing does not carry. A hub's door commands take the official path, `close()` among them as the gate
+   * control command, while `restart()`, `updateDevice()`, and `fetchBootstrap` refuse with a capability error. A token refused the device listing connects with an
+   * empty inventory and says so once in the log. `isAdmin`, `controllerName`, and `controllerInfo` read `null`, because a token has no account whose privilege could
+   * be determined and the controller document is not something the published API serves. Restart detection is inert for that same reason - it watches the controller
+   * document's uptime, and there is none - while recovery from a dropped notification channel runs exactly as it does in any other mode. Door state and the inventory
+   * are seeded from the official reads, corrected live by the official notification socket, and re-read by the refresh failsafe and on recovery.
    *
    * @param opts - The controller address, at least one identity, and the optional injected dependencies.
    *
    * @returns A ready client.
    *
-   * @throws {TypeError} when the options ask for a path the supplied identities cannot take - a token-only client pinned to the direct API, or a credential-only
-   *   client pinned to the official one. Caller misuse, raised before anything is sent.
+   * @throws {TypeError} when the options ask for a path the supplied identities cannot take - a token-only client held to the direct API, or a credential-only client
+   *   held to the official one. Caller misuse, raised before anything is sent.
    * @throws {@link AccessAuthError} when an identity is refused, its `identity` field naming whether the credentials or the API token were the rejected one,
    *   {@link AccessNetworkError} when the controller cannot be reached, {@link AccessBootstrapError} when its configuration cannot be fetched or parsed, or any
    *   other typed `FatalError` those stages surface. No partial client escapes a failure.
@@ -332,18 +332,18 @@ export class AccessClient implements AsyncDisposable {
     const hasToken = opts.token !== undefined;
     const mode: AccessApiMode = hasCredentials ? (hasToken ? "dual" : "credential") : "token";
 
-    /* A pin the supplied identities cannot honor is a caller's own contradiction rather than anything the controller said, so it raises the language's own error
+    /* An override the supplied identities cannot honor is a caller's own contradiction rather than anything the controller said, so it raises the language's own error
      * type before a single request goes out. The compiler cannot catch these: which identities were supplied is a type-level fact, but pairing them with an override
      * is a value-level one.
      */
     if(!hasCredentials && (override === "direct-only")) {
 
-      throw new TypeError("A token-only UniFi Access client cannot be pinned to the direct API, which requires credentials.");
+      throw new TypeError("A token-only UniFi Access client cannot be held to the direct API, which requires credentials.");
     }
 
     if(!hasToken && (override === "official-only")) {
 
-      throw new TypeError("A credential-only UniFi Access client cannot be pinned to the official API, which requires a token.");
+      throw new TypeError("A credential-only UniFi Access client cannot be held to the official API, which requires a token.");
     }
 
     /* The direct half: the credential session and the transport that carries it, built together or not at all so that neither can exist without the other. The
@@ -603,7 +603,7 @@ export class AccessClient implements AsyncDisposable {
      * controller that has come back is found at the recovery loop's own cadence rather than after the full cooldown, and the outcome books through the ordinary
      * path either way. The body is discarded, which leaves the seed above the one place a door listing becomes state.
      *
-     * The monitor's throttle source follows the same rule: it is whichever transport backs the channel these probes ride, and the monitor is none the wiser.
+     * The monitor's throttle source follows the same rule: it is whichever transport backs the channel these probes go through, and the monitor is none the wiser.
      */
 
     /* The token leg's recovery closures, and with them the rule that a client must hold an identity it can actually reach a controller with. The identity union

@@ -43,10 +43,10 @@ fetch(opts, call?): Promise<AccessOfficialResult<AccessOfficialSystemLogHits>>;
 
 Fetch a page of log entries. `POST /system/logs`, permission `view:system_log`.
 
-The verb is POST because the query rides a body, but this is a read: repeating it returns the same page rather than doing anything twice, so it opts back in
-to the transparent retry that the surface's genuinely-minting POSTs opt out of.
+The verb is POST because the query goes in a body, but this is a read: repeating it returns the same page rather than doing anything twice, so it opts back
+in to the transparent retry that the surface's genuinely-minting POSTs opt out of.
 
-The pagination rides the query string while the filter rides the body, which is the endpoint's own split rather than this library's.
+The pagination goes in the query string while the filter goes in the body, which is the endpoint's own split rather than this library's.
 
 Live-verified.
 

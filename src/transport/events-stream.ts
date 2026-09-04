@@ -14,8 +14,9 @@
  *
  * **The WebSocket is an injected dependency**, exactly like the {@link Transport}'s dispatcher and the state store's refresh callback. `EventStream` depends on the
  * minimal {@link AccessWebSocket} interface - only the surface it uses - never undici's full type. The default factory builds undici's `WebSocket` over an owned
- * HTTP/1.1 agent that accepts the controller's self-signed certificate, because a WebSocket upgrade cannot ride the HTTP/2 request pool. Tests inject a fake socket
- * and drive `open` / `message` / `close` / `error` deterministically, which is the only way to exercise this at all: undici's `MockAgent` does not mock WebSockets.
+ * HTTP/1.1 agent that accepts the controller's self-signed certificate, because a WebSocket upgrade cannot go through the HTTP/2 request pool. Tests inject a fake
+ * socket and drive `open` / `message` / `close` / `error` deterministically, which is the only way to exercise this at all: undici's `MockAgent` does not mock
+ * WebSockets.
  *
  * **The watchdog detects here; the coordinator responds.** This is the same division as the throttle breaker: the subsystem that owns a resource detects its health
  * condition and emits a typed signal, and the one coordinator responds. `EventStream` stamps `lastMessageAt` on every frame and runs a silence watchdog on the
@@ -49,7 +50,7 @@ import { wallClock } from "../clock.ts";
  * cadence to prove the channel is alive, and it is the one frame that is consumed rather than delivered - it is not a notification, and parsing it would yield the
  * string `Hello` rather than a packet.
  *
- * Exported so that a test pins the guard against this exact literal rather than restating it, which would let the two drift apart and quietly turn the heartbeat
+ * Exported so that a test asserts the guard against this exact literal rather than restating it, which would let the two drift apart and quietly turn the heartbeat
  * into a stream of protocol errors.
  *
  * @category Transport
@@ -177,10 +178,9 @@ export class EventStream implements AsyncDisposable {
     const headers = options.getAuthHeaders?.() ?? { Cookie: "" };
 
     /* Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent. The agent's settings are each required by what a
-     * WebSocket upgrade is: HTTP/2 is off and pipelining disabled because an upgrade can ride neither, keepalive is on so TLS sessions are reused across
-     * reconnections and a dead connection is detected by TCP keepalive probes, and certificate verification follows `verifyTls`, which is off unless the caller
-     * asks for it because controllers ship self-signed certificates. undici's WebSocket structurally satisfies the minimal surface we model, so it assigns
-     * directly - no cast.
+     * WebSocket upgrade is: HTTP/2 is off and pipelining disabled because an upgrade can use neither, keepalive is on so TLS sessions are reused across reconnections
+     * and a dead connection is detected by TCP keepalive probes, and certificate verification follows `verifyTls`, which is off unless the caller asks for it because
+     * controllers ship self-signed certificates. undici's WebSocket structurally satisfies the minimal surface we model, so it assigns directly - no cast.
      */
     if(options.webSocket !== undefined) {
 

@@ -58,9 +58,9 @@ function parseActor(value: string): AccessOfficialDoorUnlockActor {
 
 /* The surface a door NO handle drives is commanded on: the published API's door-addressed methods, which are the only ones that can reach it.
  *
- * The conditions that leave a client with nothing to offer such a door refuse in the same words, because from the operator's side they are the same outcome. A
- * client whose token the controller did not honor holds no facade at all; a client pinned to `--api direct-only` has asked to stay off the one channel that
- * addresses doors directly, and a pin means one channel here as it does everywhere else.
+ * The conditions that leave a client with nothing to offer such a door refuse in the same words, because from the operator's side they are the same outcome. A client
+ * whose token the controller did not honor holds no facade at all; a client held to `--api direct-only` has asked to stay off the one channel that addresses doors
+ * directly, and that choice means one channel here as it does everywhere else.
  */
 function doorArmSpaces(client: AccessClient, door: AccessStateDoor): NonNullable<AccessClient["official"]>["spaces"] {
 
@@ -74,8 +74,8 @@ function doorArmSpaces(client: AccessClient, door: AccessStateDoor): NonNullable
   return official.spaces;
 }
 
-// What one door invocation established before acting: the loaded identity, the api pin, and the connected client. Every subcommand connects through this one path, so
-// the one-shot convention (the refresh failsafe off) and the single credential read are stated once.
+// What one door invocation established before acting: the loaded identity, the api choice, and the connected client. Every subcommand connects through this one path,
+// so the one-shot convention (the refresh failsafe off) and the single credential read are stated once.
 async function openDoorClient(ctx: CommandContext, opts: { api?: AccessApiOverride; credentials: UfaCredentials; debug: boolean }): Promise<AccessClient> {
 
   return ctx.openClient({ ...((opts.api !== undefined) && { api: opts.api }), credentials: opts.credentials, debug: opts.debug, refreshIntervalMs: false,
@@ -93,7 +93,7 @@ const UNLOCK_USAGE = [
   "  --hold           Hold the door unlocked until the rule is reset (the keep-unlock rule).",
   "  --actor NAME:ID  Attribute the unlock to an actor in the controller's logs and webhooks. Official API only, and only for a plain",
   "                   unlock - the lock rules carry no attribution, so --actor cannot combine with --duration or --hold.",
-  "  --api VALUE      Pin the command to one API: auto (default), direct-only, or official-only.",
+  "  --api VALUE      Hold the command to one API: auto (default), direct-only, or official-only.",
   "  --debug          Emit the library's debug logging to stderr.",
   "  -h, --help       Show this help.",
   "",
@@ -215,7 +215,7 @@ const CLOSE_USAGE = [
   "Close belongs to gate hardware - a door hub refuses it on both APIs. To end a held-open unlock on a door hub, reset its lock rule instead.",
   "",
   "Options:",
-  "  --api VALUE  Pin the command to one API: auto (default), direct-only, or official-only.",
+  "  --api VALUE  Hold the command to one API: auto (default), direct-only, or official-only.",
   "  --debug      Emit the library's debug logging to stderr.",
   "  -h, --help   Show this help.",
   "",
@@ -273,13 +273,13 @@ const LOCK_RULE_USAGE = [
   "Usage: ufa door lock-rule <DOOR> [keep-lock|keep-unlock|lock-early|lock-now|reset|DURATION] [--json] [--scrub] [--api ...] [--debug]",
   "",
   "Read or set the temporary locking rule on a door. With no rule argument, the rule in force is read and printed; with one, it is established.",
-  "The read rides the official API. Setting rides whichever API can express the rule: keep-unlock, reset, and a DURATION (a custom rule in whole",
-  "minutes, e.g. 30m) work with credentials alone, while keep-lock, lock-early, and lock-now require the official API.",
+  "The read goes through the official API. Setting goes through whichever API can express the rule: keep-unlock, reset, and a DURATION (a custom",
+  "rule in whole minutes, e.g. 30m) work with credentials alone, while keep-lock, lock-early, and lock-now require the official API.",
   "",
   "Options:",
   "  --json       Emit the rule read as a single line of JSON, field order preserved.",
   "  --scrub      Pseudonymize identifying values in the rule read so it can be shared - one value reads as one stand-in throughout a run.",
-  "  --api VALUE  Pin the command to one API: auto (default), direct-only, or official-only.",
+  "  --api VALUE  Hold the command to one API: auto (default), direct-only, or official-only.",
   "  --debug      Emit the library's debug logging to stderr.",
   "  -h, --help   Show this help.",
   "",
@@ -363,7 +363,7 @@ const lockRuleHandler = async (ctx: CommandContext): Promise<void> => {
 
   if(ruleToken === undefined) {
 
-    // The read is official surface in every mode, and the refusals - a missing token, a direct-only pin - are knowable before anything connects.
+    // The read is official surface in every mode, and the refusals - a missing token, a direct-only choice - are knowable before anything connects.
     requireSurface(credentials, "official", "lock-rule read", api);
 
     await using client = await openDoorClient(ctx, { ...((api !== undefined) && { api }), credentials, debug: values.debug === true });
@@ -409,7 +409,7 @@ const EMERGENCY_USAGE = [
   "Options:",
   "  --json       Emit the state read as a single line of JSON, field order preserved.",
   "  --scrub      Pseudonymize identifying values in the state read so it can be shared - one value reads as one stand-in throughout a run.",
-  "  --api VALUE  Pin the command to one API: auto (default), direct-only, or official-only.",
+  "  --api VALUE  Hold the command to one API: auto (default), direct-only, or official-only.",
   "  --debug      Emit the library's debug logging to stderr.",
   "  -h, --help   Show this help.",
   "",

@@ -31,7 +31,7 @@ const DOORS_WITH_ORPHAN = new Map<string, FakeDoorSpec>([ ...HUB_SPEC.snapshot.d
   [ "door-9", { "full_name": "B1 - Service Entrance", "name": "Orphan", "unique_id": "door-9" } ] ]);
 
 // A token-mode fixture as the census leaves it: the official listings seeded both the hardware and the doors, so the projections answer here exactly as they do
-// behind a topology and a door a handle drives rides the same routed verbs.
+// behind a topology, and a door a handle drives takes the same routed verbs.
 const TOKEN_SPEC = {
 
   capabilities: { mode: "token", official: true, override: "auto" } as const,
@@ -50,7 +50,7 @@ const TOKEN_DOORS_ONLY = {
   snapshot: { doors: new Map<string, FakeDoorSpec>([[ "od-9", { "full_name": "B1 - Service Entrance", "name": "Service Door", "unique_id": "od-9" } ]]) }
 };
 
-// A dual client holding the same handle-less door, and the clients that cannot serve it: one pinned off the only channel that reaches it, one holding no official
+// A dual client holding the same handle-less door, and the clients that cannot serve it: one held off the only channel that reaches it, one holding no official
 // path at all.
 const DUAL_ORPHAN_SPEC = { ...HUB_SPEC, capabilities: { mode: "dual", official: true, override: "auto" } as const, official: {},
   snapshot: { doors: DOORS_WITH_ORPHAN } };
@@ -242,7 +242,7 @@ describe("the door unlock command", () => {
     }
   });
 
-  test("an actor cannot ride a rule, in either combination", async () => {
+  test("an actor cannot join a rule, in either combination", async () => {
 
     for(const extra of [ [ "--duration", "5m" ], ["--hold"] ]) {
 
@@ -269,7 +269,7 @@ describe("the door unlock command", () => {
     assert.equal(calls.opens.length, 0);
   });
 
-  test("the api pin threads through to the opener verbatim", async () => {
+  test("the api override threads through to the opener verbatim", async () => {
 
     const { calls, client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: [ "unlock", "Acme Name 6", "--api", "official-only" ], calls, client });
@@ -301,7 +301,7 @@ describe("the door unlock command", () => {
     assert.match(rendered(lines)[0] ?? "", /^1F - Loading Dock \(od-1\) - unlocked\.$/);
   });
 
-  test("a token-mode duration rides the same handle's lock rule", async () => {
+  test("a token-mode duration reaches the same handle's lock rule", async () => {
 
     const { calls, client } = makeFakeClient(TOKEN_SPEC);
     const { ctx } = makeCommandContext({ args: [ "unlock", "Acme Name 13", "--duration", "5m" ], calls, client, credentials: CREDENTIALS_TOKEN });
@@ -315,7 +315,7 @@ describe("the door unlock command", () => {
 
 describe("the door arm - a door no handle drives", () => {
 
-  test("a bare unlock rides the official facade by door id", async () => {
+  test("a bare unlock reaches the official facade by door id", async () => {
 
     const { calls, client } = makeFakeClient(TOKEN_DOORS_ONLY);
     const { ctx, lines } = makeCommandContext({ args: [ "unlock", "Service Door" ], calls, client, credentials: CREDENTIALS_TOKEN });
@@ -332,7 +332,7 @@ describe("the door arm - a door no handle drives", () => {
     assert.match(rendered(lines)[0] ?? "", /^B1 - Service Entrance \(od-9\) - unlocked\.$/);
   });
 
-  test("an actor rides the facade unlock as the attribution pair", async () => {
+  test("an actor reaches the facade unlock as the attribution pair", async () => {
 
     const { calls, client } = makeFakeClient(TOKEN_DOORS_ONLY);
     const { ctx } = makeCommandContext({ args: [ "unlock", "od-9", "--actor", "Night Automation:auto-1" ], calls, client, credentials: CREDENTIALS_TOKEN });
@@ -344,7 +344,7 @@ describe("the door arm - a door no handle drives", () => {
     assert.equal((calls.official[0]?.args[2] as { signal?: AbortSignal } | undefined)?.signal, ctx.signal);
   });
 
-  test("a duration rides the facade as the custom rule", async () => {
+  test("a duration reaches the facade as the custom rule", async () => {
 
     const { calls, client } = makeFakeClient(TOKEN_DOORS_ONLY);
     const { ctx, lines } = makeCommandContext({ args: [ "unlock", "Service Door", "--duration", "5m" ], calls, client, credentials: CREDENTIALS_TOKEN });
@@ -357,7 +357,7 @@ describe("the door arm - a door no handle drives", () => {
     assert.match(rendered(lines)[0] ?? "", /^B1 - Service Entrance \(od-9\) - unlocked for 5 minutes\.$/);
   });
 
-  test("a hold rides the facade as the keep-unlock rule", async () => {
+  test("a hold reaches the facade as the keep-unlock rule", async () => {
 
     const { calls, client } = makeFakeClient(TOKEN_DOORS_ONLY);
     const { ctx, lines } = makeCommandContext({ args: [ "unlock", "Service Door", "--hold" ], calls, client, credentials: CREDENTIALS_TOKEN });
@@ -379,7 +379,7 @@ describe("the door arm - a door no handle drives", () => {
     assert.deepEqual(calls.official, [{ args: [ "od-9", { signal: ctx.signal } ], method: "spaces.fetchLockRule" }]);
   });
 
-  test("the lock-rule set rides the facade against the same door id", async () => {
+  test("the lock-rule set reaches the facade against the same door id", async () => {
 
     const { calls, client } = makeFakeClient(TOKEN_DOORS_ONLY);
     const { ctx, lines } = makeCommandContext({ args: [ "lock-rule", "Service Door", "keep-unlock" ], calls, client, credentials: CREDENTIALS_TOKEN });
@@ -392,7 +392,7 @@ describe("the door arm - a door no handle drives", () => {
     assert.match(rendered(lines)[0] ?? "", /^B1 - Service Entrance \(od-9\) - lock rule set to keep-unlock\.$/);
   });
 
-  test("close rides the facade's gate control command", async () => {
+  test("close reaches the facade's gate control command", async () => {
 
     const { calls, client } = makeFakeClient(TOKEN_DOORS_ONLY);
     const { ctx, lines } = makeCommandContext({ args: [ "close", "Service Door" ], calls, client, credentials: CREDENTIALS_TOKEN });
@@ -418,7 +418,7 @@ describe("the door arm - a door no handle drives", () => {
     assert.match(rendered(lines)[0] ?? "", /^B1 - Service Entrance \(door-9\) - unlocked\.$/);
   });
 
-  test("a direct-only pin refuses the same door, because the pin excludes the one path that reaches it", async () => {
+  test("a direct-only override refuses the same door, because it excludes the one path that reaches it", async () => {
 
     const { calls, client } = makeFakeClient(PINNED_ORPHAN_SPEC);
     const { ctx } = makeCommandContext({ args: [ "unlock", "Orphan", "--api", "direct-only" ], calls, client });
@@ -531,7 +531,7 @@ describe("the door lock-rule command", () => {
     assert.equal(calls.opens.length, 0);
   });
 
-  test("the read honors a direct-only pin as a usage error, before anything connects", async () => {
+  test("the read refuses a direct-only override as a usage error, before anything connects", async () => {
 
     const { calls, client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: [ "lock-rule", "Acme Name 13", "--api", "direct-only" ], calls, client });
@@ -599,7 +599,7 @@ describe("the door lock-rule command", () => {
     }
   });
 
-  test("a token-mode set on a door a handle drives rides that handle", async () => {
+  test("a token-mode set on a door a handle drives goes through that handle", async () => {
 
     const { calls, client } = makeFakeClient(TOKEN_SPEC);
     const { ctx } = makeCommandContext({ args: [ "lock-rule", "Acme Name 13", "keep-unlock" ], calls, client, credentials: CREDENTIALS_TOKEN });

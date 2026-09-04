@@ -213,7 +213,7 @@ describe("StateStore", () => {
 
       assert.ok(stored);
       assert.equal(stored.mac, "AABBCC000001");
-      // The premise for the second dispatch below, pinned so it cannot be a no-op on a value the record already holds.
+      // The premise for the second dispatch below, asserted so it cannot be a no-op on a value the record already holds.
       assert.notEqual(stored.firmware, "v9.9.9");
 
       const ac = new AbortController();
@@ -546,7 +546,7 @@ describe("StateStore", () => {
 
       store.applyRefreshDocuments({ controller: controllerDocument(), topology: topologyDocument() });
 
-      // Both documents landed, which is the half of the contract a caller sees directly; the order they landed in is pinned by the test below.
+      // Both documents landed, which is the half of the contract a caller sees directly; the order they landed in is asserted by the test below.
       assert.equal(store.snapshot().controller?.host.hostname, "host-2.test.local");
       assert.equal(store.snapshot().devices.size, DEVICE_COUNT_2026);
     });

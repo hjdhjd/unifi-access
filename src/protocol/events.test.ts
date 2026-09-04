@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * events.test.ts: Unit tests for the notification classifier. The classifier's contract is that it is total over wire input and that it presents one vocabulary for
- * the controller's two notification dialects, so these tests run every captured packet through it, assert the dialect pairs collapse to the same kind, and pin the
+ * events.test.ts: Unit tests for the notification classifier. The classifier's contract is that it is total over wire input and that it presents one vocabulary for the
+ * controller's two notification dialects, so these tests run every captured packet through it, assert the dialect pairs collapse to the same kind, and assert the
  * translation allowlist field by field against named specimens rather than against anything re-derived from the same fixture.
  */
 import { accessEventPackets2024Fixture, accessEventPacketsDoorStateFixture, accessEventPacketsFixture, accessEventPacketsHistoricalFixture,
@@ -84,8 +84,8 @@ const DOORBELL_RING_FIELDS = [ "channel", "clear_request_id", "connected_uah_id"
 // The call identifier the interactive window's ring carries, which is also what its cancellation names, so both specimens are found by the same value.
 const INTERACTIVE_RING_REQUEST_ID = "TxC3TMGjlPk30gEYGDVsgSrIpQWWZPEb";
 
-/* The whole captured corpus, in the order the groups were accreted. findPacket below returns the first match, so a newly accreted group spreads last: an event name
- * that more than one window carries then still resolves to the specimen the tests written before that window were pinned to.
+/* The whole captured corpus, in the order the groups were accreted. findPacket below returns the first match, so a newly accreted group spreads last: an event name that
+ * more than one window carries then still resolves to the specimen the tests written before that window relied on.
  */
 const allPackets = [ ...accessEventPacketsFixture, ...accessEventPackets2024Fixture, ...accessEventPacketsHistoricalFixture,
   ...accessEventPacketsInteractiveFixture, ...accessEventPacketsDoorStateFixture, ...accessEventPacketsOfficialSocketFixture ];
@@ -261,8 +261,8 @@ describe("v2 location payload translation", () => {
   const stateBearing = findPacket((entry) => (entry.event === "access.data.v2.location.update") && (entry.data?.["guard"] !== undefined),
     "a v2 location update carrying the fields the allowlist excludes");
 
-  /* The translation this describe pins is what a location update does with its own fields, which is unchanged by whether the packet also carries door state. The
-   * specimen is stripped of that state so it keeps exercising the translation path rather than the door-state one; the companion test below pins that the original,
+  /* The translation this describe asserts is what a location update does with its own fields, which is unchanged by whether the packet also carries door state. The
+   * specimen is stripped of that state so it keeps exercising the translation path rather than the door-state one; the companion test below asserts that the original,
    * unstripped packet does take the door-state path, so the strip is a scoping of this describe rather than a claim about the wire.
    */
   const packet = { ...stateBearing, data: withoutKey(stateBearing.data ?? {}, "state") } as AccessEventPacket;
@@ -436,7 +436,7 @@ describe("the doorbell and unlock specimens", () => {
     assert.equal(classifyPacket(outcome), null);
 
     // The specimens differ in a dozen fields, so classifying each of them correctly proves nothing about which field decided it. Swapping only the call identifier
-    // between them does: each one takes the other's classification, which is what pins the decision to that field rather than to anything that travels with it.
+    // between them does: each one takes the other's classification, which is what ties the decision to that field rather than to anything that travels with it.
     const anonymized = { ...disposition, data: withoutKey(disposition.data ?? {}, "remote_call_request_id") } as AccessEventPacket;
     const identified = { ...outcome, data: { ...outcome.data, "remote_call_request_id": "4laAz56oPVVqSpb2VFlxLD5eY7ALktUn" } } as AccessEventPacket;
 
@@ -500,15 +500,15 @@ describe("the interactive capture specimens", () => {
     const packet = findPacket((entry) => entry.data?.["wire_state"] !== undefined, "the v2 device update carrying the wiring-terminal map");
     const event = classifyPacket(packet);
 
-    // This specimen carries door state, so it is a door-state event whose device facet is where the translated device fields ride. The allowlist governs that facet
+    // This specimen carries door state, so it is a door-state event whose device facet is where the translated device fields land. The allowlist governs that facet
     // exactly as it governed the standalone device payload, which is the point: one translation, reached by two kinds.
     assert.equal(event?.kind, "doorStateChanged");
     assert.ok(event.device, "a device-carried door-state event carries the device facet");
 
     const payload = event.device.payload;
 
-    // A subset assertion rather than an equality one: this specimen need not carry every admitted field, and what is being pinned is that nothing outside the
-    // allowlist leaks into canonical state.
+    // A subset assertion rather than an equality one: this specimen need not carry every admitted field, and what is being asserted is that nothing outside the allowlist
+    // leaks into canonical state.
     for(const field of Object.keys(payload)) {
 
       assert.ok(DEVICE_ADMITTED.includes(field), field + " should not reach canonical state");
@@ -571,7 +571,7 @@ describe("door-state classification", () => {
     assert.equal(entry.dps_connected, true);
     assert.deepEqual(entry.emergency, { hardware: "none", software: "none" });
 
-    // The device carrier contributes the device facet and only that one: its own translated fields ride along, and there is no location facet to invent.
+    // The device carrier contributes the device facet and only that one: its own translated fields come along, and there is no location facet to invent.
     assert.equal(event.device?.id, DOOR_MINI);
     assert.equal(event.device.payload.unique_id, DOOR_MINI);
     assert.equal(event.device.payload.device_type, "UA-Hub-Door-Mini");
@@ -618,7 +618,7 @@ describe("door-state classification", () => {
     assert.ok(configs?.some((config) => config.key === "input_d1_dps"), "the legacy payload carries the door position sensor as a configuration row");
   });
 
-  test("a mixed-validity array admits its valid entries and drops the rest, with the facet still riding", () => {
+  test("a mixed-validity array admits its valid entries and drops the rest, with the facet still carried", () => {
 
     const valid = entryOf(deviceCarrier);
     const invalid = entryOf(deviceCarrier);
@@ -630,7 +630,7 @@ describe("door-state classification", () => {
     assert.equal(event?.kind, "doorStateChanged");
     assert.equal(event.states.length, 1, "the entry naming no door is dropped while its sibling is admitted");
     assert.equal(event.states[0]?.location_id, DOOR_MINI_DOOR);
-    assert.equal(event.device?.id, DOOR_MINI, "the packet's device facet rides regardless of which entries were dropped");
+    assert.equal(event.device?.id, DOOR_MINI, "the packet's device facet is carried regardless of which entries were dropped");
   });
 
   test("an entry whose optional member is malformed is rejected rather than admitted without it", () => {

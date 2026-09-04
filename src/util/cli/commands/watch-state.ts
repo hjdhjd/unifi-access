@@ -54,7 +54,7 @@ function describeEntry(entry: AccessDoorStateEntry): string {
   return (parts.length > 0) ? parts.join(", ") : "no established state";
 }
 
-// Render one emission - the seeded snapshot and every later change ride this same renderer. The default form is one aligned line per door, named through the
+// Render one emission - the seeded snapshot and every later change go through this same renderer. The default form is one aligned line per door, named through the
 // topology's own door records with the id as the fallback; the JSON form is one object keyed by door id, in the map's own order.
 function renderStates(output: Output, client: AccessClient, states: ReadonlyMap<string, AccessDoorStateEntry>, json: boolean): void {
 

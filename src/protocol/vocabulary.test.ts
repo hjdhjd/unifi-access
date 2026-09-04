@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * vocabulary.test.ts: Unit tests for the cross-channel translations. Each of these exists because the controller describes one reality in more than one way, so
- * these tests pin the folds that hide that from consumers, and pin the one reason code whose meaning this library states differently from the reference. The
+ * these tests assert the folds that hide that from consumers, and assert the one reason code whose meaning this library states differently from the reference. The
  * unlock authentication glosses are held to their exact wording and to the fragment voice a consumer's own sentence needs.
  */
 import { ACCESS_AUTHENTICATION_TYPES, ACCESS_DOORBELL_REASON_CODES, isMacAddress, normalizeActorType, normalizeMacAddress } from "./vocabulary.ts";

@@ -5,9 +5,9 @@
  * The payload half is checked by compilation as much as by assertion: the fixture module declares real deliveries against the delivery union, so a type that
  * described a shape the controller does not send would fail to build, and the switch below reaches each arm's own members without a cast.
  *
- * The signature half is pinned against a fixed vector rather than against a signature this suite computes the same way the implementation does. A self-consistent
- * check would pass just as happily on an implementation that dropped the separator or covered the wrong bytes; a frozen expected value from an independent
- * restatement of the documented scheme cannot.
+ * The signature half is asserted against a fixed vector rather than against a signature this suite computes the same way the implementation does. A self-consistent check
+ * would pass just as happily on an implementation that dropped the separator or covered the wrong bytes; a frozen expected value from an independent restatement of the
+ * documented scheme cannot.
  */
 import type { AccessOfficialWebhookEndpoint, AccessOfficialWebhookEventName } from "./webhooks.ts";
 import { describe, test } from "node:test";
@@ -138,9 +138,9 @@ describe("verifyWebhookSignature", () => {
 
   test("rejects a truncated signature cleanly rather than raising", () => {
 
-    /* The case the length gate exists for. Hex-decoding a truncated value yields a shorter buffer, and the constant-time comparison raises on operands of unequal
-     * length rather than returning false - so without the gate a truncated signature would throw at exactly the moment a receiver is handling input it has no
-     * reason to trust. Both the verdict and the absence of a throw are what this pins.
+    /* The case the length gate exists for. Hex-decoding a truncated value yields a shorter buffer, and the constant-time comparison raises on operands of unequal length
+     * rather than returning false - so without the gate a truncated signature would throw at exactly the moment a receiver is handling input it has no reason to trust.
+     * Both the verdict and the absence of a throw are what this asserts.
      */
     const truncated = VECTOR_MAC.slice(0, 32);
 
@@ -415,7 +415,7 @@ describe("the webhook payload model", () => {
 
   test("a delivery carries the door it concerns even where that door reports no position of its own", () => {
 
-    // A UA Hub reports its door's position on the door's own record; a Door Mini's door record carries an empty extras and the position rides the device instead.
+    // A UA Hub reports its door's position on the door's own record; a Door Mini's door record carries an empty extras and the position is carried by the device instead.
     // An empty extras therefore says nothing about whether the door has a position sensor, which is exactly what the pair of deliveries here shows.
     const mini = findDelivery("access.device.dps_status", () => true);
     const hub = findDelivery("access.doorbell.incoming", () => true);

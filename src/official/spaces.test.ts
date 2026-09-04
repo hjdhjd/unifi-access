@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * spaces.test.ts: Unit tests for the official API's spaces domain. Beyond the per-endpoint rows, these pin the wire truths this domain carries - the door position
+ * spaces.test.ts: Unit tests for the official API's spaces domain. Beyond the per-endpoint rows, these assert the wire truths this domain carries - the door position
  * value the reference does not document, the idle lock rule that names no rule at all, and the emergency write that always sends both flags.
  */
 import type { AccessOfficialDoor, AccessOfficialDoorGroup, AccessOfficialDoorGroupResource, AccessOfficialDoorGroupTopology, AccessOfficialEmergencyState,
@@ -169,8 +169,8 @@ describe("OfficialSpaces vocabularies", () => {
 
   test("every resource-kind vocabulary in this domain admits an undocumented value while keeping its documented literals", () => {
 
-    /* The topology, the door groups, and the doors all name what a thing IS with their own `type` member, and each has its own documented vocabulary. They widen
-     * for the same reason the rest do - this reference has understated the wire repeatedly - so each gets both halves of the pin rather than being taken on trust
+    /* The topology, the door groups, and the doors all name what a thing IS with their own `type` member, and each has its own documented vocabulary. They widen for
+     * the same reason the rest do - this reference has understated the wire repeatedly - so each gets both halves of the assertion rather than being taken on trust
      * because a sibling nearby was checked.
      */
     const undocumented: [ AccessOfficialTopologyResource["type"], AccessOfficialResourceTopology["type"], AccessOfficialDoorGroupTopology["type"],
@@ -199,7 +199,7 @@ describe("OfficialSpaces vocabularies", () => {
     assert.deepEqual(literals, [ "", "custom", "keep_lock", "keep_unlock", "lock_early", "schedule" ]);
   });
 
-  test("the write vocabularies stay closed, and an interval cannot ride a rule that has none", () => {
+  test("the write vocabularies stay closed, and an interval cannot join a rule that has none", () => {
 
     // @ts-expect-error - the documented rule set is what a caller may put in force.
     const rule: AccessOfficialLockRuleSet = { type: "holiday" };
@@ -216,7 +216,7 @@ describe("OfficialSpaces vocabularies", () => {
 
 describe("the caller's abort signal on a door command", () => {
 
-  test("an unlock's signal rides the call options and never the wire", async () => {
+  test("an unlock's signal travels in the call options and never on the wire", async () => {
 
     const rig = domainRig((options) => new OfficialSpaces(options));
     const controller = new AbortController();
@@ -238,7 +238,7 @@ describe("the caller's abort signal on a door command", () => {
     assert.ok(!call.url.includes("signal"), "and the URL says nothing of it either");
   });
 
-  test("a lock rule's signal rides the call options and never the wire", async () => {
+  test("a lock rule's signal travels in the call options and never on the wire", async () => {
 
     const rig = domainRig((options) => new OfficialSpaces(options));
     const controller = new AbortController();
@@ -256,7 +256,7 @@ describe("the caller's abort signal on a door command", () => {
 
   test("the caller's abort cancels an in-flight unlock", async () => {
 
-    /* The functional proof the forwarding rows cannot give: the signal rides this domain method into the dispatch, the transport's composition with its own
+    /* The functional proof the forwarding rows cannot give: the signal travels through this domain method into the dispatch, the transport's composition with its own
      * deadline, and the abort classification, so a cancellation made while the request is in flight is one the request observably takes.
      */
     const rig = domainRig((options) => new OfficialSpaces(options));
