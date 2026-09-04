@@ -85,8 +85,8 @@ const USERNAME_KEYS: ReadonlySet<string> = new Set([ "ssh_user", "sso_account", 
 // families above are folded in here by construction, so a key that shares a hint is a member of this set without anyone having to keep two lists in step.
 const NAME_KEYS: ReadonlySet<string> = new Set([
 
-  ...SHARED_NAME_KEYS, ...USERNAME_KEYS, "alias", "alternate_name", "card_name", "company_name", "first_name", "group_name", "last_name", "policy_name", "room_name",
-  "short_name", "shortname", "system_name", "template_name", "visitor_company"
+  ...SHARED_NAME_KEYS, ...USERNAME_KEYS, "alias", "alternate_name", "card_name", "company_name", "first_name", "group_name", "last_name", "nfc_alias", "policy_name",
+  "room_name", "short_name", "shortname", "system_name", "template_name", "visitor_company"
 ]);
 
 // Keys carrying an email address.

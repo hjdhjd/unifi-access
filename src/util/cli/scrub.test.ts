@@ -81,6 +81,7 @@ const CATALOG_ROWS: readonly { category: CatalogCategory; key: string; planted: 
   { category: "name", key: "inviter_name", planted: "Sam Jones" },
   { category: "name", key: "last_name", planted: "Smith" },
   { category: "name", key: "name", planted: "Acme Name 13" },
+  { category: "name", key: "nfc_alias", planted: "Jane Smith Card" },
   { category: "name", key: "policy_name", planted: "Warehouse After Hours" },
   { category: "name", key: "previous_name", planted: "Old Loading Dock" },
   { category: "name", key: "resource_name", planted: "Loading Dock Camera" },
