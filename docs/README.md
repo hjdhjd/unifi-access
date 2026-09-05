@@ -313,6 +313,7 @@ I welcome inputs and perspective, particularly around hardware I cannot test aga
 | [AccessEventDoorbellCancelInterface](interfaces/AccessEventDoorbellCancelInterface.md) | A description of the UniFi Access doorbell ring cancel event data payload, verified against live captures: a cancellation carries exactly the members declared here and nothing besides. `remote_call_request_id` repeats the `request_id` of the [AccessEventDoorbellRingInterface](interfaces/AccessEventDoorbellRingInterface.md) it ends, which is how a consumer pairs a cancellation with the call it belongs to. |
 | [AccessEventDoorbellRingInterface](interfaces/AccessEventDoorbellRingInterface.md) | A description of the UniFi Access doorbell ring event data payload. |
 | [AccessEventPacketInterface](interfaces/AccessEventPacketInterface.md) | A complete description of the UniFi Access notification events API packet format. |
+| [AccessEventTamperAlertInterface](interfaces/AccessEventTamperAlertInterface.md) | A description of the UniFi Access tamper alert event data payload, verified against live captures: an alert carries exactly the members declared here and nothing besides. `device` names the hardware that raised it, which is the identity the alert is attributed to, and `title` is the controller's own notification headline. |
 | [AccessFloorConfigInterface](interfaces/AccessFloorConfigInterface.md) | A description of the UniFi Access floor JSON: the level of the hierarchy between a building and its doors. |
 | [AccessLocationConfigInterface](interfaces/AccessLocationConfigInterface.md) | A description of the UniFi Access location JSON. |
 | [AccessLogging](interfaces/AccessLogging.md) | Logging interface, leveraging what we do for Homebridge and elsewhere as a good template. |
@@ -354,6 +355,7 @@ I welcome inputs and perspective, particularly around hardware I cannot test aga
 | [AccessEventDoorbellCancel](type-aliases/AccessEventDoorbellCancel.md) | - |
 | [AccessEventDoorbellRing](type-aliases/AccessEventDoorbellRing.md) | - |
 | [AccessEventPacket](type-aliases/AccessEventPacket.md) | - |
+| [AccessEventTamperAlert](type-aliases/AccessEventTamperAlert.md) | - |
 | [AccessFloorConfig](type-aliases/AccessFloorConfig.md) | - |
 | [AccessFloorConfigPayload](type-aliases/AccessFloorConfigPayload.md) | - |
 | [AccessLocationConfig](type-aliases/AccessLocationConfig.md) | - |

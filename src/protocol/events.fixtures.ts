@@ -15213,3 +15213,44 @@ export const accessEventPacketsOfficialSocketFixture: AccessEventPacket[] = [
     }
   }
 ];
+
+/* A tamper capture window: a UA Ultra worked deliberately at the mount until it raised the alert the controller sends for it, so the notification arrives in the
+ * company of the device updates that carry the configuration row it concerns. It is its own group because it is its own window on its own hardware, and because
+ * every other group here documents exactly the event names its window produced.
+ *
+ * The alert names the hardware in its payload and carries no verdict of its own - what the device reports lives on the tamper_event row of its record - and its
+ * envelope identifier is a per-notification value rather than the device it concerns.
+ *
+ * Captured from a live controller, 2026.
+ */
+export const accessEventPacketsTamperFixture: AccessEventPacket[] = [
+
+  {
+
+    "event": "access.tamper_resistant",
+    "receiver_id": "",
+    "event_object_id": "00000000-0000-0000-0000-000000000060",
+    "save_to_history": true,
+    "data": {
+
+      "device": {
+
+        "unique_id": "aabbcc000000",
+        "name": "Test Name 6",
+        "device_type": "UA-ULTRA",
+        "mac": "AABBCC000000",
+        "guid": "00000000-0000-0000-0000-000000000003",
+        "firmware": "v1.7.4.0",
+        "is_connected": true
+      },
+      "door_id": "00000000-0000-0000-0000-000000000002",
+      "door_name": "Test Name 4",
+      "host_device_mac": "AABBCC000011",
+      "notify_user_ids": [
+        "00000000-0000-0000-0000-00000000000b"
+      ],
+      "request_id": "00000000-0000-0000-0000-000000000061",
+      "title": "Test Name 100"
+    }
+  }
+];

@@ -58,6 +58,12 @@ type AccessTypedEvent =
 }
   | {
   eventName: string;
+  id: string;
+  kind: "tamperAlert";
+  payload: AccessEventTamperAlert;
+}
+  | {
+  eventName: string;
   kind: "doorStateChanged";
   states: readonly [AccessDoorStateEntry, ...AccessDoorStateEntry[]];
 } & 

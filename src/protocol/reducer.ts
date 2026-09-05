@@ -193,6 +193,7 @@ export function reduce(state: AccessState, event: AccessTypedEvent): AccessState
     // woken by something that changed no state.
     case "doorbellCancel":
     case "doorbellRing":
+    case "tamperAlert":
     case "unlock":
 
       return state;

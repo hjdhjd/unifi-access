@@ -5,7 +5,7 @@
  * translation allowlist field by field against named specimens rather than against anything re-derived from the same fixture.
  */
 import { accessEventPackets2024Fixture, accessEventPacketsDoorStateFixture, accessEventPacketsFixture, accessEventPacketsHistoricalFixture,
-  accessEventPacketsInteractiveFixture, accessEventPacketsOfficialSocketFixture } from "./events.fixtures.ts";
+  accessEventPacketsInteractiveFixture, accessEventPacketsOfficialSocketFixture, accessEventPacketsTamperFixture } from "./events.fixtures.ts";
 import { classifyPacket, isAccessEventPacket } from "./events.ts";
 import { describe, test } from "node:test";
 import type { AccessEventPacket } from "../types/index.ts";
@@ -33,7 +33,8 @@ const EXPECTED_KIND: Readonly<Record<string, string | null | ((packet: AccessEve
   "access.logs.add": null,
   "access.logs.insights.add": null,
   "access.remote_view": "doorbellRing",
-  "access.remote_view.change": (packet) => (typeof packet.data?.["remote_call_request_id"] === "string") ? "doorbellCancel" : null
+  "access.remote_view.change": (packet) => (typeof packet.data?.["remote_call_request_id"] === "string") ? "doorbellCancel" : null,
+  "access.tamper_resistant": "tamperAlert"
 };
 
 /* Whether a value is an array holding at least one entry the admission contract would take. Written here independently of the classifier's own guards, so the table
@@ -81,6 +82,9 @@ const DOORBELL_RING_FIELDS = [ "channel", "clear_request_id", "connected_uah_id"
   "host_device_mac", "hub_gate_door_mode", "in_or_out", "is_camera", "is_double_driveway", "mutable_content", "reason_code", "request_id", "room_id", "send_voip",
   "support_feature", "template_id", "token", "unlocking_not_allowed" ];
 
+// The tamper alert payload as the capture sends it, sorted, on the same terms as the ring's field list above.
+const TAMPER_ALERT_FIELDS = [ "device", "door_id", "door_name", "host_device_mac", "notify_user_ids", "request_id", "title" ];
+
 // The call identifier the interactive window's ring carries, which is also what its cancellation names, so both specimens are found by the same value.
 const INTERACTIVE_RING_REQUEST_ID = "TxC3TMGjlPk30gEYGDVsgSrIpQWWZPEb";
 
@@ -88,7 +92,8 @@ const INTERACTIVE_RING_REQUEST_ID = "TxC3TMGjlPk30gEYGDVsgSrIpQWWZPEb";
  * more than one window carries then still resolves to the specimen the tests written before that window relied on.
  */
 const allPackets = [ ...accessEventPacketsFixture, ...accessEventPackets2024Fixture, ...accessEventPacketsHistoricalFixture,
-  ...accessEventPacketsInteractiveFixture, ...accessEventPacketsDoorStateFixture, ...accessEventPacketsOfficialSocketFixture ];
+  ...accessEventPacketsInteractiveFixture, ...accessEventPacketsDoorStateFixture, ...accessEventPacketsOfficialSocketFixture,
+  ...accessEventPacketsTamperFixture ];
 
 // Build a copy of a wire record without one key, so a near-miss packet can be made by taking a real specimen and removing exactly the field a guard requires.
 const withoutKey = (record: Record<string, unknown>, key: string): Record<string, unknown> => Object.fromEntries(Object.entries(record).filter(([name]) => name !== key));
@@ -107,8 +112,8 @@ describe("classifyPacket over the captured corpus", () => {
 
   test("classifies every captured packet to its expected kind and never throws", () => {
 
-    assert.equal(allPackets.length, 80,
-      "the corpus is the 2026 ambient window, the 2024 and historical specimens, and the interactive, door-state, and official-socket capture windows");
+    assert.equal(allPackets.length, 81,
+      "the corpus is the 2026 ambient window, the 2024 and historical specimens, and the interactive, door-state, official-socket, and tamper capture windows");
 
     for(const packet of allPackets) {
 
@@ -448,6 +453,37 @@ describe("the doorbell and unlock specimens", () => {
     assert.equal(outcome.data?.["authentication_type"], "CALL");
     assert.equal(outcome.data?.["source"], "bell");
     assert.equal(outcome.data?.["success"], true);
+  });
+});
+
+describe("the tamper alert", () => {
+
+  test("classifies, attributed to the hardware its payload names rather than to the envelope", () => {
+
+    const packet = findPacket((entry) => entry.event === "access.tamper_resistant", "the tamper alert specimen");
+    const event = classifyPacket(packet);
+
+    assert.equal(event?.kind, "tamperAlert");
+    assert.equal(event.id, "aabbcc000000");
+    assert.equal(event.payload.device.unique_id, "aabbcc000000");
+
+    // The envelope identifier on this notification is a per-notification value, which is why the attribution comes from the payload instead.
+    assert.notEqual(event.id, packet.event_object_id);
+
+    // The rest of the payload is carried exactly as the wire delivered it, which is what makes the guard's one identity check the whole of its contract.
+    assert.deepEqual(Object.keys(event.payload).sort(), TAMPER_ALERT_FIELDS);
+    assert.equal(event.payload.door_id, "00000000-0000-0000-0000-000000000002");
+    assert.deepEqual(event.payload.notify_user_ids, ["00000000-0000-0000-0000-00000000000b"]);
+  });
+
+  test("a payload naming no device is not classified rather than classified against an invented identity", () => {
+
+    const packet = findPacket((entry) => entry.event === "access.tamper_resistant", "the tamper alert specimen");
+
+    assert.equal(classifyPacket({ ...packet, data: withoutKey(packet.data ?? {}, "device") } as AccessEventPacket), null);
+
+    // A device object present but carrying no identity fails the same way, because the identity is the whole of what the guard requires.
+    assert.equal(classifyPacket({ ...packet, data: { ...packet.data, "device": { "name": "Test Name 6" } } }), null);
   });
 });
 

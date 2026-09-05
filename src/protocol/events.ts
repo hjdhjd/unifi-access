@@ -18,8 +18,8 @@
  * @module AccessEvents
  */
 import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfigPayload, AccessDoorStateAlarm, AccessDoorStateEmergency, AccessDoorStateEntry,
-  AccessDoorStateSuspend, AccessEventDoorbellCancel, AccessEventDoorbellRing, AccessEventPacket, AccessKnownJsonValue, AccessLocationConfig, DeepWirePartial,
-  Nullable } from "../types/index.ts";
+  AccessDoorStateSuspend, AccessEventDoorbellCancel, AccessEventDoorbellRing, AccessEventPacket, AccessEventTamperAlert, AccessKnownJsonValue, AccessLocationConfig,
+  DeepWirePartial, Nullable } from "../types/index.ts";
 import type { AccessStateDevice, AccessStateDoor } from "./reducer.ts";
 import { isRecord } from "../json.ts";
 
@@ -35,6 +35,7 @@ const EVENT_DOORBELL_RING = "access.remote_view";
 const EVENT_DOORBELL_CANCEL = "access.remote_view.change";
 const EVENT_REMOTE_UNLOCK = "access.data.device.remote_unlock";
 const EVENT_DOOR_UNLOCK = "access.door.unlock";
+const EVENT_TAMPER_ALERT = "access.tamper_resistant";
 
 /* The fields a v2 device payload contributes to canonical state, mapped from the wire name the newer dialect uses to the name the bootstrap vocabulary uses. This
  * table is an allowlist, not a translation of everything present: a field is admitted only where its equivalence to a bootstrap field was confirmed by comparing a
@@ -153,6 +154,16 @@ export type AccessTypedEvent =
   { eventName: string; id: string; kind: "locationChanged"; payload: DeepWirePartial<AccessLocationConfig> } |
   { eventName: string; id: string; kind: "doorbellRing"; payload: AccessEventDoorbellRing } |
   { eventName: string; kind: "doorbellCancel"; payload: AccessEventDoorbellCancel } |
+
+  /* The tamper alert, attributed to the hardware its payload names rather than to the envelope, whose identifier on this notification is a per-notification value
+   * exactly as it is on the doorbell ring.
+   *
+   * The payload carries no verdict, because the wire carries none: it says an alert was raised, and what the hardware currently reports is a configuration row on
+   * the device record that `tamperState` reads. Nor is the alert a reliable edge on that row - captures show it arriving both before and after the row moves - so a
+   * consumer announcing an incident reads the state separately rather than inferring it from the alert's arrival. And like every activity event here, an alert
+   * raised while the notification channel is down is not replayed: the state read is what a consumer re-reads on recovery.
+   */
+  { eventName: string; id: string; kind: "tamperAlert"; payload: AccessEventTamperAlert } |
 
   /* The door-state member, whose four properties each answer something the wire does.
    *
@@ -305,6 +316,11 @@ export function classifyPacket(packet: AccessEventPacket): Nullable<AccessWireEv
 
       return isDoorbellCancelPayload(packet.data) ? { eventName, kind: "doorbellCancel", payload: packet.data } : null;
 
+    case EVENT_TAMPER_ALERT:
+
+      // Attributed to the device the payload names, for the ring's reason: the envelope identifier on this notification is a per-notification value.
+      return isTamperAlertPayload(packet.data) ? { eventName, id: packet.data.device.unique_id, kind: "tamperAlert", payload: packet.data } : null;
+
     case EVENT_REMOTE_UNLOCK:
     case EVENT_DOOR_UNLOCK:
 
@@ -415,6 +431,15 @@ function normalizeEpochSeconds(value: number): number {
 function isDoorbellRingPayload(value: unknown): value is AccessEventDoorbellRing {
 
   return isRecord(value) && (typeof value["channel"] === "string") && (typeof value["device_id"] === "string");
+}
+
+/* Whether a payload carries what a tamper alert is supposed to carry. The one member a consumer cannot do without is the hardware the alert is attributed to, so
+ * that is what is checked and nothing else. A packet failing it is not classified, rather than being classified against an identity we would have had to invent,
+ * and everything else the payload holds is carried through exactly as the wire delivered it.
+ */
+function isTamperAlertPayload(value: unknown): value is AccessEventTamperAlert {
+
+  return isRecord(value) && isRecord(value["device"]) && (typeof value["device"]["unique_id"] === "string");
 }
 
 // Whether a payload carries what a ring cancellation is supposed to carry: the identifier of the call being cancelled.

@@ -18,4 +18,4 @@ dispatched by the composition root rather than lifted from the wire, and they ar
 | Property | Type |
 | ------ | ------ |
 | <a id="host"></a> `host` | `string` |
-| <a id="kind"></a> `kind` | \| `"unlock"` \| `"bootstrapLoaded"` \| `"controllerChanged"` \| `"doorStateFactsApplied"` \| `"censusApplied"` \| `"deviceChanged"` \| `"deviceRemoved"` \| `"locationChanged"` \| `"doorbellRing"` \| `"doorbellCancel"` \| `"doorStateChanged"` |
+| <a id="kind"></a> `kind` | \| `"unlock"` \| `"bootstrapLoaded"` \| `"controllerChanged"` \| `"doorStateFactsApplied"` \| `"censusApplied"` \| `"deviceChanged"` \| `"deviceRemoved"` \| `"locationChanged"` \| `"doorbellRing"` \| `"doorbellCancel"` \| `"tamperAlert"` \| `"doorStateChanged"` |

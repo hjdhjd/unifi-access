@@ -7,7 +7,7 @@
 import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload,
   AccessDeviceEntryConfig } from "../types/index.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture, accessControllerInfoFixture } from "./topology.fixtures.ts";
-import { accessEventPacketsDoorStateFixture, accessEventPacketsFixture } from "./events.fixtures.ts";
+import { accessEventPacketsDoorStateFixture, accessEventPacketsFixture, accessEventPacketsTamperFixture } from "./events.fixtures.ts";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import { applyBootstrap, createInitialState, reduce } from "./reducer.ts";
 import { describe, test } from "node:test";
@@ -1112,6 +1112,22 @@ describe("activity signals and the exhaustiveness guard", () => {
 
       assert.equal(Object.is(reduce(state, event), state), true, event.kind + " should not change the state");
     }
+  });
+
+  test("a tamper alert is an occurrence like the rest, so it leaves the state untouched", () => {
+
+    /* What a device reports about tampering is a configuration row on its own record, which a device update advances. The alert says an incident happened, which
+     * is not a condition this state holds, so it takes the doorbell ring's path exactly and wakes nobody.
+     */
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const packet = accessEventPacketsTamperFixture[0];
+
+    assert.ok(packet, "the corpus should carry the tamper alert specimen");
+
+    const event = classify(packet);
+
+    assert.equal(event.kind, "tamperAlert");
+    assert.equal(Object.is(reduce(state, event), state), true);
   });
 
   test("an unrecognized event kind is a loud failure rather than a silent fall-through", () => {

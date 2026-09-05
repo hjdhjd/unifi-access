@@ -602,6 +602,7 @@ export class EventStream implements AsyncDisposable {
       case "deviceRemoved":
       case "doorbellRing":
       case "locationChanged":
+      case "tamperAlert":
       case "unlock":
 
         return { eventName: event.eventName, host: this.#host, id: event.id, kind: event.kind };

@@ -98,6 +98,33 @@ export interface AccessEventDoorbellCancelInterface {
 }
 
 /**
+ * A description of the UniFi Access tamper alert event data payload, verified against live captures: an alert carries exactly the members declared here and nothing
+ * besides. `device` names the hardware that raised it, which is the identity the alert is attributed to, and `title` is the controller's own notification headline.
+ *
+ * There is deliberately no verdict here, because the wire carries none. The payload says that an alert was raised and names what raised it; what the hardware
+ * currently reports lives on that device's own configuration row, and a consumer wanting it reads the state rather than inferring it from this.
+ */
+export interface AccessEventTamperAlertInterface {
+
+  device: {
+
+    device_type: string;
+    firmware: string;
+    guid: string;
+    is_connected: boolean;
+    mac: string;
+    name: string;
+    unique_id: string;
+  };
+  door_id: string;
+  door_name: string;
+  host_device_mac: string;
+  notify_user_ids: string[];
+  request_id: string;
+  title: string;
+}
+
+/**
  * A description of one door's live state, as the controller reports it on its newer notification dialect. Verified against live captures: a door hub sends an array of
  * these under `location_states` on a device update, and a door location sends the identical shape as its `state` member on a location update.
  *
@@ -196,3 +223,6 @@ export type AccessEventDoorbellRing = AccessEventDoorbellRingInterface;
 
 /** @see {@link AccessEventPacketInterface} */
 export type AccessEventPacket = AccessEventPacketInterface;
+
+/** @see {@link AccessEventTamperAlertInterface} */
+export type AccessEventTamperAlert = AccessEventTamperAlertInterface;

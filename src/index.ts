@@ -164,6 +164,7 @@ export type { AccessApiResponse, AccessApiResponseInterface, AccessBootstrapConf
   AccessDoorExtrasConfigInterface, AccessDoorStateAlarm, AccessDoorStateAlarmInterface, AccessDoorStateEmergency, AccessDoorStateEmergencyInterface,
   AccessDoorStateEntry, AccessDoorStateEntryInterface, AccessDoorStateSuspend, AccessDoorStateSuspendInterface,
   AccessEventDoorbellCancel, AccessEventDoorbellCancelInterface, AccessEventDoorbellRing, AccessEventDoorbellRingInterface,
-  AccessEventPacket, AccessEventPacketInterface, AccessFloorConfig, AccessFloorConfigInterface, AccessFloorConfigPayload, AccessKnownJsonValue,
-  AccessLocationConfig, AccessLocationConfigInterface, AccessLocationExtrasConfig, AccessUserConfig, AccessUserConfigInterface, AccessUserGroupConfig,
-  AccessUserGroupConfigInterface, AccessUserRoleConfig, AccessUserRoleConfigInterface, Nullable } from "./types/index.ts";
+  AccessEventPacket, AccessEventPacketInterface, AccessEventTamperAlert, AccessEventTamperAlertInterface, AccessFloorConfig, AccessFloorConfigInterface,
+  AccessFloorConfigPayload, AccessKnownJsonValue, AccessLocationConfig, AccessLocationConfigInterface, AccessLocationExtrasConfig,
+  AccessUserConfig, AccessUserConfigInterface, AccessUserGroupConfig, AccessUserGroupConfigInterface, AccessUserRoleConfig,
+  AccessUserRoleConfigInterface, Nullable } from "./types/index.ts";
