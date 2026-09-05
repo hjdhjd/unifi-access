@@ -202,7 +202,7 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
 
       return readTamperCapability(stateRecord());
     },
-    markAbsent: (): void => void (state.present = false),
+    markAbsent: (): void => { state.present = false; },
     get name(): string {
 
       const current = record();

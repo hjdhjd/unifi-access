@@ -225,8 +225,8 @@ describe("isAccessWebhookDelivery", () => {
 
   test("admits a delivery whose actor is null, which is how the controller reports an unattributed event", () => {
 
-    assert.equal(isAccessWebhookDelivery(withData((data) => void (data["actor"] = null))), true);
-    assert.equal(isAccessWebhookDelivery(withData((data) => void (data["device"] = null))), true);
+    assert.equal(isAccessWebhookDelivery(withData((data) => { data["actor"] = null; })), true);
+    assert.equal(isAccessWebhookDelivery(withData((data) => { data["device"] = null; })), true);
   });
 
   test("rejects a value that is not a record at all", () => {
@@ -267,9 +267,9 @@ describe("isAccessWebhookDelivery", () => {
 
   test("rejects a location that is absent or the wrong type", () => {
 
-    assert.equal(isAccessWebhookDelivery(withData((data) => void delete data["location"])), false, "an absent location");
-    assert.equal(isAccessWebhookDelivery(withData((data) => void (data["location"] = "x"))), false, "and one carried as a string");
-    assert.equal(isAccessWebhookDelivery(withData((data) => void (data["location"] = null))), false, "the location is never null on this wire");
+    assert.equal(isAccessWebhookDelivery(withData((data) => { delete data["location"]; })), false, "an absent location");
+    assert.equal(isAccessWebhookDelivery(withData((data) => { data["location"] = "x"; })), false, "and one carried as a string");
+    assert.equal(isAccessWebhookDelivery(withData((data) => { data["location"] = null; })), false, "the location is never null on this wire");
   });
 
   test("rejects a delivery that omits a nullable carrier, which is different from naming it null", () => {
@@ -277,15 +277,15 @@ describe("isAccessWebhookDelivery", () => {
     /* The distinction the presence check exists for. `device: null` is something the controller sends and the union models; a body with no device key is a body
      * that did not come from this controller, and a consumer reading `data.device` on it gets undefined where the type promises a record or null.
      */
-    assert.equal(isAccessWebhookDelivery(withData((data) => void delete data["device"])), false, "no device key at all");
-    assert.equal(isAccessWebhookDelivery(withData((data) => void delete data["actor"])), false, "no actor key at all");
-    assert.equal(isAccessWebhookDelivery(withData((data) => void (data["device"] = "x"))), false, "and a carrier that is neither a record nor null");
+    assert.equal(isAccessWebhookDelivery(withData((data) => { delete data["device"]; })), false, "no device key at all");
+    assert.equal(isAccessWebhookDelivery(withData((data) => { delete data["actor"]; })), false, "no actor key at all");
+    assert.equal(isAccessWebhookDelivery(withData((data) => { data["device"] = "x"; })), false, "and a carrier that is neither a record nor null");
   });
 
   test("rejects an object member that is not a record", () => {
 
-    assert.equal(isAccessWebhookDelivery(withData((data) => void (data["object"] = "x"))), false);
-    assert.equal(isAccessWebhookDelivery(withData((data) => void delete data["object"])), false);
+    assert.equal(isAccessWebhookDelivery(withData((data) => { data["object"] = "x"; })), false);
+    assert.equal(isAccessWebhookDelivery(withData((data) => { delete data["object"]; })), false);
   });
 
   test("narrows the value so a consumer switches on the event without a cast", () => {

@@ -260,9 +260,9 @@ async function harness(options: { initialUptime?: number; log?: AccessLogging; t
 
   monitor.on("controllerLost", (reason): void => void events.lost.push(reason));
   monitor.on("controllerRebooted", (info): void => void events.rebooted.push(info));
-  monitor.on("controllerRecovered", (): void => void events.recovered++);
-  monitor.on("throttleEntered", (): void => void events.throttleEntered++);
-  monitor.on("throttleExited", (): void => void events.throttleExited++);
+  monitor.on("controllerRecovered", (): void => { events.recovered++; });
+  monitor.on("throttleEntered", (): void => { events.throttleEntered++; });
+  monitor.on("throttleExited", (): void => { events.throttleExited++; });
   monitor.on("stateChanged", (transition): void => void events.transitions.push(transition));
 
   // The composition root's own staging: the monitor is assembled, its rails are subscribed, and only then is the channel opened, so nothing a test watches for can
@@ -277,14 +277,14 @@ async function harness(options: { initialUptime?: number; log?: AccessLogging; t
       adminCalls: (): number => adminSignals.length,
       adminSignals: (): (AbortSignal | undefined)[] => adminSignals,
       reBootstrapCalls: (): number => reBootstrapCalls,
-      setAdminNeverResolves: (value: boolean): void => void (adminNeverResolves = value),
-      setAdminRejection: (error: Nullable<Error>): void => void (adminRejection = error),
-      setAdminRejectsOnAbort: (value: boolean): void => void (adminRejectsOnAbort = value),
-      setNextUptime: (value: number): void => void (nextUptime = value),
-      setParkedStep: (step: Nullable<RecoveryStep>): void => void (parkedStep = step),
-      setReBootstrapError: (error: Nullable<Error>): void => void (reBootstrapError = error),
-      setRelaunchError: (error: Nullable<Error>): void => void (relaunchError = error),
-      setVerifyError: (error: Nullable<Error>): void => void (verifyError = error),
+      setAdminNeverResolves: (value: boolean): void => { adminNeverResolves = value; },
+      setAdminRejection: (error: Nullable<Error>): void => { adminRejection = error; },
+      setAdminRejectsOnAbort: (value: boolean): void => { adminRejectsOnAbort = value; },
+      setNextUptime: (value: number): void => { nextUptime = value; },
+      setParkedStep: (step: Nullable<RecoveryStep>): void => { parkedStep = step; },
+      setReBootstrapError: (error: Nullable<Error>): void => { reBootstrapError = error; },
+      setRelaunchError: (error: Nullable<Error>): void => { relaunchError = error; },
+      setVerifyError: (error: Nullable<Error>): void => { verifyError = error; },
       verifyCalls: (): number => verifyCalls
     },
     events,

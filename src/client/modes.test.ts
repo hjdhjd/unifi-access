@@ -392,7 +392,7 @@ describe("a token-only client", () => {
     assert.ok(device);
 
     for(const attempt of [ { label: "a device restart", run: async (): Promise<void> => device.restart() },
-      { label: "a device configuration write", run: async (): Promise<void> => void await device.updateDevice({}) } ]) {
+      { label: "a device configuration write", run: async (): Promise<void> => { await device.updateDevice({}); } } ]) {
 
       // eslint-disable-next-line no-await-in-loop
       await assert.rejects(attempt.run, (error: unknown) => {
@@ -860,8 +860,6 @@ describe("a dual-mode client", () => {
     const captured = await connectCapturing(agent, { password: "p", token: "t0ken", username: "u" });
 
     await using client = captured.client;
-
-    void client;
 
     // A second document pass, with no official interceptor registered for it: an official read during recovery would fail loudly against the mock.
     pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody());
