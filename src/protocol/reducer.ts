@@ -22,8 +22,8 @@
  *
  * @module AccessReducer
  */
-import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDoorConfig, AccessDoorStateEntry, AccessFloorConfig, AccessKnownJsonValue,
-  Nullable, OmitMembers } from "../types/index.ts";
+import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceEntryConfig, AccessDoorConfig, AccessDoorStateEntry,
+  AccessFloorConfig, AccessKnownJsonValue, Nullable, OmitMembers } from "../types/index.ts";
 import type { AccessTypedEvent } from "./events.ts";
 import { assertNever } from "../errors.ts";
 import { deriveDoorState } from "./door-state.ts";
@@ -323,7 +323,7 @@ function applyDeviceChange(state: AccessState, id: string, payload: Record<strin
     return state;
   }
 
-  const devices = upsertEntry(state.devices, id, mergeRecord(existing, withCanonicalMac(payload)));
+  const devices = upsertEntry(state.devices, id, mergeDeviceRecord(existing, withCanonicalMac(payload)));
 
   return Object.is(devices, state.devices) ? state : { ...state, devices };
 }
@@ -428,7 +428,7 @@ function applyCensus(state: AccessState, event: Extract<AccessTypedEvent, { kind
 
   const byIdentity = { complete: event.complete, keyOf: (record: { unique_id: string }): string => record.unique_id };
   const withDoorStates = applyDoorStateFacts(state, event.doorStates, event.complete);
-  const devices = reconcileFacts(withDoorStates.devices, event.devices, { ...byIdentity, merge: mergeRecord });
+  const devices = reconcileFacts(withDoorStates.devices, event.devices, { ...byIdentity, merge: mergeDeviceRecord });
   const doors = reconcileFacts(withDoorStates.doors, event.doors, { ...byIdentity, merge: mergeRecord });
 
   if(Object.is(devices, withDoorStates.devices) && Object.is(doors, withDoorStates.doors)) {
@@ -653,6 +653,115 @@ function reconcileMap<T extends { unique_id: string }>(existing: ReadonlyMap<str
   }
 
   return changed ? next : existing;
+}
+
+// The row member that identifies a configuration row, bound to the row type so a misspelling fails to compile rather than quietly matching nothing.
+const ROW_IDENTITY: keyof AccessDeviceEntryConfig = "key";
+
+/* Merge a wire partial onto a stored DEVICE record. This is the one entry every path into such a record takes - the legacy device update and the token client's
+ * census reconcile alike - and it resolves the configuration rows and the capability set on the untyped wire plane before handing the result to the generic merge
+ * below, which stays the single place an untyped wire payload meets a typed record.
+ *
+ * The principle is the one the object merge already applies, carried to the collections that arrive as arrays: the wire is authoritative for what it names, and
+ * absence is never a clear. The rows are a keyed collection in array clothing, so they merge by row identity - keys are unique within a device's own array on every
+ * captured topology, which is what makes identity the right join - and the capabilities are a value set, so they merge by union. Replacing either wholesale would
+ * let a delivery that named one row, or one capability, truncate everything it did not mention, and every reader of the stored arrays - the capability predicates
+ * above all - would answer from the truncation with nothing to show that it had happened.
+ *
+ * The cost is the one the null-skip already accepts for a cleared member: a row or a capability the controller stops reporting stands until the next full topology
+ * reconcile. On a credential client the periodic refresh and any reconnect bound that; on a token client the census is the only reconcile there is, so a capability
+ * a listing stops carrying stands for the session, which is unobserved because the capability list is a hardware fact. A row the record has never held appends at
+ * the tail, so the next full reconcile may read the record as changed once where the controller orders its rows elsewhere.
+ */
+function mergeDeviceRecord(held: AccessStateDevice, patch: Record<string, AccessKnownJsonValue>): AccessStateDevice {
+
+  const rows = patch["configs"];
+  const capabilities = patch["capabilities"];
+  const resolved: Record<string, AccessKnownJsonValue> = { ...patch };
+
+  // A record holding no rows merges onto an empty list rather than taking the delivered array as it stands, so the admission guard governs every row on every path
+  // and a record never admits an array nothing vouched for.
+  if(Array.isArray(rows)) {
+
+    resolved["configs"] = mergeKeyedRows(held.configs ?? [], rows);
+  }
+
+  if(Array.isArray(capabilities)) {
+
+    resolved["capabilities"] = mergeValueSet(held.capabilities, capabilities);
+  }
+
+  return mergeRecord(held, resolved);
+}
+
+/* Merge a delivered configuration-row array onto the rows a device already holds, joined on each row's own identity.
+ *
+ * A supplied row the held list names takes the same null-skipping deep merge a notification takes, which hands back the held row itself when nothing changed - so
+ * reference identity is the whole no-change test, and a row that did change is placed at the position it already occupied rather than moved. A supplied row no held
+ * row names is admitted only when it carries every member the wire type requires, so an incomplete row is never stored as though the controller had sent the whole
+ * of it: not admitted rather than invented, which is the discipline the classifier applies to a payload it cannot vouch for. A supplied row carrying no identity at
+ * all is ignored, and a held row no delivery names stands.
+ *
+ * Each supplied row resolves against the rows as merged so far rather than against the held list alone, so a delivery naming one identity more than once layers
+ * its later row onto its earlier one - the later statement wins member by member, exactly as it does across deliveries - and an identity the record has never
+ * held is admitted once however many rows carry it.
+ *
+ * The held array comes back by reference when nothing moved, which is what lets the generic merge below find no change and keep the whole record's reference.
+ */
+function mergeKeyedRows(held: AccessDeviceEntryConfig[], supplied: readonly AccessKnownJsonValue[]): AccessDeviceEntryConfig[] {
+
+  let result: AccessDeviceEntryConfig[] | null = null;
+
+  for(const row of supplied) {
+
+    if(!isRecord(row) || (typeof row[ROW_IDENTITY] !== "string")) {
+
+      continue;
+    }
+
+    const rows = result ?? held;
+    const current = rows.find((entry) => entry[ROW_IDENTITY] === row[ROW_IDENTITY]);
+
+    if(current === undefined) {
+
+      if(isConfigRow(row)) {
+
+        result ??= [...held];
+        result.push(row);
+      }
+
+      continue;
+    }
+
+    const merged = mergeRecord(current, row);
+
+    if(!Object.is(merged, current)) {
+
+      result ??= [...held];
+      result[rows.indexOf(current)] = merged;
+    }
+  }
+
+  return result ?? held;
+}
+
+/* Merge a delivered capability list onto the set a device already holds, by union: the members the held list lacks are appended in delivery order, each of them
+ * once however many times one delivery repeats it. A list naming a subset - or the empty list a degraded official listing projects to - can therefore only add, so
+ * no capability predicate is flipped to false by a delivery that simply said less. The held array comes back by reference when nothing is new.
+ */
+function mergeValueSet(held: string[], supplied: readonly AccessKnownJsonValue[]): string[] {
+
+  const added = [...new Set(supplied.filter((value): value is string => typeof value === "string"))].filter((value) => !held.includes(value));
+
+  return (added.length === 0) ? held : [ ...held, ...added ];
+}
+
+// Whether a delivered value is a complete configuration row: every member the wire type requires, each of them a string. A row arriving under an identity the
+// record has never held is admitted on this and nothing else.
+function isConfigRow(value: unknown): value is AccessDeviceEntryConfig {
+
+  return isRecord(value) && (typeof value["device_id"] === "string") && (typeof value[ROW_IDENTITY] === "string") && (typeof value["tag"] === "string") &&
+    (typeof value["value"] === "string");
 }
 
 // Merge a wire partial onto a stored record, preserving the record's own type. The value-level work is in mergeObjects below; this is the one place the untyped wire
