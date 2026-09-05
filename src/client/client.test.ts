@@ -16,8 +16,8 @@ import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import { MockAgent as UndiciMockAgent } from "undici";
 import assert from "node:assert/strict";
-import { setTimeout as delay } from "node:timers/promises";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { settle } from "homebridge-plugin-utils/testing";
 
 const HOST = "10.0.0.1";
 const LOGIN_PATH = "/api/auth/login";
@@ -338,9 +338,19 @@ describe("AccessClient.connect", () => {
       interceptLogin(pool);
       interceptPass(pool);
 
-      // Every response persists, so a second fetch would be served rather than failing for want of an interceptor - which is what makes the count below a real
-      // measurement rather than an artifact of the mock.
-      pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, () => controllerBody()).delay(60).persist();
+      /* The controller document is held on a gate this test releases, so the first pass is provably still in flight when the second reaches for the pair - a
+       * real-time delay makes that ordering a race against the machine's load, and it was lost once under a concurrent suite run. Every response persists, so a
+       * second fetch would be served rather than failing for want of an interceptor, which is what makes the count below a real measurement rather than an
+       * artifact of the mock.
+       */
+      const release = Promise.withResolvers<undefined>();
+
+      pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(async () => {
+
+        await release.promise;
+
+        return { data: controllerBody(), statusCode: 200 };
+      }).persist();
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, () => topologyBody()).persist();
       pool.intercept({ method: "GET", path: SELF_PATH }).reply(200, () => selfBody(true)).persist();
 
@@ -348,9 +358,10 @@ describe("AccessClient.connect", () => {
 
       /* Count the controller-information requests as they are dispatched rather than as they are answered, which is what lets a request still in flight be counted
        * at all. Only the document fetch asks for that endpoint - the reachability probe asks for the topology - so it is what cleanly tells one shared fetch from
-       * two.
+       * two. The connection's edges are read from the same diagnostics surface, because the reconnecting edge is what marks recovery reaching for the pair.
        */
       let controllerRequests = 0;
+      const phases: string[] = [];
       const onStart = (message: unknown): void => {
 
         if((message as { url: string }).url.includes("/access/info")) {
@@ -358,8 +369,10 @@ describe("AccessClient.connect", () => {
           controllerRequests++;
         }
       };
+      const onTransition = (message: unknown): void => void phases.push((message as AccessConnectionTransitionPayload).to);
 
       diagnosticsChannel.subscribe("unifi-access:http:request:start", onStart);
+      diagnosticsChannel.subscribe("unifi-access:connection:transition", onTransition);
 
       try {
 
@@ -371,19 +384,32 @@ describe("AccessClient.connect", () => {
           return controllerRequests === 1;
         }, { message: "expected the refresh pass to be dispatched" });
 
-        /* The pass is now in flight and parked on its delayed response. Fault the channel so recovery probes and then re-bootstraps, which reaches for the same
-         * pair while the first is still outstanding. Joining it is what makes two passes unable to settle out of order, and so unable to land a stale controller
-         * document on top of a fresher one.
+        /* The pass is now in flight and parked on the gate. Fault the channel so recovery probes and then re-bootstraps, which reaches for the same pair while the
+         * first is still outstanding. Joining it is what makes two passes unable to settle out of order, and so unable to land a stale controller document on top
+         * of a fresher one. Recovery parks on the clock before its first attempt, so the clock is released on every poll until the reconnecting edge appears; the
+         * edge is announced immediately before recovery reaches for the pair, and one more turn of the event loop is the join.
          */
         ws.emitError(new Error("socket dropped"));
-        await delay(10);
-        clock.advance(0);
-        await delay(150);
+
+        await expectAt(() => {
+
+          clock.advance(0);
+
+          return phases.includes("reconnecting");
+        }, { message: "expected recovery to reach the re-bootstrap" });
+        await settle();
 
         assert.equal(controllerRequests, 1, "the second caller joined the fetch already in flight rather than dispatching its own");
+
+        release.resolve(undefined);
+
+        await expectAt(() => client.connection.state === "healthy", { message: "expected recovery to complete" });
+
+        assert.equal(controllerRequests, 1, "and the shared pass settled both callers without a second fetch");
       } finally {
 
         diagnosticsChannel.unsubscribe("unifi-access:http:request:start", onStart);
+        diagnosticsChannel.unsubscribe("unifi-access:connection:transition", onTransition);
       }
 
       await client[Symbol.asyncDispose]();
@@ -416,7 +442,17 @@ describe("AccessClient.connect", () => {
         }
       };
 
+      let controllerSettled = 0;
+      const onEnd = (message: unknown): void => {
+
+        if((message as { url: string }).url.includes("/access/info")) {
+
+          controllerSettled++;
+        }
+      };
+
       diagnosticsChannel.subscribe("unifi-access:http:request:start", onStart);
+      diagnosticsChannel.subscribe("unifi-access:http:request:end", onEnd);
 
       try {
 
@@ -427,7 +463,11 @@ describe("AccessClient.connect", () => {
           return controllerRequests === 1;
         }, { message: "expected the first pass to be dispatched" });
 
-        await delay(10);
+        // The refusal has to settle before the next pass can start fresh: the slot clears when the refused fetch rejects, and the transport announces every
+        // request's end on one signal whatever its outcome. Waiting on that signal rather than on the wall clock makes the second dispatch a measurement of the
+        // slot, not of timing.
+        await expectAt(() => controllerSettled === 1, { message: "expected the refused fetch to settle" });
+        await settle();
 
         await expectAt(async () => {
 
@@ -438,6 +478,7 @@ describe("AccessClient.connect", () => {
       } finally {
 
         diagnosticsChannel.unsubscribe("unifi-access:http:request:start", onStart);
+        diagnosticsChannel.unsubscribe("unifi-access:http:request:end", onEnd);
       }
 
       await expectAt(() => client.controllerInfo?.host.uptime === (accessControllerInfoFixture.host.uptime + 3600),
@@ -451,8 +492,18 @@ describe("AccessClient.connect", () => {
 
       interceptLogin(pool);
       interceptPass(pool);
-      pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody()).delay(50);
-      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody()).delay(50);
+
+      // Both documents are held on one gate, so the pass is provably in flight at disposal, and both of its requests are provably settled before the wakes are read.
+      const release = Promise.withResolvers<undefined>();
+      const held = async (body: string): Promise<{ data: string; statusCode: number }> => {
+
+        await release.promise;
+
+        return { data: body, statusCode: 200 };
+      };
+
+      pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(() => held(controllerBody()));
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(() => held(topologyBody()));
 
       const client = await connect(agent, { clock, refreshIntervalMs: 1000 });
 
@@ -467,14 +518,30 @@ describe("AccessClient.connect", () => {
         }
       })();
 
-      await delay(0);
-      await clock.tick();
+      // The pass's two requests are counted as they settle, on the transport's end-of-request signal, which fires for an answered request and an aborted one alike.
+      let settled = 0;
+      const onEnd = (): void => { settled++; };
 
-      // Dispose while the pass is still in flight, then let it settle. Its dispatch meets the store's terminal guard and changes nothing.
-      await client[Symbol.asyncDispose]();
-      await delay(80);
+      diagnosticsChannel.subscribe("unifi-access:http:request:end", onEnd);
 
-      assert.equal(wakes.length, 0, "the late settlement woke no observer");
+      try {
+
+        await settle();
+        await clock.tick();
+
+        // Dispose while the pass is parked on the gate, then release the gate and let both requests settle. Whatever the pass does next meets the store's terminal
+        // guard and changes nothing.
+        await client[Symbol.asyncDispose]();
+        release.resolve(undefined);
+
+        await expectAt(() => settled === 2, { message: "expected both of the pass's requests to settle" });
+        await settle();
+
+        assert.equal(wakes.length, 0, "the late settlement woke no observer");
+      } finally {
+
+        diagnosticsChannel.unsubscribe("unifi-access:http:request:end", onEnd);
+      }
 
       ac.abort();
       await watching;
@@ -559,7 +626,7 @@ describe("AccessClient.connect", () => {
         }
       })();
 
-      await delay(0);
+      await settle();
 
       ws.emitMessage(deviceFrame(HUB, { "alias": "Observed" }));
 
@@ -667,7 +734,7 @@ describe("AccessClient.connect", () => {
         }
       })();
 
-      await delay(0);
+      await settle();
       ws.emitMessage(deviceFrame(HUB, { "alias": "Streamed" }));
 
       await expectAt(() => seen.length === 1);
@@ -824,11 +891,14 @@ describe("AccessClient.connect", () => {
 
         // Fault the channel and let recovery run: the edges are degraded, then reconnecting, then healthy.
         ws.emitError(new Error("socket dropped"));
-        await delay(10);
-        clock.advance(0);
-        await delay(30);
 
-        await expectAt(() => client.connection.state === "healthy", { message: "expected recovery to complete" });
+        // Recovery parks on the clock before its first attempt, so the clock is released on every poll until the connection reads healthy again.
+        await expectAt(() => {
+
+          clock.advance(0);
+
+          return client.connection.state === "healthy";
+        }, { message: "expected recovery to complete" });
       } finally {
 
         diagnosticsChannel.unsubscribe("unifi-access:connection:transition", onTransition);
