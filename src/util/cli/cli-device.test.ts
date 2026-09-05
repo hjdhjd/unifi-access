@@ -12,6 +12,7 @@ import { device } from "./commands/device.ts";
 
 const HUB_ID = "02ffee000000";
 const READER_ID = "02ffee000002";
+const ULTRA_ID = "02ffee000004";
 
 describe("the device restart command", () => {
 
@@ -188,6 +189,120 @@ describe("the device restart command", () => {
       (error: unknown) => (typeof (error as NodeJS.ErrnoException).code === "string") && ((error as NodeJS.ErrnoException).code ?? "").startsWith("ERR_PARSE_ARGS"));
 
     assert.equal(calls.opens.length, 0);
+  });
+});
+
+describe("the device state command", () => {
+
+  // A tamper-capable device, spelled the way the controller does: the capability on the record, the reading on its own configuration row, and, where the caller
+  // asks for one, the tampering-alert setting that qualifies it on the row beside it.
+  const capable = (value?: string, alert?: string): Record<string, unknown> => ({ "capabilities": ["tamper_proofing"],
+    "configs": [ ...((value === undefined) ? [] : [{ "device_id": ULTRA_ID, "key": "tamper_event", "tag": "input_state", "value": value }]),
+      ...((alert === undefined) ? [] : [{ "device_id": ULTRA_ID, "key": "tampering", "tag": "uah_config", "value": alert }]) ] });
+
+  test("it renders each device's readings, and the tamper reading only where the hardware produces one", async () => {
+
+    const { calls, client } = makeFakeClient({ devices: [ { config: capable("true"), id: ULTRA_ID, name: "Front Ultra" },
+      { config: { "is_online": false }, id: READER_ID, name: "Back Reader", uplinkId: HUB_ID } ] });
+    const { ctx, lines } = makeCommandContext({ args: ["state"], calls, client });
+
+    await device.run(ctx);
+
+    const text = rendered(lines);
+
+    assert.equal(text.length, 2);
+    assert.match(text[0] ?? "", /^ +Front Ultra +online yes, uplink none, tamper detected$/);
+    assert.match(text[1] ?? "", /^ +Back Reader +online no, uplink 02ffee000000$/, "a device that cannot detect tampering carries no tamper reading at all");
+  });
+
+  test("a capable device that has reported nothing reads as unreported rather than as clear", async () => {
+
+    // The three-way answer is the whole point of the reading: a token-only client sees this for every device, because its census carries no rows.
+    const { calls, client } = makeFakeClient({ devices: [ { config: capable(), id: ULTRA_ID, name: "Front Ultra" },
+      { config: capable("false"), id: READER_ID, name: "Back Reader" } ] });
+    const { ctx, lines } = makeCommandContext({ args: [ "state", "all" ], calls, client });
+
+    await device.run(ctx);
+
+    assert.match(rendered(lines)[0] ?? "", /tamper unreported$/);
+    assert.match(rendered(lines)[1] ?? "", /tamper clear$/);
+  });
+
+  test("the JSON form keys by device id, orders its members, and tells an unreported reading from an absent one", async () => {
+
+    const { calls, client } = makeFakeClient({ devices: [ { config: capable("false"), id: ULTRA_ID, name: "Front Ultra" },
+      { config: capable(), id: HUB_ID, name: "The Hub" }, { id: READER_ID, name: "Back Reader", uplinkId: HUB_ID } ] });
+    const { ctx, lines } = makeCommandContext({ args: [ "state", "--json" ], calls, client });
+
+    await device.run(ctx);
+
+    const parsed = JSON.parse(rendered(lines).join("")) as Record<string, Record<string, unknown>>;
+
+    // A genuine false has to survive the JSON boundary as false: a truthiness coalesce would emit null here and report a quiet device as one that never reported.
+    assert.deepEqual(parsed[ULTRA_ID], { online: true, tamper: false, uplink: null });
+    assert.deepEqual(parsed[HUB_ID], { online: true, tamper: null, uplink: null }, "an unestablished reading crosses as null, because stringify drops undefined");
+    assert.deepEqual(parsed[READER_ID], { online: true, uplink: HUB_ID });
+    assert.equal("tamper" in (parsed[READER_ID] ?? {}), false, "a device that cannot report carries no member, which is what null would have hidden");
+    assert.deepEqual(Object.keys(parsed[ULTRA_ID] ?? {}), [ "online", "tamper", "uplink" ]);
+  });
+
+  test("a capable device whose tampering alert is off reads as unreported however its input row reads", async () => {
+
+    // Both devices carry a raised input row, and only the one whose alert setting is on has a reading its hardware still stands behind.
+    const { calls, client } = makeFakeClient({ devices: [ { config: capable("true", "false"), id: ULTRA_ID, name: "Front Ultra" },
+      { config: capable("true", "true"), id: READER_ID, name: "Back Reader" } ] });
+    const { ctx, lines } = makeCommandContext({ args: [ "state", "--json" ], calls, client });
+
+    await device.run(ctx);
+
+    const parsed = JSON.parse(rendered(lines).join("")) as Record<string, Record<string, unknown>>;
+
+    assert.equal(parsed[ULTRA_ID]?.["tamper"], null, "the alert is switched off, so nothing establishes a reading whatever the input row says");
+    assert.equal(parsed[READER_ID]?.["tamper"], true, "and the device whose alert is on reads exactly what its input row reports");
+  });
+
+  test("it reports one named device, and lists what the controller has when nothing matches", async () => {
+
+    const { calls, client } = makeFakeClient({ devices: [ { config: capable("true"), id: ULTRA_ID, name: "Front Ultra" },
+      { id: READER_ID, name: "Back Reader" } ] });
+    const { ctx, lines } = makeCommandContext({ args: [ "state", "Front Ultra" ], calls, client });
+
+    await device.run(ctx);
+
+    assert.equal(rendered(lines).length, 1);
+    assert.match(rendered(lines)[0] ?? "", /Front Ultra +online yes, uplink none, tamper detected/);
+
+    const { ctx: missing } = makeCommandContext({ args: [ "state", "Nothing" ], calls, client });
+
+    await assert.rejects(async () => device.run(missing), (error: unknown) => (error instanceof CliError) && error.message.includes("Front Ultra => " + ULTRA_ID));
+  });
+
+  test("it prints its own usage on request, and refuses more than one target before connecting", async () => {
+
+    const { calls, client } = makeFakeClient({ devices: [{ id: HUB_ID, name: "The Hub" }] });
+    const { ctx, lines } = makeCommandContext({ args: [ "state", "--help" ], calls, client });
+
+    await device.run(ctx);
+
+    assert.match(rendered(lines).join("\n"), /Usage: ufa device state/);
+    assert.equal(calls.opens.length, 0, "the usage screen answers without a controller");
+
+    const { ctx: tooMany } = makeCommandContext({ args: [ "state", "One", "Two" ], calls, client });
+
+    await assert.rejects(async () => device.run(tooMany), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    assert.equal(calls.opens.length, 0);
+  });
+
+  test("the readings are snapshotted before anything is rendered, so a departed record fails the whole listing", async () => {
+
+    /* The reason the leaf copies its readings rather than reading them live: a handle whose record has left controller state throws on every read, and taking
+     * them all up front means that failure arrives before a line has been written rather than half way down one.
+     */
+    const { calls, client } = makeFakeClient({ devices: [ { id: HUB_ID, name: "The Hub" }, { id: READER_ID, name: "Back Reader", present: false } ] });
+    const { ctx, lines } = makeCommandContext({ args: ["state"], calls, client });
+
+    await assert.rejects(async () => device.run(ctx), ReferenceError);
+    assert.deepEqual(rendered(lines), []);
   });
 });
 

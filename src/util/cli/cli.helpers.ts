@@ -8,9 +8,10 @@
  * answered everything. The single cast to the client type is at the fake's return, marked, and is the one place in the suite where the structural stand-in is
  * asserted to be a client.
  */
-import type { AccessApiOverride, AccessCapabilities, AccessDoorStateEntry, AccessEventPacket, AccessLockRule,
-  AccessOfficialDoorUnlockActor } from "../../index.ts";
+import type { AccessApiOverride, AccessCapabilities, AccessDoorStateEntry, AccessEventPacket, AccessLockRule, AccessOfficialDoorUnlockActor,
+  AccessStateDevice } from "../../index.ts";
 import type { CommandContext, LoadCredentials, OpenClient } from "./shared.ts";
+import { isTamperCapable as readTamperCapability, tamperState as readTamperState } from "../../index.ts";
 import { Output } from "./output/format.ts";
 import type { UfaCredentials } from "./credentials.ts";
 import { setTimeout as delay } from "node:timers/promises";
@@ -151,7 +152,11 @@ function makeCalls(): FakeCalls {
 function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyMap<string, FakeDoorSpec>): Record<string, unknown> {
 
   const state = { present: spec.present ?? true };
-  const config = { "alias": "", "is_connected": true, "is_online": true, "is_rebooting": false, "name": spec.name, "unique_id": spec.id, ...spec.config };
+  /* The base record carries the capability set and the configuration rows the real record type requires, because the library's own predicates read them: a fake
+   * that omitted them would lie about the shape those predicates take, and a sparse fixture would throw inside one rather than answering.
+   */
+  const config = { "alias": "", "capabilities": [], "configs": [], "is_connected": true, "is_online": true, "is_rebooting": false, "name": spec.name,
+    "unique_id": spec.id, ...spec.config };
   const record = (): Record<string, unknown> => {
 
     if(!state.present) {
@@ -161,6 +166,12 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
 
     return config;
   };
+
+  /* The fake's record read as the state record the library's own tamper functions take. The fake supplies the members they read and nothing obliges it to carry
+   * the rest, so this states what the structural stand-in is standing in for. Delegating to the library rather than re-implementing the readings here is what
+   * keeps the fake's answers from drifting away from the semantics the commands are being tested against.
+   */
+  const stateRecord = (): AccessStateDevice => record() as unknown as AccessStateDevice;
 
   return {
 
@@ -183,6 +194,14 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
     },
     doorId: spec.doorId ?? spec.id,
     id: spec.id,
+    get isOnline(): boolean {
+
+      return record()["is_online"] as boolean;
+    },
+    get isTamperCapable(): boolean {
+
+      return readTamperCapability(stateRecord());
+    },
     markAbsent: (): void => void (state.present = false),
     get name(): string {
 
@@ -216,6 +235,10 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
       calls.lockRules.push({ id: spec.id, rule });
 
       return Promise.resolve();
+    },
+    get tamperState(): boolean | undefined {
+
+      return readTamperState(stateRecord());
     },
     unlock: async (opts: { actor?: AccessOfficialDoorUnlockActor } = {}): Promise<void> => {
 

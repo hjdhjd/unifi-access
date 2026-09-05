@@ -1,15 +1,16 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * device.ts: `ufa device <restart|settings|update>` - the device command group: the fleet restart policy, per-device access methods, and the direct config write.
+ * device.ts: `ufa device <restart|settings|state|update>` - the device command group: the fleet restart policy, per-device access methods, the readings listing,
+ * and the direct config write.
  */
 import type { AccessDevice, AccessDeviceConfigPayload, AccessOfficialAccessMethodValue, AccessOfficialAccessMethodsUpdate } from "../../../index.ts";
 import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand, isMember } from "../shared.ts";
-import type { CommandContext, CommandSpec } from "../shared.ts";
+import type { CommandContext, CommandHandler, CommandSpec } from "../shared.ts";
+import { alignedList, renderDocument } from "../output/format.ts";
 import { allTargets, findTarget } from "../lookup.ts";
 import { requireOfficial, requireSurface } from "../client.ts";
 import { AccessAbortedError } from "../../../index.ts";
 import { parseArgs } from "node:util";
-import { renderDocument } from "../output/format.ts";
 
 const RESTART_USAGE = [
 
@@ -395,11 +396,145 @@ const updateHandler = async (ctx: CommandContext): Promise<void> => {
   renderDocument(ctx.output, echoed, "default");
 };
 
+const STATE_USAGE = [
+
+  "Usage: ufa device state [all | DEVICE_NAME_OR_ID] [--json] [--debug]",
+  "",
+  "Print what the controller currently reports about each device: whether it is online, what carries it, and, for hardware that detects tampering, what",
+  "its tamper reading says.",
+  "",
+  "Targets:",
+  "  all                  Report every addressable device. This is what a bare invocation does.",
+  "  DEVICE_NAME_OR_ID    Report one device, named by its display name or its id.",
+  "",
+  "A tamper reading of \"unreported\" means nothing has established one - a client holding only a token reads every device that way, because the official",
+  "census carries no configuration rows, and a device whose tampering alert is switched off in the Access console reads that way too, because its hardware",
+  "then reports no tamper input. A device whose hardware cannot detect tampering carries no tamper reading at all.",
+  "",
+  "Options:",
+  "  --json      Emit one JSON object keyed by device id.",
+  "  --debug     Emit the library's debug logging to stderr.",
+  "  -h, --help  Show this help.",
+  "",
+  "Examples:",
+  "  ufa device state                # every device",
+  "  ufa device state \"Front Reader\" # one device"
+].join("\n");
+
+/* One device's readings as plain values, taken before anything is rendered.
+ *
+ * They are copied for the reason the restart's own snapshot copies its gate readings: a projection reads through to controller state, so a record that leaves
+ * state part way through makes every further read of that handle throw. Taking them all up front means a handle whose record has gone fails once, at the
+ * snapshot, rather than half way down a listing that has already been written.
+ */
+interface DeviceReadings {
+
+  id: string;
+  isOnline: boolean;
+  isTamperCapable: boolean;
+  name: string;
+  tamperState: boolean | undefined;
+  uplinkId: string | null;
+}
+
+// Take the plain-value snapshot of one device handle. Every value comes off the handle's own getters, so this listing reads the devices tier exactly as the
+// sibling leaves do and never reaches past it into the state model.
+function snapshotReadings(device: AccessDevice): DeviceReadings {
+
+  return { id: device.id, isOnline: device.isOnline, isTamperCapable: device.isTamperCapable, name: device.name, tamperState: device.tamperState,
+    uplinkId: device.uplinkId };
+}
+
+// How a tamper reading reads on the default form. The unestablished case is spelled out rather than left blank, because "nothing has said" is a different answer
+// from "nothing is wrong" and a blank would read as the second.
+function describeTamper(state: boolean | undefined): string {
+
+  switch(state) {
+
+    case true:
+
+      return "detected";
+
+    case false:
+
+      return "clear";
+
+    default:
+
+      return "unreported";
+  }
+}
+
+// One device's readings as the aligned form's description: the readings a device can always answer, and the tamper reading only where the hardware produces one.
+function describeReadings(readings: DeviceReadings): string {
+
+  return [ "online " + (readings.isOnline ? "yes" : "no"), "uplink " + (readings.uplinkId ?? "none"),
+    ...(readings.isTamperCapable ? ["tamper " + describeTamper(readings.tamperState)] : []) ].join(", ");
+}
+
+/* One device's readings as the JSON form carries them, members in alphabetical order.
+ *
+ * The tamper member is present only where the hardware can report one, and an unestablished reading is translated to null rather than left undefined, because
+ * JSON.stringify drops an undefined member: without the translation a capable device that has reported nothing would be indistinguishable from a device that
+ * cannot report at all, which is precisely the difference the reading exists to state.
+ */
+function jsonReadings(readings: DeviceReadings): Record<string, unknown> {
+
+  return { online: readings.isOnline, ...(readings.isTamperCapable && { tamper: readings.tamperState ?? null }), uplink: readings.uplinkId };
+}
+
+/**
+ * `ufa device state`. Resolves the target - the `all` keyword or a bare invocation for every device, or one named device - snapshots each handle's readings, and
+ * renders them.
+ *
+ * It reads in whichever mode the client connected in, which is why it gates on nothing: the liveness and uplink readings are established by either census, and
+ * the tamper reading answers honestly as unestablished where the census that seeded the client never carried it.
+ *
+ * @category CLI
+ */
+const stateHandler: CommandHandler = async (ctx: CommandContext) => {
+
+  const { positionals, values } = parseArgs({ allowPositionals: true, args: ctx.args, options: { ...COMMON_OPTIONS, json: { type: "boolean" } }, strict: true });
+
+  if(values.help === true) {
+
+    ctx.output.line(STATE_USAGE);
+
+    return;
+  }
+
+  const [target] = positionals;
+
+  if(positionals.length > 1) {
+
+    throw new CliError("Specify \"all\", one device by name or id, or nothing at all. Run \"ufa device state --help\" for usage.", { exitCode: 2 });
+  }
+
+  // A read-and-exit invocation, so the periodic bootstrap-refresh failsafe is switched off: there is no long-lived session for it to guard.
+  await using client = await ctx.openClient({ debug: values.debug === true, refreshIntervalMs: false, signal: ctx.signal });
+
+  // The keyword is tested before name resolution, which is the group's own precedence, and a bare invocation reads as the whole inventory.
+  const readings = (((target === undefined) || (target === "all")) ? allTargets(client) : [findTarget(client, target)]).map(snapshotReadings);
+
+  if(values.json === true) {
+
+    ctx.output.line(JSON.stringify(Object.fromEntries(readings.map((entry) => [ entry.id, jsonReadings(entry) ]))));
+
+    return;
+  }
+
+  for(const line of alignedList(readings.map((entry) => [ entry.name, describeReadings(entry) ] as const))) {
+
+    ctx.output.line(line);
+  }
+};
+
 // The device subcommand table. The dispatcher, the usage text, and the unknown-subcommand diagnostic all derive from it through the shared group composer.
 const SUBCOMMANDS: Record<string, CommandSpec> = {
 
   restart: { run: restartHandler, summary: "Restart every connected device, or one named device." },
   settings: { run: settingsHandler, summary: "Read or change a device's access-method settings." },
+  state: { run: stateHandler, summary: "Print what the controller reports about each device, tamper readings included." },
   update: { run: updateHandler, summary: "Apply a configuration change and print the echoed record." }
 };
 

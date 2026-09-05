@@ -127,6 +127,7 @@ ufa watch events --json                       # the notification firehose, as ND
 ufa door unlock "Loading Dock"                # unlock a door
 ufa door unlock "Loading Dock" --duration 30m # hold it unlocked for thirty minutes
 ufa device restart all                        # restart every connected device
+ufa device state                              # what the controller reports about every device
 ufa doctor                                    # health-check every subsystem against the controller
 ```
 
