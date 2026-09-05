@@ -7,13 +7,15 @@
 import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload } from "../types/index.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { applyBootstrap, createInitialState, reduce } from "../protocol/reducer.ts";
+import { isTamperCapable as barrelIsTamperCapable, tamperState as barrelTamperState } from "../index.ts";
 import { describe, test } from "node:test";
-import { isEnterpriseHubRecord, isHub, isReader, selectAccessPoints, selectController, selectControllerName, selectControllerUptime, selectDevicesByType,
-  selectDoorDevices, selectDoorStates, selectHubs } from "./selectors.ts";
+import { isEnterpriseHubRecord, isHub, isReader, isTamperCapable, selectAccessPoints, selectController, selectControllerName, selectControllerUptime,
+  selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState } from "./selectors.ts";
 import type { AccessState } from "../protocol/reducer.ts";
 import type { AccessStateDevice } from "../protocol/reducer.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
+import { topologyDevices } from "../testing.helpers.ts";
 
 // Named entries from the 2026 document: three doors, five devices, all of them door-attached.
 const DOOR_ULTRA = "00000000-0000-0000-0000-000000000002";
@@ -94,6 +96,56 @@ const doorState = (locationId: string, lock: string): AccessTypedEvent => ({ dev
   kind: "doorStateChanged", states: [{ "dps": "close", "dps_connected": true, "emergency": { "hardware": "none", "software": "none" }, "is_unavailable": false,
     "location_id": locationId, "lock": lock }] });
 
+/* A device record as the official inventory's projection produces one: identity, roles, and enrollment, and no configuration rows at all. It stands for what a
+ * token-only client holds, where the capability is established and the reading it gates is not.
+ */
+const TOKEN_CENSUS_RECORD: AccessStateDevice = {
+
+  "alias": "",
+  "capabilities": [ "tamper_proofing", "is_hub" ],
+  "connected_uah_id": "",
+  "device_type": "UA-ULTRA",
+  "is_adopted": true,
+  "is_connected": true,
+  "is_managed": true,
+  "is_online": true,
+  "location_id": DOOR_ULTRA,
+  "name": "Test Name 6",
+  "unique_id": ULTRA
+};
+
+// One device out of a state, failing loudly rather than asserting over an absence.
+const deviceRecord = (state: AccessState, id: string): AccessStateDevice => {
+
+  const device = state.devices.get(id);
+
+  assert.ok(device, "the state should carry device " + id);
+
+  return device;
+};
+
+// What one configuration row of a record reports, on the same terms.
+const rowValue = (device: AccessStateDevice, key: string): string => {
+
+  const row = device.configs?.find((entry) => entry.key === key);
+
+  assert.ok(row, "the record should carry the " + key + " row");
+
+  return row.value;
+};
+
+/* The UA Ultra's whole configuration array with named rows set to named values, which is the delivery the controller's original dialect actually sends: every
+ * captured update on that dialect is a complete record rather than a patch, so a test moving one row moves it inside the whole array.
+ */
+const fullRowDelivery = (state: AccessState, values: Readonly<Record<string, string>>): AccessTypedEvent => {
+
+  const rows = deviceRecord(state, ULTRA).configs;
+
+  assert.ok(rows, "the document should carry the UA Ultra's configuration rows");
+
+  return deviceChange(ULTRA, { configs: rows.map((row) => ({ ...row, "value": values[row.key] ?? row.value })) });
+};
+
 describe("isHub", () => {
 
   test("reads the controller's own hub capability rather than a model name", () => {
@@ -158,6 +210,148 @@ describe("isReader", () => {
     // The record is a clone of the document's UA Ultra, which carries the reader capability, so the capability read is what decides the answer rather than
     // anything else the record carries.
     assert.equal(isReader(admitted), false);
+  });
+});
+
+describe("isTamperCapable", () => {
+
+  test("reads the controller's own tamper capability rather than any other one the record carries", () => {
+
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const ultra = state.devices.get(ULTRA);
+    const hub = state.devices.get(HUB);
+    const reader = state.devices.get(READER_PRO);
+
+    assert.ok(ultra && hub && reader, "the document should carry all three devices");
+
+    /* The UAH is what tells this predicate from its neighbours: it carries the hub capability and not the tamper one, so a check that had reached for the wrong
+     * capability string answers true here and fails.
+     */
+    assert.ok(hub.capabilities.includes("is_hub"), "the UAH is a hub");
+    assert.equal(isTamperCapable(ultra), true);
+    assert.equal(isTamperCapable(hub), false);
+    assert.equal(isTamperCapable(reader), false);
+  });
+
+  test("answers for a record the controller sent without any capabilities at all", () => {
+
+    const state = stateFrom(capabilityLessBootstrap());
+    const admitted = state.devices.get(CAPABILITY_LESS_ID);
+
+    assert.ok(admitted, "the record has to be in the map to be classified at all");
+
+    // The record is a clone of the document's tamper-capable UA Ultra, so the capability read is what decides the answer rather than anything else it carries.
+    assert.equal(isTamperCapable(admitted), false);
+  });
+
+  test("answers over a record a census with no configuration rows produced", () => {
+
+    // The pairing that matters in token mode: the capability is established while the reading is not, and the two questions answer independently.
+    assert.equal(isTamperCapable(TOKEN_CENSUS_RECORD), true);
+    assert.equal(tamperState(TOKEN_CENSUS_RECORD), undefined);
+  });
+});
+
+describe("tamperState", () => {
+
+  test("reads the captured document's device as unestablished, because its tampering alert is switched off", () => {
+
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const ultra = state.devices.get(ULTRA);
+
+    assert.ok(ultra);
+    assert.equal(rowValue(ultra, "tampering"), "false", "the captured document has this device's tampering alert switched off");
+    assert.equal(tamperState(ultra), undefined);
+  });
+
+  test("the alert setting gates the input reading", () => {
+
+    /* The setting row qualifies the reading beside it: the hardware reports no tamper input while the alert is off, so an input row read in that state carries
+     * what the hardware last had rather than what it has now. Each pairing arrives inside the whole row array, which is the delivery the original dialect sends.
+     */
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const raised = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "true", "tampering": "true" })), ULTRA);
+
+    assert.equal(tamperState(raised), true);
+
+    const cleared = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "false", "tampering": "true" })), ULTRA);
+
+    assert.equal(tamperState(cleared), false);
+
+    const gated = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "true", "tampering": "false" })), ULTRA);
+
+    assert.equal(rowValue(gated, "tamper_event"), "true", "the input row itself reads raised");
+    assert.equal(tamperState(gated), undefined, "and it is a stale reading while the alert is off");
+
+    /* The same document with the UA Ultra's setting row taken out of it before it is applied, which is the record a controller that keeps no such row delivers.
+     * The clone is walked with the document's own helper rather than indexed, so the removal follows the structure the document actually has.
+     */
+    const bare = clone(accessBootstrap2026Fixture);
+    const record = topologyDevices(bare).find((device) => device.unique_id === ULTRA);
+
+    assert.ok(record, "the document should carry the UA Ultra");
+
+    record.configs = record.configs.filter((row) => row.key !== "tampering");
+
+    const bareState = stateFrom(bare);
+
+    assert.equal(deviceRecord(bareState, ULTRA).configs?.some((row) => row.key === "tampering"), false, "the record should carry no setting row at all");
+    assert.equal(tamperState(deviceRecord(reduce(bareState, fullRowDelivery(bareState, { "tamper_event": "true" })), ULTRA)), true,
+      "an absent setting is no evidence of gating, so it gates nothing");
+  });
+
+  test("reads a record with no such row as unestablished rather than as quiet", () => {
+
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const reader = state.devices.get(READER_PRO);
+
+    assert.ok(reader?.configs, "the reader should carry configuration rows");
+    assert.equal(reader.configs.some((row) => row.key === "tamper_event"), false, "just not this one");
+    assert.equal(tamperState(reader), undefined, "a caller telling a first observation from a change needs this apart from false");
+  });
+
+  test("reads a value outside the vocabulary the controller writes as unestablished", () => {
+
+    // The one place this parts company with a consumer reading anything but "true" as false. No captured value is affected, and guessing at an unobserved
+    // spelling would be inventing a verdict rather than reporting one.
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const odd = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "maybe", "tampering": "true" })), ULTRA);
+
+    assert.equal(rowValue(odd, "tamper_event"), "maybe");
+    assert.equal(tamperState(odd), undefined);
+  });
+
+  test("an alert setting outside the observed vocabulary is not guessed at", () => {
+
+    // The setting row is held to the same discipline as the reading it gates: only the spelling the capture established opens the gate, because a value nobody
+    // has seen says nothing about whether the hardware is reporting.
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const odd = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "true", "tampering": "maybe" })), ULTRA);
+
+    assert.equal(rowValue(odd, "tampering"), "maybe");
+    assert.equal(tamperState(odd), undefined);
+  });
+
+  test("leaves the established reading standing across an update that says nothing about the rows", () => {
+
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const raised = reduce(state, fullRowDelivery(state, { "tamper_event": "true", "tampering": "true" }));
+    const later = reduce(raised, deviceChange(ULTRA, { "is_online": false }));
+
+    assert.equal(later.devices.get(ULTRA)?.is_online, false, "the update landed what it did carry");
+    assert.equal(tamperState(deviceRecord(later, ULTRA)), true, "and the reading is still the one the rows establish");
+  });
+});
+
+describe("the barrel's tamper exports", () => {
+
+  test("publishes the very functions this module defines", () => {
+
+    /* Nothing else in the suite establishes that a selector reached the public surface, and typedoc reads the barrel alone - a symbol missing from it has no
+     * page and no consumer. Identity rather than behaviour is the assertion, because a re-export that resolved to something else would still answer correctly.
+     */
+    assert.equal(Object.is(barrelIsTamperCapable, isTamperCapable), true);
+    assert.equal(Object.is(barrelTamperState, tamperState), true);
   });
 });
 

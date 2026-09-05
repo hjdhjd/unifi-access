@@ -143,11 +143,12 @@ export type { AccessOfficialCertificateUpload } from "./official/server.ts";
 // a consumer calls them as free functions, and passes them to `client.state.observe` to be told when what they select changes. The store factory is the one
 // documented exception to composing through the client, for a harness that needs the real engine standalone. The classification predicates are published beside the
 // selectors because they are the one home of device-role qualification - the hub predicates are what the projections rest on - and a consumer re-deriving any of
-// them is the drift the selectors module warns against.
+// them is the drift the selectors module warns against. The tamper pair publishes here on the same terms: a capability predicate and a per-record read, so that
+// what a record says about tampering has one home rather than being re-derived from the raw configuration rows by every consumer that wants it.
 export { createStateStore } from "./state/store.ts";
 export type { StateStore, StateStoreOptions } from "./state/store.ts";
-export { isEnterpriseHubRecord, isHub, isReader, selectAccessPoints, selectController, selectControllerName, selectControllerUptime, selectDevicesByType,
-  selectDoorDevices, selectDoorStates, selectHubs } from "./state/selectors.ts";
+export { isEnterpriseHubRecord, isHub, isReader, isTamperCapable, selectAccessPoints, selectController, selectControllerName, selectControllerUptime,
+  selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState } from "./state/selectors.ts";
 
 // Settings - the externally observable timing and retry constants behind the library's defaults, exposed as documented reference values.
 export { ACCESS_API_ERROR_LIMIT, ACCESS_API_PATH_PREFIX, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT, ACCESS_BOOTSTRAP_REFRESH_INTERVAL,

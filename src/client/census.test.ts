@@ -7,6 +7,7 @@
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import { describe, test } from "node:test";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "./census.ts";
+import { isTamperCapable, tamperState } from "../state/selectors.ts";
 import type { AccessOfficialDevice } from "../official/devices.ts";
 import type { AccessOfficialDoor } from "../official/spaces.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
@@ -14,6 +15,7 @@ import assert from "node:assert/strict";
 import { topologyDevices } from "../testing.helpers.ts";
 
 // Named entries from the captured listing: the hub that describes itself, the reader attached to it, and the doors the three groups are keyed by.
+const ULTRA = "aabbcc000000";
 const HUB = "aabbcc000001";
 const READER_PRO = "aabbcc000002";
 const DOOR_MINI_HW = "aabbcc000004";
@@ -86,6 +88,16 @@ describe("officialDeviceRecord", () => {
       "name": "Test Name 68",
       "unique_id": READER_PRO
     });
+  });
+
+  test("carries the capability set the library's own predicates read, and none of the rows the value read needs", () => {
+
+    /* The token-mode contract in one place: the listing establishes what a device's hardware can do, and nothing about what it currently reports. So the
+     * capability predicate answers over a projected record exactly as it does over a topology one, while the reading it gates stays honestly unestablished.
+     */
+    assert.equal(isTamperCapable(officialDeviceRecord(listed(ULTRA))), true);
+    assert.equal(isTamperCapable(officialDeviceRecord(listed(HUB))), false, "the listed UAH carries no tamper capability");
+    assert.equal(tamperState(officialDeviceRecord(listed(ULTRA))), undefined, "a listing carries no configuration rows, so nothing establishes a reading");
   });
 
   test("copies the capabilities array rather than sharing the listing's own", () => {

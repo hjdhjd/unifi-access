@@ -32,6 +32,18 @@ const HUB_CAPABILITY = "is_hub";
 // driving its lock. It is a capability rather than a device type because the reader role cuts across models: a hub-shaped device can be a reader too.
 const READER_CAPABILITY = "is_reader";
 
+// The capability string a device carries when its hardware can detect tampering - the controller's own marker for a unit that reports being opened or pulled off
+// its mount. It is a capability rather than a device type for the same reason the role capabilities are: the sensor cuts across models.
+const TAMPER_CAPABILITY = "tamper_proofing";
+
+// The configuration row the controller keeps a device's live tamper reading on, named here so the read and the tests that hold it to account never spell the wire
+// key twice.
+const TAMPER_EVENT_KEY = "tamper_event";
+
+// The configuration row the controller keeps a device's tampering-alert setting on: the switch in the Access console that sounds the hub's audible alarm when
+// it is tampered with. The hardware reports no tamper input while the setting is off, which is what makes the row a qualifier on the reading beside it.
+const TAMPER_ALERT_KEY = "tampering";
+
 // The device type of an Enterprise Access Hub, the multi-port hub that serves several doors from one piece of hardware through its extensions.
 const ENTERPRISE_HUB_DEVICE_TYPE = "UAH-Ent";
 
@@ -221,6 +233,83 @@ export function isHub(device: AccessStateDevice): boolean {
 export function isReader(device: AccessStateDevice): boolean {
 
   return device.capabilities.includes(READER_CAPABILITY);
+}
+
+/**
+ * Whether a device's hardware can detect tampering - a unit that reports being opened, or pulled off the mount it was installed on.
+ *
+ * The check is the controller's own `tamper_proofing` capability, and both censuses carry it: the topology document lists it among a device's capabilities and so
+ * does the official device inventory. That is what sets this apart from {@link tamperState}, which answers only where a census established the configuration rows
+ * - a client holding only a token can ask whether the hardware detects tampering at all, even though nothing has told it what the hardware currently reports.
+ *
+ * @param device - Any device configuration record (only its capabilities are read).
+ *
+ * @returns `true` when the device carries the tamper capability.
+ *
+ * @category State
+ */
+export function isTamperCapable(device: AccessStateDevice): boolean {
+
+  return device.capabilities.includes(TAMPER_CAPABILITY);
+}
+
+/**
+ * What a device's `tamper_event` configuration row reports: `true` where the controller has that device's tamper condition raised, `false` where it does not, and
+ * `undefined` where nothing has established a reading.
+ *
+ * Tampering is a property of the record rather than of a notification, which is why it is read rather than subscribed to. The controller keeps the condition on the
+ * device's own row and revises it there, so a consumer asking what is true right now reads this, while the typed `tamperAlert` activity event announces the incident
+ * as it happens. Each answers a different question, and a consumer announcing an alert reads the state separately rather than inferring it from the alert's arrival.
+ *
+ * The neighbouring `tampering` row is the device's tampering-alert setting, and a live capture on a UA Ultra established what that setting does to the reading
+ * beside it: the hardware reports no tamper input while it is off. An enclosure trip made with the setting off moved no row and raised no notification, while the
+ * same trip made with it on moved the input row and raised the notification. So a record whose setting row is present and reads anything but `true` answers
+ * `undefined` here, its input row being a stale reading rather than a quiet one, while a record carrying no setting row gates nothing, because an absent setting
+ * is no evidence of gating.
+ *
+ * The absent answer covers the situations a caller may want to tell apart from a quiet device, and they are deliberately not collapsed into `false`. The record may
+ * carry no such row; it may carry no configuration rows at all, which is every record a token-only census produced, so a token client reads `undefined` here by
+ * construction while {@link isTamperCapable} still answers; the device's tampering alert may be switched off, which leaves its input row a reading the hardware
+ * has stopped revising; or the row may carry a value outside the spellings the controller has been observed to write, which is not guessed at. A caller telling a
+ * first observation from a change needs that absence distinct from a reported `false`.
+ *
+ * The reading is refreshed by the topology census and by the controller's original device-update dialect, whose every captured delivery is a full record carrying
+ * the whole row array. The newer dialect carries no configuration rows at all, so a controller emitting only that one refreshes this at the periodic topology
+ * re-read alone. And because a topology fetch already in flight when the condition flips lands the reading it was answered with, a flip can read as reverted until
+ * the next delivery corrects it - the eventual consistency the reducer accepts for every member a census supplies.
+ *
+ * @param device - Any device configuration record (only its configuration rows are read).
+ *
+ * @returns `true` or `false` as the input row reports where the tampering-alert setting is on or absent, and `undefined` where no reading is established.
+ *
+ * @category State
+ */
+export function tamperState(device: AccessStateDevice): boolean | undefined {
+
+  const rows = device.configs;
+  const alert = rows?.find((entry) => entry.key === TAMPER_ALERT_KEY)?.value;
+
+  // The alert setting gates the reading: while it is off the hardware reports no tamper input, so the input row is stale rather than quiet. A setting row that
+  // reads something outside the observed vocabulary is not guessed at either, and an absent setting row gates nothing.
+  if((alert !== undefined) && (alert !== "true")) {
+
+    return undefined;
+  }
+
+  switch(rows?.find((entry) => entry.key === TAMPER_EVENT_KEY)?.value) {
+
+    case "true":
+
+      return true;
+
+    case "false":
+
+      return false;
+
+    default:
+
+      return undefined;
+  }
 }
 
 // Devices grouped by their device type, memoized on the devices map.

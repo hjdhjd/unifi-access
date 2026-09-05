@@ -32,6 +32,9 @@ const READER = "aabbcc000002";
 const DOOR_MINI = "aabbcc000004";
 const DOOR_MINI_DOOR = "00000000-0000-0000-0000-00000000000e";
 
+// The UA Ultra of the same document, the one device in it whose hardware detects tampering.
+const ULTRA = "aabbcc000000";
+
 // Named entries from the 2024 document: the building-hosted Enterprise Access Hub, two of its ports, and the doors those ports serve.
 const EAH_HUB = "aabbcc000005";
 const EAH_PORT_2 = "00000000-0000-0000-0000-00000000002a";
@@ -218,6 +221,48 @@ describe("device projections", () => {
 
       ac.abort();
       await done;
+    });
+
+    test("the tamper getters read the record through the selectors rather than answering from a captured value", () => {
+
+      const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
+      const ultra = registry.device(ULTRA);
+      const hub = registry.device(HUB);
+
+      assert.ok(ultra && hub);
+
+      // The capability is mirrored on the handle because it produces no projection class a consumer could ask about instead, so this is where a consumer asks.
+      assert.equal(ultra.isTamperCapable, true);
+      assert.equal(hub.isTamperCapable, false, "the UAH carries the hub capability without this one");
+      assert.equal(ultra.tamperState, undefined, "the captured document has this device's tampering alert switched off");
+
+      const rows = ultra.config.configs;
+
+      assert.ok(rows, "the document should carry the UA Ultra's configuration rows");
+
+      // The wire's own delivery shape: the original device-update dialect sends the whole record, so both rows arrive inside the whole row array. The alert
+      // setting moves with the input it gates, because a reading is established only while the setting is on.
+      const flipped: Readonly<Record<string, string>> = { "tamper_event": "true", "tampering": "true" };
+
+      store.dispatch({ eventName: "access.data.device.update", id: ULTRA, kind: "deviceChanged",
+        payload: { configs: rows.map((row) => ({ ...row, "value": flipped[row.key] ?? row.value })) } });
+
+      assert.equal(ultra.tamperState, true, "the handle re-read rather than answering from a captured value");
+      assert.equal(ultra.isTamperCapable, true, "and the capability the flip said nothing about is where it was");
+    });
+
+    test("the tamper getters throw once the record has left the state", () => {
+
+      const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
+      const ultra = registry.device(ULTRA);
+
+      assert.ok(ultra);
+
+      store.dispatch({ eventName: "access.data.v2.device.delete", id: ULTRA, kind: "deviceRemoved" });
+
+      // The asserting reads fail loudly, exactly as every other one on this handle does: a handle to an absent record is a caller's own error.
+      assert.throws(() => ultra.tamperState, ReferenceError);
+      assert.throws(() => ultra.isTamperCapable, ReferenceError);
     });
   });
 

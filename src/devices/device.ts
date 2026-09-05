@@ -5,7 +5,7 @@
 import type { AccessApiResponse, AccessDeviceConfig, AccessDeviceConfigPayload, Nullable } from "../types/index.ts";
 import type { AccessState, AccessStateDevice } from "../protocol/reducer.ts";
 import { deviceRestartEndpoint, deviceSettingsEndpoint } from "./endpoints.ts";
-import { isHub, selectAccessPoints } from "../state/selectors.ts";
+import { isHub, isTamperCapable as readTamperCapability, tamperState as readTamperState, selectAccessPoints } from "../state/selectors.ts";
 import type { AccessDeviceContext } from "./context.ts";
 import { AccessRequestError } from "../errors.ts";
 import type { AccessResponse } from "../transport/http.ts";
@@ -163,6 +163,33 @@ export class AccessDevice extends Projection<AccessStateDevice> {
   get isOnline(): boolean {
 
     return this.config.is_online;
+  }
+
+  /**
+   * Whether this device's hardware can detect tampering, read through the state tier's own `isTamperCapable` predicate.
+   *
+   * It is mirrored here where the role classification is not, because a hub's role produces a projection class a consumer can ask about directly and this one
+   * produces none: there is no tamper-capable subclass to test, so the handle is where a consumer asks. Both censuses establish the capability, so this answers
+   * whichever way the client connected.
+   *
+   * @throws {ReferenceError} If the device is no longer present in the controller state.
+   */
+  get isTamperCapable(): boolean {
+
+    return readTamperCapability(this.config);
+  }
+
+  /**
+   * What this device reports about tampering, read through the state tier's own `tamperState` selector: `true` with the condition raised, `false` with it clear,
+   * and `undefined` where nothing has established a reading - a record with no tamper row, one carrying no configuration rows at all as every token-only census
+   * produces, a device whose tampering alert is switched off and so reports no tamper input, or a value outside the vocabulary the controller has been observed to
+   * write. That selector's own documentation is the full statement of the contract.
+   *
+   * @throws {ReferenceError} If the device is no longer present in the controller state.
+   */
+  get tamperState(): boolean | undefined {
+
+    return readTamperState(this.config);
   }
 
   /**
