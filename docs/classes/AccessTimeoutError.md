@@ -6,9 +6,10 @@
 
 # Class: AccessTimeoutError
 
-Our own request deadline elapsed before the controller responded. Distinct from [AccessAbortedError](AccessAbortedError.md): this fires when the library's internal
-`AbortSignal.timeout()` wins the race, whereas an aborted error fires when the caller's signal wins. The transport tells the two apart by checking whether the
-caller's own `AbortSignal` is already aborted: if it is, the cancellation came from the caller; if not, the library's timeout won.
+Our own request deadline elapsed before the controller responded. Distinct from [AccessAbortedError](AccessAbortedError.md): this fires when the library's own request deadline wins the
+race, whereas an aborted error fires when the caller's signal wins. The transport tells the two apart by the identity of the reason the failure carries - the reason of
+its own deadline signal names a timeout, and the reason of the caller's signal names a cancellation - so the class states which signal fired first rather than which
+one happens to be aborted by the time the failure is classified.
 
 ## Extends
 

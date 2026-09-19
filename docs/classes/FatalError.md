@@ -14,10 +14,10 @@ Abstract base for failures the caller should propagate. Retrying the identical c
 
 ## Extended by
 
+- [`AccessApiError`](AccessApiError.md)
 - [`AccessAuthError`](AccessAuthError.md)
 - [`AccessAuthorizationError`](AccessAuthorizationError.md)
 - [`AccessBootstrapError`](AccessBootstrapError.md)
 - [`AccessCapabilityError`](AccessCapabilityError.md)
-- [`AccessOfficialApiError`](AccessOfficialApiError.md)
 - [`AccessProtocolError`](AccessProtocolError.md)
 - [`AccessRequestError`](AccessRequestError.md)

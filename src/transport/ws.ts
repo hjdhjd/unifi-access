@@ -12,6 +12,9 @@
  * consumes one, the test fake that implements one, and a consumer's own socket supplied through the client's `webSocket` connect option. Writing it once means
  * neither the fake nor a consumer's implementation can drift from what production actually calls.
  *
+ * Registration and removal are a matched pair here because the stream detaches its own listeners: it hands back the very function it registered, so an
+ * implementation that keys its bookkeeping on listener identity is all the surface needs to be.
+ *
  * @category Transport
  */
 export interface AccessWebSocket {
@@ -22,6 +25,10 @@ export interface AccessWebSocket {
   addEventListener(type: "close", listener: (event: AccessWebSocketCloseEvent) => void, options?: AccessWebSocketListenerOptions): void;
   addEventListener(type: "error", listener: (event: AccessWebSocketErrorEvent) => void, options?: AccessWebSocketListenerOptions): void;
   close(): void;
+  removeEventListener(type: "open", listener: () => void): void;
+  removeEventListener(type: "message", listener: (event: AccessWebSocketMessageEvent) => void): void;
+  removeEventListener(type: "close", listener: (event: AccessWebSocketCloseEvent) => void): void;
+  removeEventListener(type: "error", listener: (event: AccessWebSocketErrorEvent) => void): void;
 }
 
 /**
@@ -58,15 +65,15 @@ export interface AccessWebSocketErrorEvent {
 }
 
 /**
- * The listener-registration options the stream uses - a subset of the standard `addEventListener` options. `signal` is how one `AbortController` detaches every
- * listener at once, which is the stream's whole teardown mechanism.
+ * The listener-registration options the stream uses - a subset of the standard `addEventListener` options. `once` is the only one it passes, for the events a
+ * socket reports a single time. Detaching is the stream's own explicit act through `removeEventListener` rather than an option handed to the registration, so
+ * an implementation of this surface owes nothing beyond honoring `once`.
  *
  * @category Transport
  */
 export interface AccessWebSocketListenerOptions {
 
   once?: boolean;
-  signal?: AbortSignal;
 }
 
 /**

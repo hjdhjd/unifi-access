@@ -2,12 +2,12 @@
 
 ***
 
-[Home](../README.md) / AccessOfficialApiCode
+[Home](../README.md) / AccessApiCode
 
-# Type Alias: AccessOfficialApiCode
+# Type Alias: AccessApiCode
 
 ```ts
-type AccessOfficialApiCode = 
+type AccessApiCode = 
   | "CODE_ACCESS_POLICY_HOLIDAY_GROUP_CAN_NOT_DELETE"
   | "CODE_ACCESS_POLICY_HOLIDAY_GROUP_NAME_EXIST"
   | "CODE_ACCESS_POLICY_HOLIDAY_GROUP_NOT_FOUND"
@@ -56,7 +56,9 @@ type AccessOfficialApiCode =
 };
 ```
 
-The official API's result-code vocabulary: every code the reference documents, plus any code the controller sends that the documentation does not list.
+The controller's result-code vocabulary, spoken on both of its surfaces: every code the vendor's official reference documents, plus any code the controller sends
+that the documentation does not list. The reference is where the vocabulary is written down, and the Access application's own endpoints answer out of it too -
+the direct door-command refusal captured on 2026-09-16 came back as `CODE_SYSTEM_ERROR`, a listed member.
 
 The open-string arm is what keeps the type honest in both directions. A closed union would be a claim that the documented set is the complete set, which no
 capture in hand establishes - the reference has been caught understating the wire repeatedly - and an undocumented code would then be unrepresentable rather than

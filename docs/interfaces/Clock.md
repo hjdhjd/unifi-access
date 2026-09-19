@@ -6,15 +6,17 @@
 
 # Interface: Clock
 
-Source of time for any code that needs to know "what time is it now?" or "wake me up at intervals." Production code reads time exclusively through this
+Source of time for any code that needs to know "what time is it now?" or "wake me up after a delay." Production code reads time exclusively through this
 interface, never through `Date.now()` or `node:timers/promises` directly. Tests substitute a fake clock to drive time deterministically without real-time
 waits or module-level mocking.
 
-The interface is shaped by what consumers actually need - the canonical trio of clock, one-shot timeout, and repeating interval (`now` / `wait` / `setInterval`),
-no more. Adding methods speculatively (setImmediate, etc.) would be YAGNI; adding them when a consumer first needs one is principled - `wait` earned its place when
-the connection-recovery backoff curve needed a one-shot delay of varying duration (a genuinely distinct primitive from a fixed repeating interval). The consumers are
-every subsystem that needs wall-clock time, a single delay, or interval ticks - the transport throttle breaker, the events heartbeat watchdog, the store refresh
-loop, and the connection recovery loop among them.
+The interface is shaped by what consumers actually need - a clock, a one-shot delay, and a deadline signal (`now` / `delay` / `timeout`), no more. Adding methods
+speculatively (setImmediate, etc.) would be YAGNI; adding them when a consumer first needs one is principled - `delay` earned its place when the
+connection-recovery backoff curve needed a one-shot wait of varying duration, and `timeout` earned its own when the transport's request deadline needed to be a
+signal a suite could fire rather than wait out. A repeating consumer - the heartbeat watchdog, the refresh failsafe - is itself a loop that awaits one `delay`
+per pass, so that single primitive covers a varying sequence and a fixed cadence alike. The consumers are every subsystem that needs wall-clock time, a delay,
+or a deadline - the transport throttle breaker and the request deadline beside it, the events heartbeat watchdog, the store refresh loop, and the connection
+recovery loop among them.
 
 Why dependency injection here rather than module mocking: time is a real dependency the code reads from, not an incidental detail of the runtime. Naming
 it as a parameter at the function (or constructor) signature makes the dependency visible at the call site - a reader sees `clock: Clock` and immediately
@@ -22,6 +24,35 @@ knows the function reads time. With ambient `Date.now()`, the same reader has to
 dependencies is the architectural property that makes the rest of the testing story trivial.
 
 ## Methods
+
+### delay()
+
+```ts
+delay(ms, init): Promise<void>;
+```
+
+Resolves once, after `ms` milliseconds, unless the abort signal fires first. Mirrors `setTimeout` from `node:timers/promises` but takes only the parameters
+we actually use - the value parameter and the optional `ref` flag are omitted because no consumer needs them.
+
+The signal is required rather than optional because every consumer here waits inside a lifecycle that disposal has to be able to end: a loop that forgot
+cancellation would hold its subsystem open past teardown, and requiring the signal makes that shape unwritable. The returned promise rejects with an
+`AbortError` if the signal aborts before the delay elapses, matching `setTimeout` from `node:timers/promises`, so a consumer's loop ends cleanly on disposal.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `ms` | `number` | Delay before the promise resolves, in milliseconds. |
+| `init` | \{ `signal`: `AbortSignal`; \} | Includes the abort signal that cancels the delay. |
+| `init.signal` | `AbortSignal` | - |
+
+#### Returns
+
+`Promise`\<`void`\>
+
+A promise that resolves after the delay, or rejects with `AbortError` on abort.
+
+***
 
 ### now()
 
@@ -37,56 +68,27 @@ Returns the current wall-clock time in milliseconds since the Unix epoch. The se
 
 ***
 
-### setInterval()
+### timeout()
 
 ```ts
-setInterval(delayMs, options): AsyncIterable<void>;
+timeout(ms): AbortSignal;
 ```
 
-Yields once per `delayMs` interval until the abort signal fires. Mirrors `setInterval` from `node:timers/promises` but takes only the parameters we
-actually use - the value parameter and the optional `ref` flag are omitted because no consumer needs them.
+Returns a signal that aborts after `ms` milliseconds with the platform's deadline reason: a `DOMException` whose `name` is `"TimeoutError"`. The production
+clock implements it as `AbortSignal.timeout`, whose timer is unreferenced and so never holds the process open.
 
-The returned async iterable terminates cleanly when the signal aborts (the iterator throws an `AbortError`, which the consumer's `for await` catches).
+Composing the deadline with a caller's own cancellation stays the consumer's job - `AbortSignal.any` over the two is what a call site that needs both reaches
+for - so the clock hands back one primitive rather than an assembled lifetime. The shared library's `TestClock` carries the same member, which is what lets a
+single double drive a subsystem's delays and its deadlines together.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `delayMs` | `number` | Interval between yields in milliseconds. |
-| `options` | \{ `signal`: `AbortSignal`; \} | Includes the abort signal that ends the iteration. |
-| `options.signal` | `AbortSignal` | - |
+| `ms` | `number` | The deadline, in milliseconds. |
 
 #### Returns
 
-`AsyncIterable`\<`void`\>
+`AbortSignal`
 
-An async iterable that yields `void` once per interval until the signal aborts.
-
-***
-
-### wait()
-
-```ts
-wait(delayMs, options): Promise<void>;
-```
-
-Resolves once, after `delayMs` milliseconds, unless the abort signal fires first. Mirrors `setTimeout` from `node:timers/promises` but takes only the
-parameters we actually use - the value parameter and the optional `ref` flag are omitted because no consumer needs them.
-
-This is a one-shot delay, distinct from `setInterval`'s repeating ticks: the connection-recovery backoff walks a sequence of *varying* delays, which a
-fixed-interval iterator cannot express. The returned promise rejects with an `AbortError` if the signal aborts before the delay elapses, matching
-`setTimeout` from `node:timers/promises`, so a consumer's recovery loop ends cleanly on disposal.
-
-#### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `delayMs` | `number` | Delay before the promise resolves, in milliseconds. |
-| `options` | \{ `signal`: `AbortSignal`; \} | Includes the abort signal that cancels the wait. |
-| `options.signal` | `AbortSignal` | - |
-
-#### Returns
-
-`Promise`\<`void`\>
-
-A promise that resolves after the delay, or rejects with `AbortError` on abort.
+A signal that aborts with the platform's `TimeoutError` once the deadline elapses.

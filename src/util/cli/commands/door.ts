@@ -5,9 +5,10 @@
  */
 import type { AccessApiOverride, AccessClient, AccessLockRule, AccessOfficialDoorUnlockActor, AccessOfficialEmergencyState,
   AccessStateDoor } from "../../../index.ts";
-import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand, isMember, parseWholeMinutes } from "../shared.ts";
+import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand, isMember, parseWholeMinutes,
+  refuseDocumentFlags } from "../shared.ts";
 import type { CommandContext, CommandSpec } from "../shared.ts";
-import { doorLabel, findDoorTarget } from "../lookup.ts";
+import { doorLabel, doorName, findDoorTarget } from "../lookup.ts";
 import { requireOfficial, requireSurface } from "../client.ts";
 import type { UfaCredentials } from "../credentials.ts";
 import { parseArgs } from "node:util";
@@ -68,7 +69,7 @@ function doorArmSpaces(client: AccessClient, door: AccessStateDoor): NonNullable
 
   if((official === null) || (client.capabilities.override === "direct-only")) {
 
-    throw new CliError("The door \"" + door.full_name + "\" is in the topology, but no hub handle drives it.");
+    throw new CliError("The door \"" + doorName(door) + "\" is in the topology, but no hub handle drives it.");
   }
 
   return official.spaces;
@@ -351,17 +352,18 @@ const lockRuleHandler = async (ctx: CommandContext): Promise<void> => {
     throw new CliError("Specify one door by name or id, and optionally a rule. Run \"ufa door lock-rule --help\" for usage.", { exitCode: 2 });
   }
 
-  // A rule argument selects the mutation arm, which prints a confirmation line composed here rather than a document the controller sent, so the scrub has nothing
-  // to rewrite there. The presence of the token is the whole test, and it is knowable before anything connects.
-  if((values.scrub === true) && (ruleToken !== undefined)) {
-
-    throw new CliError("A rule change prints a confirmation rather than a document, so --scrub applies to the rule read only.", { exitCode: 2 });
-  }
+  // A rule argument selects the mutation arm, which prints a confirmation line composed here rather than a document the controller sent. The presence of the
+  // token is the whole test, and it is knowable before anything connects.
+  refuseDocumentFlags(values, { changing: ruleToken !== undefined, prints: "A rule change prints a confirmation rather than a document", read: "rule read" });
 
   const api = parseApiOverride(values.api);
+
+  // The rule token's grammar is knowable before the identity file is read, so a malformed token is refused without a read, the way the emergency handler settles
+  // its verb before its own load. Branching the arms on the parsed rule is what narrows it for the mutation arm below.
+  const rule = (ruleToken === undefined) ? undefined : parseLockRule(ruleToken);
   const credentials = await ctx.loadCredentials();
 
-  if(ruleToken === undefined) {
+  if(rule === undefined) {
 
     // The read is official surface in every mode, and the refusals - a missing token, a direct-only choice - are knowable before anything connects.
     requireSurface(credentials, "official", "lock-rule read", api);
@@ -380,8 +382,6 @@ const lockRuleHandler = async (ctx: CommandContext): Promise<void> => {
 
     return;
   }
-
-  const rule = parseLockRule(ruleToken);
 
   await using client = await openDoorClient(ctx, { ...((api !== undefined) && { api }), credentials, debug: values.debug === true });
 
@@ -444,12 +444,9 @@ const emergencyHandler = async (ctx: CommandContext): Promise<void> => {
     throw new CliError("Specify at most one emergency state. Run \"ufa door emergency --help\" for usage.", { exitCode: 2 });
   }
 
-  // A state argument selects the mutation arm, which prints a confirmation line composed here rather than a document the controller sent, so the scrub has
-  // nothing to rewrite there. The presence of the verb is the whole test, and it is knowable before anything connects.
-  if((values.scrub === true) && (verb !== undefined)) {
-
-    throw new CliError("A state change prints a confirmation rather than a document, so --scrub applies to the state read only.", { exitCode: 2 });
-  }
+  // A state argument selects the mutation arm, which prints a confirmation line composed here rather than a document the controller sent. The presence of the
+  // verb is the whole test, and it is knowable before anything connects.
+  refuseDocumentFlags(values, { changing: verb !== undefined, prints: "A state change prints a confirmation rather than a document", read: "state read" });
 
   if((verb !== undefined) && !isMember(EMERGENCY_STATES, verb)) {
 

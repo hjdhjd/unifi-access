@@ -68,9 +68,10 @@ export class AccessThrottledError extends RecoverableError {
 }
 
 /**
- * Our own request deadline elapsed before the controller responded. Distinct from {@link AccessAbortedError}: this fires when the library's internal
- * `AbortSignal.timeout()` wins the race, whereas an aborted error fires when the caller's signal wins. The transport tells the two apart by checking whether the
- * caller's own `AbortSignal` is already aborted: if it is, the cancellation came from the caller; if not, the library's timeout won.
+ * Our own request deadline elapsed before the controller responded. Distinct from {@link AccessAbortedError}: this fires when the library's own request deadline wins the
+ * race, whereas an aborted error fires when the caller's signal wins. The transport tells the two apart by the identity of the reason the failure carries - the reason of
+ * its own deadline signal names a timeout, and the reason of the caller's signal names a cancellation - so the class states which signal fired first rather than which
+ * one happens to be aborted by the time the failure is classified.
  *
  * @category Errors
  */
@@ -88,8 +89,9 @@ export class AccessTimeoutError extends RecoverableError {
 }
 
 /**
- * A connect, DNS, TLS, or socket-level failure reaching the controller. The originating Node `ErrnoException` is preserved on the `cause` chain (the shape undici
- * raises as `TypeError("fetch failed", { cause: errnoError })`); `code` lifts the errno string out for convenient branching.
+ * A connect, DNS, TLS, or socket-level failure reaching the controller. The originating Node `ErrnoException` is preserved on the `cause` chain (the shape undici raises
+ * as `TypeError("fetch failed", { cause: errnoError })`); `code` lifts the errno string out for convenient branching. The transport reports two interruptions through
+ * this class as well: a pool reset under the request, and a connection attempt cut for another request's cancellation or deadline.
  *
  * @category Errors
  */
@@ -173,10 +175,10 @@ export class AccessAuthError extends FatalError {
 }
 
 /**
- * The two identities a client can authenticate with, and which an {@link AccessAuthError} or an {@link AccessAuthorizationError} names as the refused one:
- * `"credentials"` is the account login session that authenticates the direct API, `"token"` the bearer token that authenticates the official API. A client holds
- * either or both - the `ConnectIdentity` union is how a caller supplies them - and each is refused independently, so the leg is what tells a user which of the two
- * to go fix.
+ * The identities a client can authenticate with, and which an {@link AccessAuthError} or an {@link AccessAuthorizationError}
+ * names as the refused one: `"credentials"` is the account login session that authenticates the direct API, `"token"` the
+ * bearer token that authenticates the official API. A client holds either or both - the `ConnectIdentity` union is how a
+ * caller supplies them - and each is refused independently, so the leg is what tells a user which one to go fix.
  *
  * @category Errors
  */
@@ -243,13 +245,13 @@ export class AccessRequestError extends FatalError {
  * A requested operation has no path this client can carry it on. Fatal because it describes what this client is rather than what the controller did: the same call
  * will fail the same way for as long as the client lives, and a fresh connect with different options is what changes the answer.
  *
- * Three things put an operation out of reach. The client may lack the channel the operation needs at all - an attributed unlock has no direct-path expression, so a
- * credential-only client cannot issue one. The routing override may have held the client away from the only channel that could carry it. Or the addressed device may
- * sit below the endpoint's firmware floor, leaving an operation that had exactly one capable path with none.
+ * What can put an operation out of reach: The client may lack the channel the operation needs at all - an attributed unlock has no direct-path
+ * expression, so a credential-only client cannot issue one. The routing override may have held the client away from the only channel that could carry
+ * it. Or the addressed device may sit below the endpoint's firmware floor, leaving an operation that had exactly one capable path with none.
  *
  * The error carries a message and nothing else, deliberately. What a caller needs in order to act is which capabilities this client has, and that is a question
  * about the client rather than about one failed call - so it is answered by the capability map the client publishes, in one place, rather than by fields duplicated
- * onto every refusal. The message names the operation, the capability it wanted, and the mode that could not supply it.
+ * onto every refusal. The message names the operation, the door or device it addressed, the capability it wanted, and the mode that could not supply it.
  *
  * @category Errors
  */
@@ -306,37 +308,46 @@ export class AccessBootstrapError extends FatalError {
 export type AccessBootstrapStage = "fetch" | "parse";
 
 /**
- * The official API refused a request. Its result envelope carries a `code` on every response, and a code other than success is the controller declining in its own
- * vocabulary rather than through an HTTP status - the status on such a response is a 2xx, so nothing below this layer can classify it. Fatal because the refusal
- * describes the request rather than the moment: the same call will be refused the same way.
+ * The controller refused a request inside its result envelope - on the official developer API and on the Access application's own endpoints alike, which write one
+ * envelope between them. The envelope carries a `code` on every response, and a code other than success is the controller declining in its own vocabulary rather
+ * than through an HTTP status: the status on such a response is a 2xx, so nothing below this layer can classify it. Fatal because the refusal describes the request
+ * rather than the moment: the same call will be refused the same way.
  *
- * The controller's own `msg` is the error's message, carried through the message channel rather than duplicated into a second field, and `code` is the typed
- * vocabulary a caller branches on. Two of those codes are capability signals rather than faults, and are worth naming here because a consumer will want to route
- * them rather than report them:
+ * The controller's own `msg` is the error's message, carried through the message channel rather than duplicated into a second field, and `code` is the typed vocabulary a
+ * caller branches on. Some of those codes are capability signals rather than faults, worth naming here because a consumer will want to route them rather than report
+ * them, and the official API answers each of them:
  *
  * - `CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED` - the official API does not exist on this controller at all, which is what an Identity Enterprise controller answers.
  * - `CODE_DEVICE_API_NOT_SUPPORTED` - the addressed device sits below the endpoint's firmware floor.
  *
- * Both still throw from the request path, because a request that did not happen is a failure from the caller's point of view whatever the reason. What the typed
- * code buys is that a layer deciding which capabilities a controller has can branch on them with compile-time narrowing rather than by matching strings.
+ * Each still throws from the request path, because a request that did not happen is a failure from the caller's point of view whatever the reason. What the typed code
+ * buys is that a layer deciding which capabilities a controller has can branch on them with compile-time narrowing rather than by matching strings.
  *
  * @category Errors
  */
-export class AccessOfficialApiError extends FatalError {
+export class AccessApiError extends FatalError {
 
   /** The official API's own result code, as the controller spelled it. */
-  readonly code: AccessOfficialApiCode;
+  readonly code: AccessApiCode;
 
-  constructor(message: string, options: { cause?: unknown; code: AccessOfficialApiCode }) {
+  /** The controller's own diagnostic text, trimmed of the whitespace the wire pads it with and otherwise unparsed, when the refusal sent one beside its message.
+   * Undefined when it sent none, or sent nothing but whitespace.
+   */
+  readonly detail: string | undefined;
+
+  constructor(message: string, options: { cause?: unknown; code: AccessApiCode; detail?: string }) {
 
     super(message, { cause: options.cause });
 
     this.code = options.code;
+    this.detail = options.detail;
   }
 }
 
 /**
- * The official API's result-code vocabulary: every code the reference documents, plus any code the controller sends that the documentation does not list.
+ * The controller's result-code vocabulary, spoken on both of its surfaces: every code the vendor's official reference documents, plus any code the controller sends
+ * that the documentation does not list. The reference is where the vocabulary is written down, and the Access application's own endpoints answer out of it too -
+ * the direct door-command refusal captured on 2026-09-16 came back as `CODE_SYSTEM_ERROR`, a listed member.
  *
  * The open-string arm is what keeps the type honest in both directions. A closed union would be a claim that the documented set is the complete set, which no
  * capture in hand establishes - the reference has been caught understating the wire repeatedly - and an undocumented code would then be unrepresentable rather than
@@ -348,7 +359,7 @@ export class AccessOfficialApiError extends FatalError {
  *
  * @category Errors
  */
-export type AccessOfficialApiCode =
+export type AccessApiCode =
   "CODE_ACCESS_POLICY_HOLIDAY_GROUP_CAN_NOT_DELETE" |
   "CODE_ACCESS_POLICY_HOLIDAY_GROUP_NAME_EXIST" |
   "CODE_ACCESS_POLICY_HOLIDAY_GROUP_NOT_FOUND" |
@@ -421,9 +432,79 @@ export function assertNever(value: never): never {
   throw new AccessProtocolError("Encountered an unhandled variant in an exhaustive switch: " + detail + ".");
 }
 
+/* How far below the value that was caught the rendering descends. Real chains are short - a client wraps a transport failure, the transport wraps a socket
+ * failure - and the bound is what makes the descent terminate at all: a chain that refers back to itself simply exhausts it, so no cycle bookkeeping has to
+ * exist. Counted in descents, so the value handed in is depth zero and this many links below it are still read.
+ */
+const CAUSE_CHAIN_DEPTH = 8;
+
+/**
+ * Render an arbitrary thrown value as clean text, carrying every further diagnosis its `cause` chain holds. An `Error` surfaces its `message`; anything else is
+ * coerced through `String(...)`.
+ *
+ * A wrapped failure presents its diagnosis below the sentence that was caught: an {@link AccessBootstrapError} wraps the {@link AccessApiError} carrying the
+ * controller's own words, so a reader that takes the top message alone drops exactly the part an operator needs. This follows the `cause` chain down and appends
+ * each further message after a colon. The following rules decide what it appends:
+ *
+ * 1. Only an `Error` link contributes text. A cause that is a plain object is structured context for code to read - a code, a status, a response body - so
+ *    rendering it would print `[object Object]` at best and a secret at worst. Such a link contributes nothing and the descent continues below it, which is what
+ *    lets an error sitting under one still be rendered.
+ * 2. A link whose words the text so far already carries contributes nothing. A wrapper that builds its own message around its cause therefore names that cause
+ *    once rather than twice, and a rendering nested inside another stays stable.
+ * 3. One terminal period is removed from every message taken, the top one included, so the text carries none of its own and the sentence that embeds it supplies
+ *    the period.
+ * 4. The descent is bounded, which is also what ends a chain that refers back to itself: such a chain repeats messages the text already holds, so rule 2 appends
+ *    nothing and the bound stops the walk.
+ *
+ * The library takes no runtime dependency on the shared plugin utilities, so the rule their formatter states is implemented here as well. A differential test in
+ * this package's suite feeds a table of error shapes through both and asserts equal output, which is what keeps the two of them one rule.
+ *
+ * @param error - The thrown value. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
+ *
+ * @returns The rendered text, carrying each further diagnosis the cause chain held and no terminal period of its own.
+ *
+ * @category Utilities
+ */
+export function formatErrorChain(error: unknown): string {
+
+  let rendered = ((error instanceof Error) ? error.message : String(error)).replace(/\.$/, "");
+  let link: unknown = error;
+
+  /* Each link below the one that was caught may hold the diagnosis the wrapper's own sentence lacks. An empty message is contained in every string, so it falls
+   * out of the containment rule with no case of its own.
+   */
+  for(let depth = 0; depth < CAUSE_CHAIN_DEPTH; depth++) {
+
+    // A value that is not an object holds nothing beneath it, and neither does one carrying no `cause` key at all, so either ends the descent. A key present
+    // with the value `undefined` is a link like any other: the descent takes it, finds no error to render, and ends on the following pass.
+    if((typeof link !== "object") || (link === null) || !("cause" in link)) {
+
+      break;
+    }
+
+    link = link.cause;
+
+    if(!(link instanceof Error)) {
+
+      continue;
+    }
+
+    const text = link.message.replace(/\.$/, "");
+
+    // The containment check reads everything rendered so far rather than the top message alone, so a link whose words an earlier link already appended is not
+    // repeated either.
+    if(!rendered.includes(text)) {
+
+      rendered += ": " + text;
+    }
+  }
+
+  return rendered;
+}
+
 /**
  * Whether a WebSocket error is one of the expected-disconnect shapes, so its handler can suppress error-level logging for it rather than reporting a fault the
- * consumer can do nothing about. Two shapes qualify:
+ * consumer can do nothing about. The following shapes qualify:
  *
  * 1. A `TypeError`, which is what undici raises from its own internal WebSocket teardown when the socket closes mid-frame during a disconnection.
  * 2. An `ETIMEDOUT` errno on the cause chain - the slow-controller path. The realtime events stream runs its own silence watchdog against
@@ -444,9 +525,38 @@ export function isExpectedWsDisconnect(error: unknown): boolean {
 }
 
 /**
+ * Whether a failure is the controller refusing an operation on privilege grounds - the identity authenticated, and was told it may not do this. A refusal is spelled
+ * differently depending on which of the controller's surfaces answered it, and this reads every spelling the library produces for one.
+ *
+ * The following spellings qualify:
+ *
+ * 1. An {@link AccessAuthorizationError}, the transport's classification of a refused status.
+ * 2. An {@link AccessApiError} whose `code` is `CODE_OPERATION_FORBIDDEN`, the controller's own refusal answered inside a successful response.
+ *
+ * What is read is the error handed in, never its `cause` chain, so a wrapper around a refusal answers false. The library's own case is a refused bootstrap document,
+ * which arrives as an {@link AccessBootstrapError}, so a caller holding one hands that wrapper's `cause` to this rather than the wrapper itself. A failed authentication
+ * is a different fault with a different remedy and answers false...a privilege refusal is the controller having already accepted who is asking.
+ *
+ * Saying this once is what keeps a consumer's reading from drifting from the library's, and it is the one place a further spelling lands if the controller grows
+ * one. The predicate type names the code deliberately rather than answering with the bare class: a type guard narrows the false branch as well, and an
+ * `AccessApiError` carrying any other code answers false, so the bare class there would tell the compiler that such an error cannot exist where it plainly can.
+ * Naming the code keeps the class in the false branch for the caller to read, and hands the true branch the narrowed members it reports the refusal from.
+ *
+ * @param error - The error value to classify. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
+ *
+ * @returns `true` when the failure is a privilege refusal, narrowed to the arm that carries the caller's diagnosis; `false` for anything else.
+ *
+ * @category Utilities
+ */
+export function isPrivilegeRefusal(error: unknown): error is AccessAuthorizationError | (AccessApiError & { readonly code: "CODE_OPERATION_FORBIDDEN" }) {
+
+  return (error instanceof AccessAuthorizationError) || ((error instanceof AccessApiError) && (error.code === "CODE_OPERATION_FORBIDDEN"));
+}
+
+/**
  * Safely resolve an unknown error to a Node `ErrnoException` shape.
  *
- * Two error shapes are recognized:
+ * The following error shapes are recognized:
  *
  * 1. An `Error` whose `cause` chain wraps a Node `ErrnoException`. Undici raises this shape from upstream connection errors (DNS, TCP, TLS), where the surface
  *    error is the generic `TypeError("fetch failed")` and the actual errno data lives one hop down the cause chain.
@@ -455,7 +565,7 @@ export function isExpectedWsDisconnect(error: unknown): boolean {
  * Both shapes are validated to require `code` as a string before returning, guarding against the (rare but legal) case where an Error has a `code` property of a
  * non-string type. A non-string `code` would otherwise satisfy a downstream `code === "ECONNREFUSED"` comparison only by accident of `===` semantics.
  *
- * Anything outside these two shapes (locally thrown TypeErrors with no cause, custom errors without `code`, non-Error throws) returns `undefined`, which a caller
+ * Anything outside these shapes (locally thrown TypeErrors with no cause, custom errors without `code`, non-Error throws) returns `undefined`, which a caller
  * reads as "this error carries no errno to branch on" rather than as a failure to inspect it.
  *
  * @param error - The error value to inspect. Typed `unknown` because catch bindings and event handlers receive untyped values.

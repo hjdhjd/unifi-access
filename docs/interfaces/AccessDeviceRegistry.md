@@ -10,10 +10,9 @@ The projection factory the client composes. It turns identities into live handle
 [AccessDevice](AccessDevice.md), the hub-capable ones as command-bearing [AccessHub](AccessHub.md) handles, and each door-serving port of a multi-port Enterprise Access Hub as a
 handle of its own.
 
-Three views, and which one to reach for follows from what a consumer wants to do. `device` reaches any record, including the ones the other views deliberately
-withhold, and is where configuration reads and writes happen. `hub` reaches the hardware that drives a single door. `accessPoint` reaches one door of a
-multi-port hub - the view that exists because a consumer looking for "the hardware serving this door" would otherwise find nothing at seven of the eight doors an
-eight-port hub drives.
+Which view to reach for follows from what a consumer wants to do. `device` reaches any record, including the ones the other views deliberately withhold, and is
+where configuration reads and writes happen. `hub` reaches the hardware that drives a single door. `accessPoint` reaches one door of a multi-port hub - the view
+that exists because a consumer looking for "the hardware serving this door" would otherwise find nothing at seven of the eight doors an eight-port hub drives.
 
 A building-hosted Enterprise Access Hub is deliberately absent from the hub views. Its record binds a whole hub rather than any one door, so a door command
 issued through it would resolve to an arbitrary one of its ports - the exact confusion the per-port view exists to prevent. It stays fully reachable through

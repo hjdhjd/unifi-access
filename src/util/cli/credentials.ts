@@ -160,9 +160,9 @@ function readVerifyTls(record: Record<string, unknown>, source: string): boolean
 }
 
 /* Compose the library's own identity union from what the file supplies. The rules mirror the union's shape: a credential pair must be complete - a username with no
- * password (or the reverse) describes no way of authenticating, so the missing half is named rather than the pair silently dropped - a token entry that is present
- * must be non-empty, and at least one identity must exist. Composing here, at the loader, is what makes the identity typed end-to-end: three independent optionals
- * could never satisfy the union's `never` members, and the loader is where the file's shape becomes the library's shape.
+ * password (or the reverse) describes no way of authenticating, so the missing half is named rather than the pair silently dropped - a token entry that is present must
+ * be non-empty, and at least one identity must exist. Composing here, at the loader, is what makes the identity typed end-to-end: independent optionals could never
+ * satisfy the union's `never` members, and the loader is where the file's shape becomes the library's shape.
  */
 function composeIdentity(record: Record<string, unknown>, source: string): ConnectIdentity {
 

@@ -2,140 +2,72 @@
  *
  * testing.helpers.ts: Cross-cutting helpers shared across the unit tests in this codebase.
  *
- * These helpers exist as code rather than data because they encapsulate behavior the test runtime needs: a silent logger, log capture, eventual-consistency
- * assertions, deterministic time control, and the walk that flattens a topology document's hardware out of its nesting. They live in src/ so they sit beside the
- * production code they support, and the helpers exclude pattern in
- * tsconfig.build.json and the coverage flags keep them out of the published build and out of the coverage denominators.
+ * These helpers exist as code rather than data because they encapsulate behavior the test runtime needs: a typed rejection assertion, a poll that waits in
+ * macrotask turns rather than in time, the walk that flattens a topology document's hardware out of its nesting, the narrowing of a nullable lookup to the value
+ * it found, a typed subscription to a diagnostics channel, and the errno-shaped error a transport failure arrives as. They live in src/ so they sit beside the
+ * production code they support, and the helpers exclude pattern in tsconfig.build.json and the coverage flags keep them out of the published build and out of
+ * the coverage denominators. Deterministic time control is the shared library's `TestClock` (`homebridge-plugin-utils/testing`).
  *
  * A helper earns its place here when more than one test module needs it. A helper specific to a single source module belongs beside that module as a sibling
  * helpers file instead, and the codebase's fixture convention is verbatim captured literals rather than factories, so no fixture builders live here.
  */
 import type { AccessBootstrapConfig, AccessDeviceConfig } from "./types/index.ts";
-import type { AccessLogging } from "./logging.ts";
-import type { Clock } from "./clock.ts";
+import type { Channel } from "node:diagnostics_channel";
 import assert from "node:assert/strict";
-import { setTimeout as delay } from "node:timers/promises";
-import { mock } from "node:test";
-
-// One captured log call. The full argument list is stored rather than just the message, so a test can assert on the structured context object the production code
-// passed alongside it - the shape the library logs in practice.
-export interface CapturedLogEntry {
-
-  args: unknown[];
-  level: "debug" | "error" | "info" | "warn";
-  message: string;
-}
-
-// A logger that records every call for later assertion, for verifying that production code logs the right message at the right level when a recovery, throttling,
-// or error path fires.
-export interface CapturingLogger extends AccessLogging {
-
-  entries: CapturedLogEntry[];
-  reset(): void;
-}
+import { settle } from "homebridge-plugin-utils/testing";
 
 /**
- * Build a silent logger. Used by tests that exercise code requiring an `AccessLogging` shape where the test does not assert on log output.
+ * Assert that a subject rejects with a particular error class, and run the caller's own field checks against the narrowed error.
  *
- * @returns A logger whose methods are mock functions, so an unexpected call is still inspectable through its call count.
+ * Every suite that asserts a typed rejection writes the same shape: reject, establish the class, then read the fields that make the refusal the right one. Writing
+ * that shape once is what lets a site say only what it is about - the class and the fields - rather than restating the callback protocol `assert.rejects` expects,
+ * and it is what keeps a field assertion free of a cast, because the check receives the error already narrowed to the class.
+ *
+ * @param subject    - The promise, or the function returning one, that must reject.
+ * @param errorClass - The class the rejection has to be an instance of.
+ * @param options    - The field checks and the failure message.
+ * @param options.check   - Runs against the narrowed error, so a field assertion needs no cast of its own.
+ * @param options.message - Reported when the rejection is of the wrong class. Defaults to naming the class expected and what arrived instead.
  */
-export function silentLog(): AccessLogging {
+export async function assertRejectsWith<E extends Error>(subject: Promise<unknown> | (() => Promise<unknown>), errorClass: new (...args: never[]) => E,
+  options: { check?: (error: E) => void; message?: string } = {}): Promise<void> {
 
-  return {
+  await assert.rejects(subject, (error: unknown) => {
 
-    debug: mock.fn(),
-    error: mock.fn(),
-    info: mock.fn(),
-    warn: mock.fn()
-  };
+    assert.ok(error instanceof errorClass, options.message ?? ("expected " + errorClass.name + ", got " + String(error)));
+    options.check?.(error);
+
+    return true;
+  });
 }
 
-/**
- * Build a capturing logger. Each call appends a {@link CapturedLogEntry} to `entries`.
- *
- * @returns A logger plus an `entries` buffer and a `reset()` that clears the buffer between assertions within one test.
- */
-export function capturingLog(): CapturingLogger {
-
-  const entries: CapturedLogEntry[] = [];
-
-  const record = (level: CapturedLogEntry["level"]) => (message: string, ...args: unknown[]): void => {
-
-    entries.push({ args, level, message });
-  };
-
-  return {
-
-    debug: record("debug"),
-    entries,
-    error: record("error"),
-    info: record("info"),
-    reset: (): void => {
-
-      entries.length = 0;
-    },
-    warn: record("warn")
-  };
-}
+// How many macrotask turns a poll may spend before it gives up. It is a count of turns rather than a duration: each turn is one `settle()`, which drains the
+// whole microtask cascade and passes the event loop's poll phase, so a budget spent here costs the predicate's own evaluations and nothing else. Every wait this
+// corpus performs runs over a fake socket, a mock reply, or a store's own wake, and the authoring battery measured a maximum of 6 turns across three ten-run
+// passes, so 100 leaves better than fifteen times the room any site has needed.
+const SETTLE_UNTIL_TURNS = 100;
 
 /**
- * Detect unhandled promise rejections that occur during the wrapped function's lifetime. Attaches an `unhandledRejection` listener, runs the function, yields one
- * scheduler tick so pending microtasks can surface their rejections, then asserts none fired and detaches the listener.
+ * Evaluate a predicate until it holds, crossing one macrotask turn between attempts and failing once the turn budget is spent.
  *
- * Use it to verify that a fire-and-forget promise (a `void this.something()` the production code launches and never awaits) actually settles, rather than only
- * that it ran. A promise nobody awaits is exactly the shape that turns a handled failure into a process-level warning.
+ * The cascade this serves is in-process and short: a fake socket's dispatch, a mock reply, a store's wake. One turn drains the whole microtask chain behind any of
+ * them and a few turns exhaust the longest of them, so the budget is a count of turns rather than a deadline - an exhausted poll has spent predicate evaluations
+ * rather than time, and a run under a loaded CPU waits exactly as many turns as a run on an idle one. Pair it with a `TestClock`'s `advance()` inside the predicate
+ * to drive time-dependent production code forward between attempts. A wait on a real socket is a different problem and not this helper's job...that one reaches
+ * for the shared testing library's real-time `waitUntil`, and no site in this corpus needs one.
  *
- * @param fn - Async function whose promise hygiene is being verified.
+ * @param predicate - Returns a boolean or a promise of one. Evaluated before anything is yielded, then once after each turn the budget allows.
+ * @param options   - The budget and the failure message.
+ * @param options.message - Reported when the budget is spent with the predicate still false. Defaults to naming the budget.
+ * @param options.turns   - How many macrotask turns to spend. Defaults to {@link SETTLE_UNTIL_TURNS}.
  */
-export async function assertNoUnhandledRejections(fn: () => Promise<void>): Promise<void> {
+export async function settleUntil(predicate: () => boolean | Promise<boolean>, options: { message?: string; turns?: number } = {}): Promise<void> {
 
-  const captured: unknown[] = [];
+  const turns = options.turns ?? SETTLE_UNTIL_TURNS;
 
-  const listener = (reason: unknown): void => {
-
-    captured.push(reason);
-  };
-
-  process.on("unhandledRejection", listener);
-
-  try {
-
-    await fn();
-
-    // Yield once so any pending microtasks - await chains scheduled but not yet run - have a chance to surface their rejections before we assert.
-    await delay(0);
-
-    assert.equal(captured.length, 0, "expected no unhandled rejections, captured: " + captured.map((reason) => String(reason)).join(", "));
-  } finally {
-
-    process.off("unhandledRejection", listener);
-  }
-}
-
-/**
- * Poll a predicate until it returns true or a deadline passes, for testing eventually-consistent behavior without real-time delays.
- *
- * Pair it with a {@link FakeClock}'s `advance()` or `tick()` to drive time-dependent production code forward inside the polling loop. The default `intervalMs` of 0
- * yields the event loop without sleeping, so the predicate is re-checked after each microtask drain.
- *
- * @param predicate - Returns a boolean or a promise of one. Called repeatedly until it returns truthy.
- * @param options   - The polling cadence and deadline.
- * @param options.intervalMs - Milliseconds between poll attempts. Defaults to 0.
- * @param options.message    - Message to report if the deadline passes first.
- * @param options.timeoutMs  - Real-time deadline in milliseconds. Defaults to 1000.
- */
-export async function expectAt(predicate: () => boolean | Promise<boolean>,
-  options: { intervalMs?: number; message?: string; timeoutMs?: number } = {}): Promise<void> {
-
-  const intervalMs = options.intervalMs ?? 0;
-  const message = options.message ?? "predicate did not become true within deadline";
-  const timeoutMs = options.timeoutMs ?? 1000;
-  const deadline = Date.now() + timeoutMs;
-
-  // The deadline is real time because the polling loop runs against the real scheduler, independent of any fake clock a test injects into the production code, which
-  // is what lets a mocked-time test still bound its wait. The sequential awaits are the point...the predicate is the gate and the delay is the cadence, so running
-  // them concurrently would defeat the polling semantic.
-  while(Date.now() < deadline) {
+  // The awaits are sequential because that is the poll itself: the predicate is the gate and the turn is the cadence, so evaluating ahead of the yield would answer
+  // before the cascade it is waiting on has run.
+  for(let turn = 0; turn <= turns; turn++) {
 
     // eslint-disable-next-line no-await-in-loop
     if(await predicate()) {
@@ -143,11 +75,17 @@ export async function expectAt(predicate: () => boolean | Promise<boolean>,
       return;
     }
 
+    // The evaluation that follows the last turn has already seen everything the budget can release, so there is nothing left to yield for.
+    if(turn === turns) {
+
+      break;
+    }
+
     // eslint-disable-next-line no-await-in-loop
-    await delay(intervalMs);
+    await settle();
   }
 
-  assert.fail(message);
+  assert.fail(options.message ?? ("the predicate did not hold within " + turns.toString() + " macrotask turns."));
 }
 
 /**
@@ -165,181 +103,59 @@ export function topologyDevices(bootstrap: AccessBootstrapConfig): AccessDeviceC
 }
 
 /**
- * A test-controllable {@link Clock}. It extends the production interface with two knobs. `advance(ms)` is the clock hand: it moves `now()` forward and resolves any
- * `wait` whose deadline it crosses. `tick()` is the interval pulse: it releases exactly one pending `setInterval` iteration, the next one queued.
+ * Assert that a lookup found what it was asked for, and hand the value back narrowed to its present type.
  *
- * The two release mechanisms stay distinct because the production primitives they stand in for differ in kind. A `wait` is a time-based one-shot, faithfully fired
- * by advancing the clock past its deadline, while `setInterval` is a tick-based repeater fired by an explicit pulse independent of exact time. Separating them lets
- * a test express "the wall clock moved forward by N seconds, but the interval has not yet woken up", which is what any staleness threshold evaluated on a loop tick
- * needs in order to be tested at all.
+ * Every suite that reads a handle, a record, or an entry through a lookup that can answer `undefined` writes the same shape: look the value up, then `assert.ok` it
+ * so the compiler narrows every read that follows. Writing that shape once is what lets a failure name what the test expected to find rather than report a bare
+ * falsy value, and it is what types the result without a cast, because the value comes back already narrowed.
+ *
+ * @param value       - What the lookup answered. Anything but `undefined` or `null` passes.
+ * @param description - What the lookup was expected to find, named in the failure message.
+ *
+ * @returns The value itself, narrowed to exclude `undefined` and `null`.
  */
-export interface FakeClock extends Clock {
+export function present<T>(value: T, description: string): NonNullable<T> {
 
-  /**
-   * Advance `now()` by `ms` milliseconds, then resolve every pending `wait` whose deadline the new time has reached, in deadline order. Fires no `setInterval`
-   * iteration...call `tick()` for that.
-   *
-   * @param ms - Milliseconds to add to the current time.
-   */
-  advance(ms: number): void;
+  assert.ok((value !== undefined) && (value !== null), "expected " + description + ", got " + String(value));
 
-  /**
-   * Release exactly one pending `setInterval` iteration, the next one queued rather than every active one. After releasing it, yields once to the event loop so the
-   * consumer's `for await` body runs before the call returns.
-   */
-  tick(): Promise<void>;
+  return value;
 }
 
 /**
- * Build a deterministic test clock. Tests inject this in place of `wallClock` to drive time-dependent code without real waits or module mocking.
+ * The errno-shaped error the platform and undici raise when a connection fails: an `Error` carrying a `code` beside its message.
  *
- * - `now()` returns the accumulated value of the `advance(ms)` calls, starting at 0.
- * - `wait()` resolves once `advance()` moves `now()` to or past the deadline recorded at registration, and rejects with an `AbortError` if the signal aborts first,
- *   matching `setTimeout` from `node:timers/promises`.
- * - `setInterval()` returns an async iterable whose iterations are gated on `tick()`, each `tick()` releasing one waiter across all active intervals. The iterable
- *   terminates with an `AbortError` when the supplied signal aborts, matching `setInterval` from `node:timers/promises`.
+ * Every suite that drives a transport failure needs one of these, and assembling it inline puts the shape - which property carries the code, and that the code
+ * sits on the error itself rather than on a cause - at each site. Building it here is what lets a site say only which failure it means.
  *
- * @returns A {@link FakeClock} wired into the same `Clock` shape production code expects.
+ * @param message - The message the platform would have raised, as in "connect ECONNREFUSED".
+ * @param code    - The errno the failure reports, as in "ECONNREFUSED".
+ *
+ * @returns The error, typed as the platform's own errno exception.
  */
-export function fakeClock(): FakeClock {
+export function errnoError(message: string, code: string): NodeJS.ErrnoException {
 
-  let currentTime = 0;
+  return Object.assign(new Error(message), { code });
+}
 
-  // The pending tick resolvers of the active setInterval consumers. Each entry releases one consumer's await so its next iteration body runs. Entries are pushed on
-  // `next()` and shifted on `tick()`, so the consumer that began waiting first is released first and test ordering stays deterministic.
-  const pendingTicks: (() => void)[] = [];
+/**
+ * Subscribe to a diagnostics channel, receiving each published payload typed by the channel itself.
+ *
+ * The platform types every channel's listener with an `unknown` message whatever the channel's own type parameter says, so a suite subscribing directly writes a
+ * cast at every site...and a cast written per site is a cast that can name the wrong payload. We register a forwarding wrapper rather than the handler itself so
+ * that cast lives in one place, the single unavoidable boundary cast, and everything above it is fully typed: a suite reaching for a member of the published
+ * roster reads the payload's own fields without one. The handle is a `Disposable` so a test binds it with `using` and the release happens at scope exit whichever
+ * way the test leaves.
+ *
+ * @param channel - The roster member to subscribe to.
+ * @param handler - Invoked with each payload published on the channel until the returned handle is disposed.
+ *
+ * @returns A `Disposable` that removes this subscription when disposed.
+ */
+export function subscribeTo<T>(channel: Channel<T>, handler: (message: T) => void): Disposable {
 
-  /* One outstanding wait. The deadline is what `now()` must reach for it to fire, and the detacher keeps a cancelled wait from either firing or leaking its abort
-   * listener.
-   */
-  interface PendingWait {
+  const listener = (message: unknown): void => handler(message as T);
 
-    deadline: number;
-    detach: () => void;
-    resolve: () => void;
-  }
+  channel.subscribe(listener);
 
-  let pendingWaitList: PendingWait[] = [];
-
-  return {
-
-    advance: (ms: number): void => {
-
-      currentTime += ms;
-
-      // Fire every wait the new time has reached, in deadline order, so a test that advances past several deadlines at once sees them resolve in schedule order.
-      // Partitioning rather than mutating while iterating keeps the survivors intact and detaches each due entry from its abort listener before resolving it.
-      const due = pendingWaitList.filter((entry) => entry.deadline <= currentTime).sort((a, b) => a.deadline - b.deadline);
-
-      pendingWaitList = pendingWaitList.filter((entry) => entry.deadline > currentTime);
-
-      for(const entry of due) {
-
-        entry.detach();
-        entry.resolve();
-      }
-    },
-
-    now: (): number => currentTime,
-
-    setInterval: (_delayMs: number, options: { signal: AbortSignal }): AsyncIterable<void> => {
-
-      const iterator: AsyncIterableIterator<void> = {
-
-        [Symbol.asyncIterator](): AsyncIterableIterator<void> {
-
-          return this;
-        },
-
-        next: async (): Promise<IteratorResult<void>> => {
-
-          if(options.signal.aborted) {
-
-            return Promise.resolve({ done: true, value: undefined });
-          }
-
-          // Wait for either a tick or an abort, whichever comes first, detaching the other once one fires so the same resolver cannot fire twice.
-          return new Promise<IteratorResult<void>>((resolve, reject) => {
-
-            const onAbort = (): void => {
-
-              const index = pendingTicks.indexOf(resolveOnTick);
-
-              if(index >= 0) {
-
-                pendingTicks.splice(index, 1);
-              }
-
-              const error = new Error("The operation was aborted.");
-
-              error.name = "AbortError";
-
-              reject(error);
-            };
-
-            const resolveOnTick = (): void => {
-
-              options.signal.removeEventListener("abort", onAbort);
-              resolve({ done: false, value: undefined });
-            };
-
-            options.signal.addEventListener("abort", onAbort, { once: true });
-            pendingTicks.push(resolveOnTick);
-          });
-        }
-      };
-
-      return { [Symbol.asyncIterator]: () => iterator };
-    },
-
-    tick: async (): Promise<void> => {
-
-      // Release one pending tick, taking the queue's head rather than draining it, so repeated calls advance one iteration at a time.
-      const next = pendingTicks.shift();
-
-      next?.();
-
-      // Yield once so the consumer's `for await` body runs before this returns. Without the yield, a caller expecting the side effects to be visible immediately
-      // after `await tick()` would read stale state.
-      await delay(0);
-    },
-
-    wait: (delayMs: number, options: { signal: AbortSignal }): Promise<void> => {
-
-      // An already-aborted signal rejects immediately and registers no deadline, matching `setTimeout` from `node:timers/promises`.
-      if(options.signal.aborted) {
-
-        const error = new Error("The operation was aborted.");
-
-        error.name = "AbortError";
-
-        return Promise.reject(error);
-      }
-
-      return new Promise<void>((resolve, reject) => {
-
-        const entry: PendingWait = {
-
-          deadline: currentTime + delayMs,
-          detach: (): void => options.signal.removeEventListener("abort", onAbort),
-          resolve
-        };
-
-        // An abort before the deadline drops the entry so a later `advance()` cannot fire it, then rejects like a real timer would.
-        const onAbort = (): void => {
-
-          pendingWaitList = pendingWaitList.filter((pending) => pending !== entry);
-
-          const error = new Error("The operation was aborted.");
-
-          error.name = "AbortError";
-
-          reject(error);
-        };
-
-        options.signal.addEventListener("abort", onAbort, { once: true });
-        pendingWaitList.push(entry);
-      });
-    }
-  };
+  return { [Symbol.dispose]: (): void => channel.unsubscribe(listener) };
 }

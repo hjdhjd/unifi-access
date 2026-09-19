@@ -69,6 +69,7 @@ async function categoryRecords(client: AccessClient, category: (typeof CATEGORIE
 
     default: {
 
+      // Hubs carries no case of its own; it is the deliberate fallback for the one category CATEGORIES names that this switch does not spell out explicitly.
       return client.hubs.map((device) => device.config);
     }
   }
@@ -76,7 +77,8 @@ async function categoryRecords(client: AccessClient, category: (typeof CATEGORIE
 
 /**
  * `ufa info`. A bare invocation prints the controller's information document, which connect fetched and every refresh advances; a category prints that inventory.
- * Credential surface throughout: the document and the topology it derives from are served by the Access application's own endpoints alone.
+ * The bare document and the doors, floors, and access-points categories need the credential surface, since they read the topology that only credentials
+ * populate; the devices and hubs categories are gated the same way for uniformity, even though the official census alone would answer them without it.
  *
  * @category CLI
  */

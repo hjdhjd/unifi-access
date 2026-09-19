@@ -5,19 +5,25 @@
  * view does not depend on, fresh across one it does.
  */
 import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload } from "../types/index.ts";
+import type { AccessState, AccessStateDevice } from "../protocol/reducer.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { applyBootstrap, createInitialState, reduce } from "../protocol/reducer.ts";
-import { isTamperCapable as barrelIsTamperCapable, tamperState as barrelTamperState } from "../index.ts";
+import { deviceDisplayName as barrelDeviceDisplayName, isEnterpriseHubRecord as barrelIsEnterpriseHubRecord, isHub as barrelIsHub, isReader as barrelIsReader,
+  isTamperCapable as barrelIsTamperCapable, portBindings as barrelPortBindings, selectAccessPoints as barrelSelectAccessPoints,
+  selectController as barrelSelectController, selectControllerName as barrelSelectControllerName, selectControllerUptime as barrelSelectControllerUptime,
+  selectDevicesByType as barrelSelectDevicesByType, selectDoorDevices as barrelSelectDoorDevices, selectDoorStates as barrelSelectDoorStates,
+  selectHubs as barrelSelectHubs, tamperState as barrelTamperState, terminalInput as barrelTerminalInput,
+  ACCESS_TERMINAL_INPUTS as barrelTerminalInputs } from "../index.ts";
 import { describe, test } from "node:test";
-import { isEnterpriseHubRecord, isHub, isReader, isTamperCapable, selectAccessPoints, selectController, selectControllerName, selectControllerUptime,
-  selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState } from "./selectors.ts";
-import type { AccessState } from "../protocol/reducer.ts";
-import type { AccessStateDevice } from "../protocol/reducer.ts";
+import { deviceDisplayName, isEnterpriseHubRecord, isHub, isReader, isTamperCapable, portBindings, selectAccessPoints, selectController, selectControllerName,
+  selectControllerUptime, selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState, terminalInput } from "./selectors.ts";
+import { present, topologyDevices } from "../testing.helpers.ts";
+import { ACCESS_TERMINAL_INPUTS } from "../protocol/terminal-inputs.ts";
+import type { AccessPortBinding } from "../protocol/port-bindings.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
-import { topologyDevices } from "../testing.helpers.ts";
 
-// Named entries from the 2026 document: three doors, five devices, all of them door-attached.
+// Named entries from the 2026 document: the doors and devices named below, all of them door-attached.
 const DOOR_ULTRA = "00000000-0000-0000-0000-000000000002";
 const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
 const DOOR_HUB_MINI = "00000000-0000-0000-0000-00000000000e";
@@ -28,7 +34,7 @@ const READER_PRO = "aabbcc000002";
 const READER_MINI = "aabbcc000003";
 const HUB_DOOR_MINI = "aabbcc000004";
 
-// Named entries from the EAH document: nine doors on one floor, with an Enterprise Access Hub the building hosts directly and one door served by its own hub.
+// Named entries from the EAH document: the doors named below, on one floor, with an Enterprise Access Hub the building hosts directly and one door served by its own hub.
 const EAH_ROOT = "00000000-0000-0000-0000-000000000011";
 const EAH_HUB = "aabbcc000005";
 const EAH_DOOR_2 = "00000000-0000-0000-0000-000000000013";
@@ -55,14 +61,24 @@ const EAH_EXTENSIONS = [ "00000000-0000-0000-0000-00000000002a", "00000000-0000-
   "00000000-0000-0000-0000-00000000002d", "00000000-0000-0000-0000-00000000002e", "00000000-0000-0000-0000-00000000002f",
   "00000000-0000-0000-0000-000000000030", "00000000-0000-0000-0000-000000000031" ];
 
+// The door each of those ports is bound to, with the port it belongs to and the name the controller wrote beside it, in that same delivered order.
+const EAH_BINDINGS: readonly AccessPortBinding[] = [
+
+  { doorId: EAH_DOOR_2, name: "Test Name 29", port: "port2" },
+  { doorId: EAH_DOOR_NORTHWEST, name: "Test Name 54", port: "port6" },
+  { doorId: "00000000-0000-0000-0000-000000000014", name: "Test Name 31", port: "port3" },
+  { doorId: "00000000-0000-0000-0000-000000000016", name: "Test Name 35", port: "port8" },
+  { doorId: "00000000-0000-0000-0000-000000000028", name: "Test Name 58", port: "port1" },
+  { doorId: "00000000-0000-0000-0000-000000000015", name: "Test Name 33", port: "port4" },
+  { doorId: EAH_DOOR_NORTHEAST, name: "Test Name 50", port: "port7" },
+  { doorId: EAH_DOOR_FRONT, name: "Test Name 37", port: "port5" }
+];
+
 // The identity carried by the record that arrives without a capabilities array. No captured document holds a record in that shape, so it is synthesized below under
 // an identity of its own, where it can never be confused with a device a fixture supplied.
 const CAPABILITY_LESS_ID = "02ffee00b001";
 
-// A fresh structural copy, so a test that mutates or re-applies a document can never pass by sharing the fixture's own object identity.
-const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-
-const stateFrom = (bootstrap: AccessBootstrapConfig): AccessState => applyBootstrap(createInitialState(), clone(bootstrap));
+const stateFrom = (bootstrap: AccessBootstrapConfig): AccessState => applyBootstrap(createInitialState(), structuredClone(bootstrap));
 
 /* The 2026 document with one record more: a clone of its UA Ultra under an identity of its own, arriving without the capabilities array at all - a shape the
  * field has produced. The member is excluded by naming it in the rest destructure, so the binding exists to be discarded rather than read and the underscore prefix
@@ -71,8 +87,8 @@ const stateFrom = (bootstrap: AccessBootstrapConfig): AccessState => applyBootst
  */
 const capabilityLessBootstrap = (): AccessBootstrapConfig => {
 
-  const bootstrap = clone(accessBootstrap2026Fixture);
-  const template = clone(bootstrap.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0]);
+  const bootstrap = structuredClone(accessBootstrap2026Fixture);
+  const template = structuredClone(bootstrap.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0]);
 
   assert.ok(template, "the 2026 document should carry a device record to clone");
 
@@ -213,6 +229,22 @@ describe("isReader", () => {
   });
 });
 
+describe("deviceDisplayName", () => {
+
+  test("the alias wins where one is set, and the hardware name answers where it is empty", () => {
+
+    const hub = deviceRecord(stateFrom(accessBootstrap2026Fixture), HUB);
+
+    assert.equal(hub.alias, "Test alias 13", "the document's hub is the record that carries both an alias and a hardware name");
+    assert.equal(hub.name, "Test Name 12");
+    assert.equal(deviceDisplayName(hub), "Test alias 13");
+
+    // Clearing an alias in the controller's interface reads on the wire as the empty string rather than as an absent member, so the fall-through has to treat it
+    // as unset.
+    assert.equal(deviceDisplayName({ ...hub, alias: "" }), "Test Name 12");
+  });
+});
+
 describe("isTamperCapable", () => {
 
   test("reads the controller's own tamper capability rather than any other one the record carries", () => {
@@ -224,7 +256,7 @@ describe("isTamperCapable", () => {
 
     assert.ok(ultra && hub && reader, "the document should carry all three devices");
 
-    /* The UAH is what tells this predicate from its neighbours: it carries the hub capability and not the tamper one, so a check that had reached for the wrong
+    /* The UAH is what tells this predicate from its neighbors: it carries the hub capability and not the tamper one, so a check that had reached for the wrong
      * capability string answers true here and fails.
      */
     assert.ok(hub.capabilities.includes("is_hub"), "the UAH is a hub");
@@ -257,9 +289,8 @@ describe("tamperState", () => {
   test("reads the captured document's device as unestablished, because its tampering alert is switched off", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const ultra = state.devices.get(ULTRA);
+    const ultra = present(state.devices.get(ULTRA), "the Ultra");
 
-    assert.ok(ultra);
     assert.equal(rowValue(ultra, "tampering"), "false", "the captured document has this device's tampering alert switched off");
     assert.equal(tamperState(ultra), undefined);
   });
@@ -286,7 +317,7 @@ describe("tamperState", () => {
     /* The same document with the UA Ultra's setting row taken out of it before it is applied, which is the record a controller that keeps no such row delivers.
      * The clone is walked with the document's own helper rather than indexed, so the removal follows the structure the document actually has.
      */
-    const bare = clone(accessBootstrap2026Fixture);
+    const bare = structuredClone(accessBootstrap2026Fixture);
     const record = topologyDevices(bare).find((device) => device.unique_id === ULTRA);
 
     assert.ok(record, "the document should carry the UA Ultra");
@@ -343,15 +374,78 @@ describe("tamperState", () => {
   });
 });
 
-describe("the barrel's tamper exports", () => {
+describe("terminalInput", () => {
+
+  test("reads what each captured hub reports about the terminals on its back", () => {
+
+    const state = stateFrom(accessBootstrap2026Fixture);
+
+    // The UA Hub reports all four of its terminals with their wiring pairs dark, which is a hub whose screw terminals have nothing attached to them.
+    assert.deepEqual(terminalInput(deviceRecord(state, HUB), "rex"), { "wired": false });
+    assert.deepEqual(terminalInput(deviceRecord(state, HUB), "rel"), { "wired": false });
+
+    /* The UA Ultra is what tells the input argument's threading apart from a constant answer: it detects no wiring at all, and its port setting assigns its one
+     * terminal to door-position duty, so its two terminals answer differently on the very same record where the UA Hub answers every one of them alike.
+     */
+    assert.deepEqual(terminalInput(deviceRecord(state, ULTRA), "dps"), { "state": false, "wired": true });
+    assert.deepEqual(terminalInput(deviceRecord(state, ULTRA), "rex"), { "wired": false });
+  });
+
+  test("answers over a record a census with no configuration rows produced", () => {
+
+    // A token-only client holds records carrying no rows at all, so nothing establishes either verdict for any terminal. That is a different answer from a hub
+    // reporting that nothing is wired to one, and the union is what keeps them apart.
+    for(const input of ACCESS_TERMINAL_INPUTS) {
+
+      assert.deepEqual(terminalInput(TOKEN_CENSUS_RECORD, input), {}, input + " should establish nothing on a token-only record");
+    }
+  });
+});
+
+describe("portBindings", () => {
+
+  test("reads which door each of an Enterprise hub's ports is bound to, in the order the controller delivered them", () => {
+
+    // The ports arrive out of numeric order in the capture, and that is the order this answers in: the delivery order is the controller's own and the read
+    // states it rather than tidying it.
+    const state = stateFrom(accessBootstrapEahFixture);
+
+    assert.deepEqual(portBindings(deviceRecord(state, EAH_HUB)), EAH_BINDINGS);
+  });
+
+  test("answers nothing for a record whose census carried no extensions", () => {
+
+    // A token-only client holds records with no extensions at all, so nothing binds a port there, exactly as nothing establishes a terminal reading. The
+    // single-door hub of the topology document answers the same way for a different reason: its census did carry extensions and it has none.
+    assert.deepEqual(portBindings(TOKEN_CENSUS_RECORD), []);
+    assert.deepEqual(portBindings(deviceRecord(stateFrom(accessBootstrap2026Fixture), HUB)), [], "and a captured hub that binds its door through no extension");
+  });
+});
+
+describe("the barrel's per-record reads", () => {
 
   test("publishes the very functions this module defines", () => {
 
     /* Nothing else in the suite establishes that a selector reached the public surface, and typedoc reads the barrel alone - a symbol missing from it has no
-     * page and no consumer. Identity rather than behaviour is the assertion, because a re-export that resolved to something else would still answer correctly.
+     * page and no consumer. Identity rather than behavior is the assertion, because a re-export that resolved to something else would still answer correctly.
      */
+    assert.equal(Object.is(barrelDeviceDisplayName, deviceDisplayName), true);
+    assert.equal(Object.is(barrelIsEnterpriseHubRecord, isEnterpriseHubRecord), true);
+    assert.equal(Object.is(barrelIsHub, isHub), true);
+    assert.equal(Object.is(barrelIsReader, isReader), true);
     assert.equal(Object.is(barrelIsTamperCapable, isTamperCapable), true);
+    assert.equal(Object.is(barrelPortBindings, portBindings), true);
+    assert.equal(Object.is(barrelSelectAccessPoints, selectAccessPoints), true);
+    assert.equal(Object.is(barrelSelectController, selectController), true);
+    assert.equal(Object.is(barrelSelectControllerName, selectControllerName), true);
+    assert.equal(Object.is(barrelSelectControllerUptime, selectControllerUptime), true);
+    assert.equal(Object.is(barrelSelectDevicesByType, selectDevicesByType), true);
+    assert.equal(Object.is(barrelSelectDoorDevices, selectDoorDevices), true);
+    assert.equal(Object.is(barrelSelectDoorStates, selectDoorStates), true);
+    assert.equal(Object.is(barrelSelectHubs, selectHubs), true);
     assert.equal(Object.is(barrelTamperState, tamperState), true);
+    assert.equal(Object.is(barrelTerminalInput, terminalInput), true);
+    assert.equal(Object.is(barrelTerminalInputs, ACCESS_TERMINAL_INPUTS), true, "and the vocabulary a consumer iterates is the catalog's own list");
   });
 });
 
@@ -399,7 +493,7 @@ describe("selectDevicesByType", () => {
     const before = selectDevicesByType(state);
     const relabeled = reduce(state, deviceChange(READER_PRO, { "device_type": "UA-G2-PRO-2" }));
 
-    assert.ok(!Object.is(before, selectDevicesByType(relabeled)));
+    assert.ok(!Object.is(before, selectDevicesByType(relabeled)), "a changed devices map recomputes the view");
     assert.deepEqual(idsOf(selectDevicesByType(relabeled).get("UA-G2-PRO-2")), [READER_PRO]);
     assert.equal(selectDevicesByType(relabeled).has("UA-G2-PRO"), false, "the emptied bucket is gone rather than left behind");
   });
@@ -422,10 +516,10 @@ describe("selectHubs", () => {
     const state = stateFrom(accessBootstrap2026Fixture);
     const first = selectHubs(state);
 
-    assert.ok(Object.is(first, selectHubs(state)));
+    assert.ok(Object.is(first, selectHubs(state)), "the same devices map answers the same array");
 
     // A drift-free re-bootstrap reconciles to the same devices map, so the derived array survives it.
-    const rebootstrapped = applyBootstrap(state, clone(accessBootstrap2026Fixture));
+    const rebootstrapped = applyBootstrap(state, structuredClone(accessBootstrap2026Fixture));
 
     assert.ok(Object.is(first, selectHubs(rebootstrapped)), "a re-bootstrap that found no drift preserves the derived reference");
   });
@@ -533,10 +627,9 @@ describe("isEnterpriseHubRecord", () => {
   test("qualifies the hub the building hosts and no other record in a rooted state", () => {
 
     const state = stateFrom(accessBootstrapEahFixture);
-    const hub = state.devices.get(EAH_HUB);
-    const reader = state.devices.get(EAH_FRONT_READER);
+    const hub = present(state.devices.get(EAH_HUB), "the Enterprise hub");
+    const reader = present(state.devices.get(EAH_FRONT_READER), "the front reader");
 
-    assert.ok(hub && reader);
     assert.equal(isEnterpriseHubRecord(hub, state), true, "the building-hosted Enterprise hub is what the hub views withhold");
     assert.equal(isEnterpriseHubRecord(reader, state), false, "a reader is neither the type nor the placement");
   });
@@ -547,9 +640,8 @@ describe("isEnterpriseHubRecord", () => {
      * nothing to add and the whole-hub handle resolves correctly.
      */
     const state = stateFrom(accessBootstrapEahFixture);
-    const hub = state.devices.get(EAH_HUB);
+    const hub = present(state.devices.get(EAH_HUB), "the Enterprise hub");
 
-    assert.ok(hub);
     assert.equal(isEnterpriseHubRecord({ ...hub, "location_id": EAH_DOOR_2 }, state), false);
   });
 
@@ -559,9 +651,8 @@ describe("isEnterpriseHubRecord", () => {
      * would resolve its door to the hub's own location and command the wrong resource. Withholding it is the honest answer until a topology places it.
      */
     const unrooted = createInitialState();
-    const hub = stateFrom(accessBootstrapEahFixture).devices.get(EAH_HUB);
+    const hub = present(stateFrom(accessBootstrapEahFixture).devices.get(EAH_HUB), "the Enterprise hub");
 
-    assert.ok(hub);
     assert.equal(unrooted.root, null);
     assert.equal(isEnterpriseHubRecord(hub, unrooted), true, "an unplaced Enterprise hub is withheld from the hub views");
     assert.deepEqual(selectAccessPoints(unrooted), [], "and the per-port view answers empty there for the same reason");
@@ -625,12 +716,12 @@ describe("selectAccessPoints", () => {
     assert.ok(Object.is(first, selectAccessPoints(createInitialState())), "the pre-bootstrap answer is one shared reference, so nobody is woken by it");
   });
 
-  test("expands an extension of any kind, because the device type is what scopes the expansion", () => {
+  test("expands only port extensions, because which extensions are port bindings is stated once", () => {
 
     /* A synthetic extension, marked as such: no Enterprise Access Hub in any capture carries anything but port extensions, so this case is constructed rather than
-     * captured. It also exercises every fallback at once, carrying none of the port fields the mapping reads.
+     * captured. An intercom pairing is not a port, so the expansion passes it over rather than synthesizing an access point that stands for nothing.
      */
-    const bootstrap = clone(accessBootstrapEahFixture);
+    const bootstrap = structuredClone(accessBootstrapEahFixture);
     const hub = bootstrap.device_groups?.[0]?.[0];
 
     assert.ok(hub?.extensions, "the EAH document should host its hub at the building level");
@@ -640,9 +731,30 @@ describe("selectAccessPoints", () => {
       "unique_id": "00000000-0000-4000-8000-000000000001" });
 
     const points = selectAccessPoints(applyBootstrap(createInitialState(), bootstrap));
+
+    assert.equal(points.length, 8, "the eight ports expand and the pairing does not");
+    assert.ok(points.every((point) => point.unique_id !== "00000000-0000-4000-8000-000000000001"), "no access point carries the pairing's identity");
+    assert.deepEqual(points.map((point) => point.unique_id), EAH_EXTENSIONS, "and the eight that do expand are the ports, in delivered order");
+  });
+
+  test("expands a port extension carrying no targets with the fallbacks, because the port is there whether or not a door is bound to it", () => {
+
+    /* A port the controller names without naming a door for it, which no capture holds and which the expansion still has to answer for. It exercises every
+     * fallback at once, carrying none of the port fields the mapping reads, so the synthesized point falls back on the hub for all three of them.
+     */
+    const bootstrap = structuredClone(accessBootstrapEahFixture);
+    const hub = bootstrap.device_groups?.[0]?.[0];
+
+    assert.ok(hub?.extensions?.[0], "the EAH document should host its hub at the building level");
+
+    const { source_id: _sourceId, target_name: _targetName, target_value: _targetValue, ...bare } = hub.extensions[0];
+
+    hub.extensions.push({ ...bare, "unique_id": "00000000-0000-4000-8000-000000000001" });
+
+    const points = selectAccessPoints(applyBootstrap(createInitialState(), bootstrap));
     const synthetic = points.at(-1);
 
-    assert.equal(points.length, 9, "an extension the mapping has no port fields for is still expanded");
+    assert.equal(points.length, 9, "a port extension the mapping has no port fields for is still expanded");
     assert.equal(synthetic?.unique_id, "00000000-0000-4000-8000-000000000001");
     assert.equal(synthetic?.alias, "Unknown", "with no target name, the alias falls back");
     assert.equal(synthetic?.location_id, EAH_ROOT, "with no target value, the location stays the hub's own");
@@ -654,7 +766,7 @@ describe("selectAccessPoints", () => {
     /* The census-width consequence, at the one place the expansion composes a string from a member. The official inventory carries no model at all, so a port of a
      * hub seeded that way must carry no label rather than one reading "undefined Port2".
      */
-    const bootstrap = clone(accessBootstrapEahFixture);
+    const bootstrap = structuredClone(accessBootstrapEahFixture);
     const hub = bootstrap.device_groups?.[0]?.[0];
 
     assert.ok(hub, "the EAH document should host its hub at the building level");
@@ -732,17 +844,17 @@ describe("selectAccessPoints", () => {
   test("one hub's change refreshes its own ports and leaves a sibling hub's untouched", () => {
 
     // Two Enterprise Access Hubs on one building, so the isolation between their cached expansions is a real question rather than a vacuous one.
-    const bootstrap = clone(accessBootstrapEahFixture);
+    const bootstrap = structuredClone(accessBootstrapEahFixture);
     const hub = bootstrap.device_groups?.[0]?.[0];
 
-    assert.ok(hub?.extensions);
+    assert.ok(hub?.extensions, "the first Enterprise hub carries its port extensions");
 
     const template = hub.extensions[0];
 
     assert.ok(template, "the hub carries a port extension to clone");
 
-    const siblingPort = { ...clone(template), "unique_id": SECOND_EAH_PORT };
-    const sibling = { ...clone(hub), "alias": "Sibling Access Hub", "extensions": [siblingPort], "unique_id": SECOND_EAH_HUB };
+    const siblingPort = { ...structuredClone(template), "unique_id": SECOND_EAH_PORT };
+    const sibling = { ...structuredClone(hub), "alias": "Sibling Access Hub", "extensions": [siblingPort], "unique_id": SECOND_EAH_HUB };
 
     bootstrap.device_groups?.[0]?.push(sibling);
 
@@ -808,7 +920,7 @@ describe("the controller selectors", () => {
 
   test("read the document, its display name, and its uptime once one has been fetched", () => {
 
-    const state = reduce(stateFrom(accessBootstrap2026Fixture), controllerEvent(clone(accessControllerInfoFixture)));
+    const state = reduce(stateFrom(accessBootstrap2026Fixture), controllerEvent(structuredClone(accessControllerInfoFixture)));
 
     assert.ok(Object.is(selectController(state), state.controller), "the document selector is the direct read");
 
@@ -820,7 +932,7 @@ describe("the controller selectors", () => {
 
   test("hold their values across a dispatch that did not touch the controller", () => {
 
-    const state = reduce(stateFrom(accessBootstrap2026Fixture), controllerEvent(clone(accessControllerInfoFixture)));
+    const state = reduce(stateFrom(accessBootstrap2026Fixture), controllerEvent(structuredClone(accessControllerInfoFixture)));
     const document = selectController(state);
     const renamed = reduce(state, locationChange(DOOR_HUB, "Renamed"));
 

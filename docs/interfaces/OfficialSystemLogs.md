@@ -117,3 +117,31 @@ Documentation-derived.
 `Promise`\<`Buffer`\<`ArrayBufferLike`\>\>
 
 The resource bytes.
+
+***
+
+### iterate()
+
+```ts
+iterate(opts, call?): AsyncGenerator<AccessOfficialSystemLogHit>;
+```
+
+Iterate every log entry the query matches, walking the pages to their end. `POST /system/logs`, permission `view:system_log`.
+
+A log is unbounded in a way a listing is not, so a caller bounds the walk with `since` and `until`, or stops iterating early - returning from a `for await`
+ends the walk at the page it is on.
+
+Composed over [OfficialSystemLogs.fetch](#fetch); the endpoint is live-verified.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `opts` | [`AccessOfficialSystemLogFetchOptions`](AccessOfficialSystemLogFetchOptions.md) | The topic to query, the window to query it over, and the page size to walk it in. |
+| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+
+#### Returns
+
+`AsyncGenerator`\<[`AccessOfficialSystemLogHit`](AccessOfficialSystemLogHit.md)\>
+
+Every entry the query matches, in the order its pages carry them.

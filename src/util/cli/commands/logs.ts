@@ -2,10 +2,11 @@
  *
  * logs.ts: `ufa logs <search|export>` - the system activity log: the searchable record and its CSV export, over the official API's log domain.
  */
-import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand, isMember, writeByteSink } from "../shared.ts";
+import type { AccessOfficialSystemLogHit, AccessOfficialSystemLogTopic } from "../../../index.ts";
+import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand, isMember, parseNonNegativeInt, take,
+  writeByteSink } from "../shared.ts";
 import type { CommandContext, CommandSpec } from "../shared.ts";
 import { openOfficialClient, requireOfficial } from "../client.ts";
-import type { AccessOfficialSystemLogTopic } from "../../../index.ts";
 import { parseArgs } from "node:util";
 import { renderDocument } from "../output/format.ts";
 
@@ -27,7 +28,8 @@ function parseTopic(value: string): AccessOfficialSystemLogTopic {
 }
 
 // Convert a --since/--until value to the unix epoch seconds the wire speaks. The operator writes either an ISO 8601 date-time or bare epoch seconds; the conversion
-// happens here, at the CLI's own boundary, so the library types stay the wire's truth.
+// happens here, at the CLI's own boundary, so the library types stay the wire's truth. A digits-only value always reads as epoch seconds, so a bare year (or any
+// other digits-only token) needs a month, day, or T component to be read as an ISO date-time instead.
 function parseWhen(value: string, flag: string): number {
 
   if(/^\d+$/.test(value)) {
@@ -48,7 +50,7 @@ function parseWhen(value: string, flag: string): number {
 
 const SEARCH_USAGE = [
 
-  "Usage: ufa logs search --topic TOPIC [--since WHEN] [--until WHEN] [--actor ID] [--json] [--scrub] [--debug]",
+  "Usage: ufa logs search --topic TOPIC [--since WHEN] [--until WHEN] [--actor ID] [--limit N] [--json] [--scrub] [--debug]",
   "",
   "Search the system activity log. Each hit prints as one line - timestamp, actor, and event - or verbatim with --json.",
   "",
@@ -57,6 +59,7 @@ const SEARCH_USAGE = [
   "  --since WHEN   Only entries at or after this time: an ISO 8601 date-time, or unix epoch seconds.",
   "  --until WHEN   Only entries at or before this time, in the same forms.",
   "  --actor ID     Only entries attributed to this actor id.",
+  "  --limit N      Walk the log page by page and stop after N entries; 0 means every entry. Omitted, the controller's first page alone.",
   "  --json         Emit the hits as a single line of JSON, field order preserved.",
   "  --scrub        Pseudonymize identifying values so the hits can be shared - one value reads as one stand-in throughout a run.",
   "  --debug        Emit the library's debug logging to stderr.",
@@ -64,15 +67,16 @@ const SEARCH_USAGE = [
   "",
   "Examples:",
   "  ufa logs search --topic door_openings                          # recent door activity",
-  "  ufa logs search --topic critical --since 2026-08-01T00:00:00Z  # critical entries since August"
+  "  ufa logs search --topic critical --since 2026-08-01T00:00:00Z  # critical entries since August",
+  "  ufa logs search --topic door_openings --limit 100              # walk the log for a hundred door events"
 ].join("\n");
 
 /** `ufa logs search`. Queries the log with the wire's own required topic and optional window, and prints each hit. */
 const searchHandler = async (ctx: CommandContext): Promise<void> => {
 
   const { values } = parseArgs({ allowPositionals: true, args: ctx.args,
-    options: { ...COMMON_OPTIONS, ...SCRUB_OPTION, actor: { type: "string" }, json: { type: "boolean" }, since: { type: "string" }, topic: { type: "string" },
-      until: { type: "string" } }, strict: true });
+    options: { ...COMMON_OPTIONS, ...SCRUB_OPTION, actor: { type: "string" }, json: { type: "boolean" }, limit: { type: "string" }, since: { type: "string" },
+      topic: { type: "string" }, until: { type: "string" } }, strict: true });
 
   if(values.help === true) {
 
@@ -89,14 +93,31 @@ const searchHandler = async (ctx: CommandContext): Promise<void> => {
   const topic = parseTopic(values.topic);
   const since = (values.since !== undefined) ? parseWhen(values.since, "--since") : undefined;
   const until = (values.until !== undefined) ? parseWhen(values.until, "--until") : undefined;
+  const limit = (values.limit !== undefined) ? parseNonNegativeInt(values.limit, "--limit") : undefined;
+
+  const query = { ...((values.actor !== undefined) && { "actor_id": values.actor }), ...((since !== undefined) && { since }), topic,
+    ...((until !== undefined) && { until }) };
 
   await using client = await openOfficialClient(ctx, OPERATION, { debug: values.debug === true });
 
-  const result = await requireOfficial(client, OPERATION).logs.fetch({ ...((values.actor !== undefined) && { "actor_id": values.actor }),
-    ...((since !== undefined) && { since }), topic, ...((until !== undefined) && { until }) }, { signal: ctx.signal });
+  const logDomain = requireOfficial(client, OPERATION).logs;
+
+  /* A search that names no bound reads the controller's first page, the one-request default, because a log is unbounded in a way a user listing is not and an
+   * operator should ask for the walk rather than fall into it. A search that names --limit walks the log through the iterating read instead and stops after the
+   * count, or at the end of the log if that comes first - and a zero asks for every entry, the same reading the watch leaves give --count.
+   */
+  const readHits = async (): Promise<readonly AccessOfficialSystemLogHit[]> => {
+
+    if(limit === undefined) {
+
+      return (await logDomain.fetch(query, { signal: ctx.signal })).data.hits;
+    }
+
+    return Array.fromAsync((limit >= 1) ? take(logDomain.iterate(query, { signal: ctx.signal }), limit) : logDomain.iterate(query, { signal: ctx.signal }));
+  };
 
   // The hits are scrubbed where they arrive rather than where they render, so the per-hit lines below and the JSON view carry exactly the same stand-ins.
-  const hits = createDocumentScrubber(values.scrub === true)(result.data.hits);
+  const hits = createDocumentScrubber(values.scrub === true)(await readHits());
 
   if(values.json === true) {
 

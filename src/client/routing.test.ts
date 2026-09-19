@@ -4,16 +4,17 @@
  * matters here is WHICH path each command takes and what the two runtime capability verdicts do to that choice over a client's life - questions that are about the
  * decision rather than about anything on the wire.
  */
-import { AccessAbortedError, AccessCapabilityError, AccessOfficialApiError } from "../errors.ts";
+import { AccessAbortedError, AccessApiError, AccessCapabilityError } from "../errors.ts";
 import type { AccessCapabilities, AccessOfficialDoorSurface } from "./routing.ts";
+import { TestClock, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
-import { fakeClock, silentLog } from "../testing.helpers.ts";
 import type { AccessOfficialCallOptions } from "../official/dispatch.ts";
 import type { AccessOfficialDoorUnlockOptions } from "../official/spaces.ts";
 import { AccessRoutingService } from "./routing.ts";
 import { StateStore } from "../state/store.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
+import { assertRejectsWith } from "../testing.helpers.ts";
 
 const HUB = "aabbcc000001";
 const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
@@ -68,7 +69,7 @@ function officialSurface(calls: RecordedCalls, refuse?: (attempt: OfficialAttemp
 // A store holding the real 2026 topology, which is what the firmware memo reads its keys from.
 function storeWith(bootstrap = accessBootstrap2026Fixture): StateStore {
 
-  const store = new StateStore({ clock: fakeClock(), log: silentLog(),
+  const store = new StateStore({ clock: new TestClock(), log: silentLog(),
     refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
 
   store.dispatch({ data: JSON.parse(JSON.stringify(bootstrap)) as typeof bootstrap, kind: "bootstrapLoaded" });
@@ -148,14 +149,11 @@ describe("the routing decision", () => {
     const credentialCalls = newCalls();
     const credential = makeService({ calls: credentialCalls, capabilities: { mode: "credential", official: false }, official: false });
 
-    await assert.rejects(async () => credential.service.routedUnlock({ deviceId: HUB, direct: direct(credentialCalls, "unlock"), doorId: DOOR_HUB,
-      entryMethod: "out" }), (error: unknown) => {
+    await assertRejectsWith(async () => credential.service.routedUnlock({ deviceId: HUB, direct: direct(credentialCalls, "unlock"), doorId: DOOR_HUB,
+      entryMethod: "out" }), AccessCapabilityError, { check: (error) => {
 
-      assert.ok(error instanceof AccessCapabilityError);
       assert.match(error.message, /an unlock carrying an entry direction/, "the refusal names the unlock by what made it official-only");
-
-      return true;
-    });
+    } });
 
     assert.deepEqual(credentialCalls.direct, []);
   });
@@ -174,14 +172,11 @@ describe("the routing decision", () => {
     const credentialCalls = newCalls();
     const credential = makeService({ calls: credentialCalls, capabilities: { mode: "credential", official: false }, official: false });
 
-    await assert.rejects(async () => credential.service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB,
-      direct: direct(credentialCalls, "unlock"), doorId: DOOR_HUB, entryMethod: "in" }), (error: unknown) => {
+    await assertRejectsWith(async () => credential.service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB,
+      direct: direct(credentialCalls, "unlock"), doorId: DOOR_HUB, entryMethod: "in" }), AccessCapabilityError, { check: (error) => {
 
-      assert.ok(error instanceof AccessCapabilityError);
       assert.match(error.message, /an unlock attributed to an actor/);
-
-      return true;
-    });
+    } });
   });
 
   test("routes a direct-expressible rule to either path and an official-only rule to the official one alone", async () => {
@@ -198,8 +193,11 @@ describe("the routing decision", () => {
     const credentialCalls = newCalls();
     const credential = makeService({ calls: credentialCalls, capabilities: { mode: "credential", official: false }, official: false });
 
-    await assert.rejects(async () => credential.service.routedSetLockRule({ deviceId: HUB, doorId: DOOR_HUB, rule: { type: "lock_now" } }),
-      AccessCapabilityError);
+    await assertRejectsWith(async () => credential.service.routedSetLockRule({ deviceId: HUB, doorId: DOOR_HUB, rule: { type: "lock_now" } }),
+      AccessCapabilityError, { check: (error) => {
+
+        assert.match(error.message, /the lock_now lock rule for door "Test Name 11"/);
+      } });
   });
 
   test("closes on the direct path wherever the client holds one, including under a direct-only override", async () => {
@@ -247,14 +245,12 @@ describe("the routing decision", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { mode: "token" }, official: false });
 
-    await assert.rejects(async () => service.routedClose({ deviceId: HUB, direct: direct(calls, "close"), doorId: DOOR_HUB }), (error: unknown) => {
+    await assertRejectsWith(async () => service.routedClose({ deviceId: HUB, direct: direct(calls, "close"), doorId: DOOR_HUB }),
+      AccessCapabilityError, { check: (error) => {
 
-      assert.ok(error instanceof AccessCapabilityError);
-      assert.match(error.message, /a door close/, "the message names the operation");
-      assert.match(error.message, /holds no credentials for the Access application's own endpoints/, "and the capability that was missing");
-
-      return true;
-    });
+        assert.match(error.message, /a close for door "Test Name 11"/, "the message names the operation and the door");
+        assert.match(error.message, /holds no credentials for the Access application's own endpoints/, "and the capability that was missing");
+      } });
 
     assert.deepEqual(calls.direct, [], "a refused close issues nothing at all");
   });
@@ -277,10 +273,10 @@ describe("the routing decision", () => {
 
 describe("the capability error's message", () => {
 
-  test("names the operation, the capability, and the mode on every arm that can refuse", async () => {
+  test("names the operation, the target, the capability, and the mode on every arm that can refuse", async () => {
 
-    /* The class documents its message as carrying all three, and a message is the whole of what this error offers a caller - so each arm is checked rather than
-     * one standing in for the rest. The revoked arm is reached by tripping the latch first, which is the only way to produce it.
+    /* The class documents its message as carrying each of them, and a message is the whole of what this error offers a caller - so each arm is checked rather
+     * than one standing in for the rest. The revoked arm is reached by tripping the latch first, which is the only way to produce it.
      */
     const attributedUnlock = async (service: AccessRoutingService, calls: RecordedCalls): Promise<void> => {
 
@@ -291,16 +287,16 @@ describe("the capability error's message", () => {
       await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB, entryMethod: "in" });
     };
     const arms: { capabilities: Partial<AccessCapabilities>; issue: (service: AccessRoutingService, calls: RecordedCalls) => Promise<void>; label: string;
-      official: boolean; operation: RegExp; reason: RegExp; refuse?: () => Error; }[] = [
+      official: boolean; operation: RegExp; reason: RegExp; refuse?: () => Error; target: RegExp; }[] = [
       { capabilities: { mode: "credential", official: false }, issue: attributedUnlock, label: "no official path", official: false,
-        operation: /an unlock attributed to an actor/, reason: /requires the official API/ },
+        operation: /an unlock attributed to an actor/, reason: /requires the official API/, target: /for door "Test Name 11"/ },
       { capabilities: { mode: "dual", override: "direct-only" }, issue: attributedUnlock, label: "held direct", official: true,
-        operation: /an unlock attributed to an actor/, reason: /held to the direct API/ },
+        operation: /an unlock attributed to an actor/, reason: /held to the direct API/, target: /for door "Test Name 11"/ },
       { capabilities: { mode: "dual" }, issue: attributedUnlock, label: "revoked", official: true, operation: /an unlock attributed to an actor/,
         reason: /no longer available to this session/,
-        refuse: () => new AccessOfficialApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) },
+        refuse: () => new AccessApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }), target: /for door "Test Name 11"/ },
       { capabilities: { mode: "credential", official: false }, issue: entryDirectionUnlock, label: "entry direction with no official path", official: false,
-        operation: /an unlock carrying an entry direction/, reason: /requires the official API/ }
+        operation: /an unlock carrying an entry direction/, reason: /requires the official API/, target: /for door "Test Name 11"/ }
     ];
 
     for(const arm of arms) {
@@ -316,15 +312,13 @@ describe("the capability error's message", () => {
       }
 
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => arm.issue(service, calls), (error: unknown) => {
+      await assertRejectsWith(async () => arm.issue(service, calls), AccessCapabilityError, { check: (error) => {
 
-        assert.ok(error instanceof AccessCapabilityError);
         assert.match(error.message, arm.operation, arm.label + " should name the operation");
+        assert.match(error.message, arm.target, arm.label + " should name the door it addressed");
         assert.match(error.message, arm.reason, arm.label + " should name the capability that was missing");
         assert.match(error.message, /connected in (credential|dual|token) mode/, arm.label + " should name the mode");
-
-        return true;
-      });
+      } });
     }
   });
 
@@ -335,13 +329,37 @@ describe("the capability error's message", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { override: "official-only" } });
 
-    await assert.rejects(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, "restart"), operation: "a device restart" }), (error: unknown) => {
+    await assertRejectsWith(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, "restart"), operation: "a restart" }),
+      AccessCapabilityError, { check: (error) => {
 
-      assert.ok(error instanceof AccessCapabilityError);
-      assert.match(error.message, /either cannot express that operation or refused it for this device/);
+        assert.match(error.message, /either cannot express that operation or refused it for this device/);
+      } });
+  });
 
-      return true;
-    });
+  test("names a target the state does not hold by its identifier", async () => {
+
+    /* A refusal still has to say what the command addressed when the state holds no record of the target - a door removed between the caller's read and the
+     * command it was aimed at, or a device no census ever carried. The identifier is the one spelling the caller and the controller still agree on, so it stands
+     * in for the name rather than the target going unnamed.
+     */
+    const calls = newCalls();
+    const { service } = makeService({ calls, capabilities: { mode: "credential", official: false }, official: false });
+
+    await assertRejectsWith(async () => service.routedStop({ deviceId: HUB, doorId: "00000000-0000-0000-0000-00000000ffff" }),
+      AccessCapabilityError, { check: (error) => {
+
+        assert.match(error.message, /a stop for door "00000000-0000-0000-0000-00000000ffff"/, "a door the state does not hold is named by its identifier");
+      } });
+
+    const { service: tokenOnly } = makeService({ calls, capabilities: { mode: "token" } });
+
+    await assertRejectsWith(async () => tokenOnly.routedDirect({ deviceId: "aabbcc00ffff", direct: direct(calls, "restart"), operation: "a restart" }),
+      AccessCapabilityError, { check: (error) => {
+
+        assert.match(error.message, /a restart for device "aabbcc00ffff"/, "and so is a device it does not hold");
+      } });
+
+    assert.deepEqual(calls.direct, [], "and neither refusal issued anything at all");
   });
 });
 
@@ -350,7 +368,7 @@ describe("the per-device firmware floor", () => {
   test("falls back after a floor refusal, having attempted the official path first", async () => {
 
     const calls = newCalls();
-    const { service } = makeService({ calls, refuse: () => new AccessOfficialApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) });
+    const { service } = makeService({ calls, refuse: () => new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) });
 
     await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
@@ -370,7 +388,7 @@ describe("the per-device firmware floor", () => {
 
       attempts++;
 
-      return new AccessOfficialApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
+      return new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
     } });
 
     await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
@@ -392,7 +410,7 @@ describe("the per-device firmware floor", () => {
 
       attempts++;
 
-      return new AccessOfficialApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
+      return new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
     }, store });
 
     await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
@@ -416,7 +434,7 @@ describe("the per-device firmware floor", () => {
      */
     const unlockRefused = newCalls();
     const fromUnlock = makeService({ calls: unlockRefused,
-      refuse: (attempt) => ((attempt.method === "unlock") ? new AccessOfficialApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
+      refuse: (attempt) => ((attempt.method === "unlock") ? new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
 
     await fromUnlock.service.routedUnlock({ deviceId: HUB, direct: direct(unlockRefused, "unlock"), doorId: DOOR_HUB });
 
@@ -430,7 +448,7 @@ describe("the per-device firmware floor", () => {
     // The other direction, which is the same claim with the commands exchanged.
     const ruleRefused = newCalls();
     const fromRule = makeService({ calls: ruleRefused,
-      refuse: (attempt) => ((attempt.method === "setLockRule") ? new AccessOfficialApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
+      refuse: (attempt) => ((attempt.method === "setLockRule") ? new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
 
     await fromRule.service.routedSetLockRule({ deviceId: HUB, direct: direct(ruleRefused, "reset"), doorId: DOOR_HUB, rule: { type: "reset" } });
 
@@ -449,7 +467,7 @@ describe("the per-device firmware floor", () => {
     const stopRefused = newCalls();
     const fromStop = makeService({ calls: stopRefused, capabilities: { mode: "token" },
       refuse: (attempt) => (((attempt.method === "unlock") && (attempt.opts?.controlCmd === "stop")) ?
-        new AccessOfficialApiError("not a gate", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
+        new AccessApiError("not a gate", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
 
     await assert.rejects(async () => fromStop.service.routedStop({ deviceId: HUB, doorId: DOOR_HUB }), AccessCapabilityError);
 
@@ -461,7 +479,7 @@ describe("the per-device firmware floor", () => {
     const closeRefused = newCalls();
     const fromClose = makeService({ calls: closeRefused, capabilities: { mode: "token" },
       refuse: (attempt) => (((attempt.method === "unlock") && (attempt.opts?.controlCmd === "close")) ?
-        new AccessOfficialApiError("not a gate", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
+        new AccessApiError("not a gate", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
 
     await assert.rejects(async () => fromClose.service.routedClose({ deviceId: HUB, direct: direct(closeRefused, "close"), doorId: DOOR_HUB }),
       AccessCapabilityError);
@@ -481,7 +499,7 @@ describe("the per-device firmware floor", () => {
 
       attempts++;
 
-      return new AccessOfficialApiError("not a gate", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
+      return new AccessApiError("not a gate", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
     } });
 
     await assert.rejects(async () => service.routedClose({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB }), AccessCapabilityError);
@@ -498,7 +516,7 @@ describe("the per-device firmware floor", () => {
 
       attempts++;
 
-      return new AccessOfficialApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
+      return new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
     } });
 
     await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "hub"), doorId: DOOR_HUB });
@@ -526,31 +544,25 @@ describe("the gate stop", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { mode: "credential", official: false }, official: false });
 
-    await assert.rejects(async () => service.routedStop({ deviceId: HUB, doorId: DOOR_HUB }), (error: unknown) => {
+    await assertRejectsWith(async () => service.routedStop({ deviceId: HUB, doorId: DOOR_HUB }), AccessCapabilityError, { check: (error) => {
 
-      assert.ok(error instanceof AccessCapabilityError);
-      assert.match(error.message, /a gate stop/, "the message names the operation");
+      assert.match(error.message, /a stop for door "Test Name 11"/, "the message names the operation and the door");
       assert.match(error.message, /requires the official API/, "and the capability that was missing");
-
-      return true;
-    });
+    } });
   });
 
   test("refuses once the revocation latch has tripped", async () => {
 
     const calls = newCalls();
-    const { service } = makeService({ calls, refuse: () => new AccessOfficialApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) });
+    const { service } = makeService({ calls, refuse: () => new AccessApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) });
 
     // The first routed unlock is what teaches the service the session is revoked; the stop that follows has nothing left to take.
     await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
-    await assert.rejects(async () => service.routedStop({ deviceId: HUB, doorId: DOOR_HUB }), (error: unknown) => {
+    await assertRejectsWith(async () => service.routedStop({ deviceId: HUB, doorId: DOOR_HUB }), AccessCapabilityError, { check: (error) => {
 
-      assert.ok(error instanceof AccessCapabilityError);
       assert.match(error.message, /no longer available to this session/);
-
-      return true;
-    });
+    } });
   });
 });
 
@@ -564,7 +576,7 @@ describe("the session revocation latch", () => {
 
       attempts++;
 
-      return new AccessOfficialApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" });
+      return new AccessApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" });
     } });
 
     await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
@@ -578,7 +590,7 @@ describe("the session revocation latch", () => {
   test("refuses an operation with no fallback once the latch has tripped", async () => {
 
     const calls = newCalls();
-    const { service } = makeService({ calls, refuse: () => new AccessOfficialApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) });
+    const { service } = makeService({ calls, refuse: () => new AccessApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) });
 
     await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
@@ -595,15 +607,13 @@ describe("what is not a capability verdict", () => {
      * swallowing it into a silent retry on the other path would hide a real failure and issue the command twice.
      */
     const calls = newCalls();
-    const { service } = makeService({ calls, refuse: () => new AccessOfficialApiError("the door is busy", { code: "CODE_DEVICE_DEVICE_BUSY" }) });
+    const { service } = makeService({ calls, refuse: () => new AccessApiError("the door is busy", { code: "CODE_DEVICE_DEVICE_BUSY" }) });
 
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), (error: unknown) => {
+    await assertRejectsWith(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }),
+      AccessApiError, { check: (error) => {
 
-      assert.ok(error instanceof AccessOfficialApiError);
-      assert.equal(error.code, "CODE_DEVICE_DEVICE_BUSY");
-
-      return true;
-    });
+        assert.equal(error.code, "CODE_DEVICE_DEVICE_BUSY");
+      } });
 
     assert.deepEqual(calls.direct, [], "a real failure does not become a second attempt on the other path");
   });
@@ -623,16 +633,14 @@ describe("what is not a capability verdict", () => {
     for(const code of [ "CODE_DEVICE_API_NOT_SUPPORTED", "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" ]) {
 
       const calls = newCalls();
-      const { service } = makeService({ calls, refuse: () => new AccessOfficialApiError("refused", { code }) });
+      const { service } = makeService({ calls, refuse: () => new AccessApiError("refused", { code }) });
 
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => service.routedSetLockRule({ deviceId: HUB, doorId: DOOR_HUB, rule: { type: "lock_now" } }), (error: unknown) => {
+      await assertRejectsWith(async () => service.routedSetLockRule({ deviceId: HUB, doorId: DOOR_HUB, rule: { type: "lock_now" } }),
+        AccessCapabilityError, { check: (error) => {
 
-        assert.ok(error instanceof AccessCapabilityError, code + " should reach the caller as a capability error");
-        assert.ok(!(error instanceof AccessOfficialApiError));
-
-        return true;
-      });
+          assert.ok(!(error instanceof AccessApiError), "the refusal reaches the caller as a capability error rather than as the raw official error");
+        }, message: code + " should reach the caller as a capability error" });
     }
   });
 });
@@ -647,7 +655,7 @@ describe("a command only the direct path can carry", () => {
       const { service } = makeService({ calls, capabilities: { mode }, official: (mode === "dual") });
 
       // eslint-disable-next-line no-await-in-loop
-      await service.routedDirect({ deviceId: HUB, direct: direct(calls, "restart"), operation: "a device restart" });
+      await service.routedDirect({ deviceId: HUB, direct: direct(calls, "restart"), operation: "a restart" });
 
       assert.deepEqual(calls.direct, ["restart"], mode + " holds a direct path, so the command takes it");
     }
@@ -661,18 +669,17 @@ describe("a command only the direct path can carry", () => {
       const calls = newCalls();
       const { service } = makeService({ calls, capabilities: { mode, override: "official-only" } });
 
-      for(const operation of [ "a device restart", "a device configuration write" ]) {
+      for(const operation of [ "a restart", "a configuration write" ]) {
 
         // eslint-disable-next-line no-await-in-loop
-        await assert.rejects(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, operation), operation }), (error: unknown) => {
+        await assertRejectsWith(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, operation), operation }),
+          AccessCapabilityError, { check: (error) => {
 
-          assert.ok(error instanceof AccessCapabilityError);
-          assert.match(error.message, new RegExp(operation), "the message names the operation");
-          assert.match(error.message, /held to the official API/, "and the override that left it nowhere to go");
-          assert.match(error.message, new RegExp("\\(connected in " + mode + " mode\\)"), "and the mode");
-
-          return true;
-        });
+            assert.match(error.message, new RegExp(operation), "the message names the operation");
+            assert.match(error.message, /for device "Test alias 13"/, "and the device it addressed");
+            assert.match(error.message, /held to the official API/, "and the override that left it nowhere to go");
+            assert.match(error.message, new RegExp("\\(connected in " + mode + " mode\\)"), "and the mode");
+          } });
       }
 
       assert.deepEqual(calls.direct, [], "no direct expression ran on a client held to one channel in " + mode + " mode");
@@ -685,18 +692,17 @@ describe("a command only the direct path can carry", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { mode: "token" } });
 
-    for(const operation of [ "a device restart", "a device configuration write" ]) {
+    for(const operation of [ "a restart", "a configuration write" ]) {
 
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, operation), operation }), (error: unknown) => {
+      await assertRejectsWith(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, operation), operation }),
+        AccessCapabilityError, { check: (error) => {
 
-        assert.ok(error instanceof AccessCapabilityError);
-        assert.match(error.message, new RegExp(operation), "the message names the operation");
-        assert.match(error.message, /holds no credentials for the Access application's own endpoints/, "and the capability that was missing");
-        assert.match(error.message, /\(connected in token mode\)/, "and the mode");
-
-        return true;
-      });
+          assert.match(error.message, new RegExp(operation), "the message names the operation");
+          assert.match(error.message, /for device "Test alias 13"/, "and the device it addressed");
+          assert.match(error.message, /holds no credentials for the Access application's own endpoints/, "and the capability that was missing");
+          assert.match(error.message, /\(connected in token mode\)/, "and the mode");
+        } });
     }
 
     assert.deepEqual(calls.direct, [], "a refused command issues nothing at all");
@@ -709,28 +715,24 @@ describe("a command only the direct path can carry", () => {
      */
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { mode: "token" },
-      refuse: () => new AccessOfficialApiError("refused", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) });
+      refuse: () => new AccessApiError("refused", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) });
 
     // The first routed unlock is what teaches the service the session is revoked; its own refusal is not what this row is about.
     await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), AccessCapabilityError);
 
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), (error: unknown) => {
+    await assertRejectsWith(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }),
+      AccessCapabilityError, { check: (error) => {
 
-      assert.ok(error instanceof AccessCapabilityError);
-      assert.match(error.message, /no longer available to this session on this controller/, "the revoked arm is the one that speaks");
-      assert.equal(error.message.includes("holds no credentials"), false, "and the general arm stays quiet behind it");
-
-      return true;
-    });
+        assert.match(error.message, /no longer available to this session on this controller/, "the revoked arm is the one that speaks");
+        assert.equal(error.message.includes("holds no credentials"), false, "and the general arm stays quiet behind it");
+      } });
 
     // The latch speaks for a command with no official half too: refused for the revocation, the more particular reason, rather than for credentials it never held.
-    await assert.rejects(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, "restart"), operation: "a device restart" }), (error: unknown) => {
+    await assertRejectsWith(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, "restart"), operation: "a restart" }),
+      AccessCapabilityError, { check: (error) => {
 
-      assert.ok(error instanceof AccessCapabilityError);
-      assert.match(error.message, /no longer available to this session on this controller/);
-
-      return true;
-    });
+        assert.match(error.message, /no longer available to this session on this controller/);
+      } });
 
     assert.deepEqual(calls.direct, [], "and no direct path was taken on any attempt");
   });

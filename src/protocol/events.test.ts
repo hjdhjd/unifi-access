@@ -4,12 +4,13 @@
  * controller's two notification dialects, so these tests run every captured packet through it, assert the dialect pairs collapse to the same kind, and assert the
  * translation allowlist field by field against named specimens rather than against anything re-derived from the same fixture.
  */
-import { accessEventPackets2024Fixture, accessEventPacketsDoorStateFixture, accessEventPacketsFixture, accessEventPacketsHistoricalFixture,
-  accessEventPacketsInteractiveFixture, accessEventPacketsOfficialSocketFixture, accessEventPacketsTamperFixture } from "./events.fixtures.ts";
-import { classifyPacket, isAccessEventPacket } from "./events.ts";
+import { DEVICE_FIELD_EXCLUSIONS, DEVICE_FIELD_MAP, DOOR_STATE_FACT_GUARDS, LOCATION_FIELD_EXCLUSIONS, LOCATION_FIELD_MAP, classifyPacket,
+  isAccessEventPacket } from "./events.ts";
+import { capturedPackets, classifyAs, findPacket } from "./capture.helpers.ts";
 import { describe, test } from "node:test";
 import type { AccessEventPacket } from "../types/index.ts";
 import assert from "node:assert/strict";
+import { isRecord } from "../json.ts";
 
 /* The kind each notification name classifies to, or null where the name is deliberately unmodeled. Every packet in every fixture group is checked against this.
  *
@@ -29,7 +30,7 @@ const EXPECTED_KIND: Readonly<Record<string, string | null | ((packet: AccessEve
   "access.data.top_log.update": null,
   "access.data.v2.device.delete": "deviceRemoved",
   "access.data.v2.device.update": (packet) => hasAdmissibleEntry(packet.data?.["location_states"]) ? "doorStateChanged" : "deviceChanged",
-  "access.data.v2.location.update": (packet) => hasAdmissibleEntry([packet.data?.["state"]]) ? "doorStateChanged" : "locationChanged",
+  "access.data.v2.location.update": (packet) => hasAdmissibleEntry([completedState(packet)]) ? "doorStateChanged" : "locationChanged",
   "access.logs.add": null,
   "access.logs.insights.add": null,
   "access.remote_view": "doorbellRing",
@@ -37,9 +38,10 @@ const EXPECTED_KIND: Readonly<Record<string, string | null | ((packet: AccessEve
   "access.tamper_resistant": "tamperAlert"
 };
 
-/* Whether a value is an array holding at least one entry the admission contract would take. Written here independently of the classifier's own guards, so the table
- * above is an expectation the tests hold the classifier to rather than a restatement of what it does. The location carrier's `state` member is checked through the
- * same predicate by wrapping it, because it is the same entry shape minus the door identity the envelope supplies.
+/* Whether a value is an array holding at least one entry the admission contract would take: an entry names its door, states at least one fact about it, and carries
+ * every fact it states in the declared shape. Written here independently of the classifier's own guards, so the table above is an expectation the tests hold the
+ * classifier to rather than a restatement of what it does. The location carrier's `state` member is checked through the same predicate by wrapping it, completed
+ * with the door identity the envelope supplies, because that is the one member it does not carry itself.
  */
 function hasAdmissibleEntry(value: unknown): boolean {
 
@@ -56,18 +58,38 @@ function hasAdmissibleEntry(value: unknown): boolean {
     }
 
     const record = entry as Record<string, unknown>;
-    const emergency = record["emergency"] as Record<string, unknown> | undefined;
     const alarms = record["alarms"];
+    const emergency = record["emergency"] as Record<string, unknown> | undefined;
     const suspend = record["unlock_suspend"] as Record<string, unknown> | undefined;
 
-    const core = (typeof record["lock"] === "string") && (typeof record["dps"] === "string") && (typeof record["dps_connected"] === "boolean") &&
-      (typeof record["is_unavailable"] === "boolean") && (typeof emergency?.["hardware"] === "string") && (typeof emergency["software"] === "string");
+    // A member the report leaves out states nothing, and neither does one the dialect sends as null, which is how this wire spells a fact the hardware never reported.
+    const stated = (member: string): boolean => (record[member] !== undefined) && (record[member] !== null);
 
-    const optionals = ((alarms === undefined) || (Array.isArray(alarms) && alarms.every((alarm) => typeof (alarm as Record<string, unknown>)["type"] === "string"))) &&
-      ((suspend === undefined) || ((typeof suspend["status"] === "string") && (typeof suspend["unlock_type"] === "string")));
+    const shaped = (!stated("alarms") || (Array.isArray(alarms) && alarms.every((alarm) => typeof (alarm as Record<string, unknown>)["type"] === "string"))) &&
+      (!stated("dps") || (typeof record["dps"] === "string")) && (!stated("dps_connected") || (typeof record["dps_connected"] === "boolean")) &&
+      (!stated("emergency") || ((typeof emergency?.["hardware"] === "string") && (typeof emergency["software"] === "string"))) &&
+      (!stated("is_unavailable") || (typeof record["is_unavailable"] === "boolean")) && (!stated("lock") || (typeof record["lock"] === "string")) &&
+      (!stated("unlock_suspend") || ((typeof suspend?.["status"] === "string") && (typeof suspend["unlock_type"] === "string")));
 
-    return core && optionals;
+    const anyFact = stated("alarms") || stated("dps") || stated("dps_connected") || stated("emergency") || stated("is_unavailable") || stated("lock") ||
+      stated("unlock_suspend");
+
+    return (typeof record["location_id"] === "string") && anyFact && shaped;
   });
+}
+
+// A location carrier's `state` member completed with the door identity the envelope supplies, mirroring what the classifier does before it admits the entry: the
+// member carries every other field an entry holds but names no door, because the packet is already about one.
+function completedState(packet: AccessEventPacket): unknown {
+
+  const state = packet.data?.["state"];
+
+  if((typeof state !== "object") || (state === null)) {
+
+    return state;
+  }
+
+  return { ...state as Record<string, unknown>, "location_id": packet.meta?.id };
 }
 
 // The canonical field names a translated device payload may carry, and the wire fields that must never survive translation into it.
@@ -88,34 +110,17 @@ const TAMPER_ALERT_FIELDS = [ "device", "door_id", "door_name", "host_device_mac
 // The call identifier the interactive window's ring carries, which is also what its cancellation names, so both specimens are found by the same value.
 const INTERACTIVE_RING_REQUEST_ID = "TxC3TMGjlPk30gEYGDVsgSrIpQWWZPEb";
 
-/* The whole captured corpus, in the order the groups were accreted. findPacket below returns the first match, so a newly accreted group spreads last: an event name that
- * more than one window carries then still resolves to the specimen the tests written before that window relied on.
- */
-const allPackets = [ ...accessEventPacketsFixture, ...accessEventPackets2024Fixture, ...accessEventPacketsHistoricalFixture,
-  ...accessEventPacketsInteractiveFixture, ...accessEventPacketsDoorStateFixture, ...accessEventPacketsOfficialSocketFixture,
-  ...accessEventPacketsTamperFixture ];
-
 // Build a copy of a wire record without one key, so a near-miss packet can be made by taking a real specimen and removing exactly the field a guard requires.
 const withoutKey = (record: Record<string, unknown>, key: string): Record<string, unknown> => Object.fromEntries(Object.entries(record).filter(([name]) => name !== key));
-
-// Find the one captured packet a test names, failing loudly rather than silently skipping if the corpus ever stops carrying it.
-const findPacket = (predicate: (packet: AccessEventPacket) => boolean, description: string): AccessEventPacket => {
-
-  const packet = allPackets.find(predicate);
-
-  assert.ok(packet, "the fixture corpus should carry " + description);
-
-  return packet;
-};
 
 describe("classifyPacket over the captured corpus", () => {
 
   test("classifies every captured packet to its expected kind and never throws", () => {
 
-    assert.equal(allPackets.length, 81,
+    assert.equal(capturedPackets.length, 81,
       "the corpus is the 2026 ambient window, the 2024 and historical specimens, and the interactive, door-state, official-socket, and tamper capture windows");
 
-    for(const packet of allPackets) {
+    for(const packet of capturedPackets) {
 
       const rule = EXPECTED_KIND[packet.event];
 
@@ -176,18 +181,17 @@ describe("classifyPacket over the captured corpus", () => {
 describe("v2 device payload translation", () => {
 
   const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === "aabbcc000001"), "the v2 hub update");
-  const event = classifyPacket(packet);
-
-  assert.equal(event?.kind, "deviceChanged");
-
-  const payload = event.payload;
 
   test("translates to exactly the allowlist subset and nothing else", () => {
+
+    const { payload } = classifyAs(packet, "deviceChanged");
 
     assert.deepEqual(Object.keys(payload).sort(), DEVICE_ADMITTED);
   });
 
   test("carries each admitted field under its canonical name with its wire value", () => {
+
+    const { payload } = classifyAs(packet, "deviceChanged");
 
     assert.equal(payload.unique_id, "aabbcc000001");
     assert.equal(payload.is_online, true);
@@ -204,12 +208,16 @@ describe("v2 device payload translation", () => {
 
   test("drops the pre-translation wire names once they are renamed", () => {
 
+    const { payload } = classifyAs(packet, "deviceChanged");
+
     // The dialect's own names for identity and connectivity must not survive alongside the canonical ones they became.
     assert.equal(Object.hasOwn(payload, "id"), false);
     assert.equal(Object.hasOwn(payload, "online"), false);
   });
 
   test("drops every excluded field", () => {
+
+    const { payload } = classifyAs(packet, "deviceChanged");
 
     for(const field of DEVICE_EXCLUDED) {
 
@@ -240,13 +248,15 @@ describe("v2 device payload translation", () => {
 
   test("leaves a whole-second start_time untouched", () => {
 
+    const { payload } = classifyAs(packet, "deviceChanged");
+
     assert.equal(payload.start_time, 1780317315, "a native device already reports seconds and must not be divided");
   });
 
   test("translates only the admitted fields a payload actually carries", () => {
 
-    /* Every captured v2 device payload happens to carry all eleven admitted fields, so a payload that omits some of them is synthetic. The behavior matters anyway:
-     * a firmware that trimmed its payload must yield a translation of what arrived rather than a translation padded with absent keys.
+    /* Every captured v2 device payload happens to carry every field DEVICE_ADMITTED names, so a payload that omits some of them is synthetic. The behavior matters
+     * anyway: a firmware that trimmed its payload must yield a translation of what arrived rather than a translation padded with absent keys.
      */
     const sparse = { ...packet, data: withoutKey(withoutKey(packet.data ?? {}, "firmware"), "guid") } as AccessEventPacket;
     const sparseEvent = classifyPacket(sparse);
@@ -271,11 +281,6 @@ describe("v2 location payload translation", () => {
    * unstripped packet does take the door-state path, so the strip is a scoping of this describe rather than a claim about the wire.
    */
   const packet = { ...stateBearing, data: withoutKey(stateBearing.data ?? {}, "state") } as AccessEventPacket;
-  const event = classifyPacket(packet);
-
-  assert.equal(event?.kind, "locationChanged");
-
-  const payload = event.payload;
 
   test("the same specimen with its door state intact classifies as a door-state event instead", () => {
 
@@ -287,11 +292,16 @@ describe("v2 location payload translation", () => {
 
   test("translates to exactly the allowlist subset", () => {
 
+    const event = classifyAs(packet, "locationChanged");
+    const { payload } = event;
+
     assert.deepEqual(Object.keys(payload).sort(), LOCATION_ADMITTED);
     assert.equal(event.id, "00000000-0000-0000-0000-000000000006");
   });
 
   test("carries each admitted field under its canonical name", () => {
+
+    const { payload } = classifyAs(packet, "locationChanged");
 
     assert.equal(payload.unique_id, "00000000-0000-0000-0000-000000000006");
     assert.equal(payload.location_type, "door");
@@ -303,6 +313,8 @@ describe("v2 location payload translation", () => {
   });
 
   test("drops the pre-translation identity name and every excluded field", () => {
+
+    const { payload } = classifyAs(packet, "locationChanged");
 
     assert.equal(Object.hasOwn(payload, "id"), false);
 
@@ -318,10 +330,89 @@ describe("v2 location payload translation", () => {
     // fields being excluded.
     const wire = stateBearing.data ?? {};
 
-    assert.ok(Array.isArray(wire["device_ids"]));
-    assert.ok(Array.isArray(wire["guard"]));
+    assert.ok(Array.isArray(wire["device_ids"]), "the specimen really carried its device identifiers");
+    assert.ok(Array.isArray(wire["guard"]), "the specimen really carried its guard list");
     assert.notEqual(wire["state"], undefined);
     assert.notEqual(wire["thumbnail"], undefined);
+  });
+});
+
+describe("the newer dialect's field census", () => {
+
+  test("every field a captured payload carries is admitted or declared, and every declaration is observed", () => {
+
+    /* Two directions per dialect, which is what makes this a gate rather than a description. A field the controller starts sending is in neither list and fails
+     * here rather than reaching consumers on the raw rail with nothing noticing; a declared name no captured payload carries is a claim with no specimen behind
+     * it. The door-state entries both carriers deliver get the same reading, against the door identity and the fact table admission itself is written from.
+     */
+    const carried = { device: new Set<string>(), entry: new Set<string>(), location: new Set<string>() };
+    const collect = (into: Set<string>, value: unknown): void => {
+
+      if(!isRecord(value)) {
+
+        return;
+      }
+
+      for(const field of Object.keys(value)) {
+
+        into.add(field);
+      }
+    };
+
+    // The door-state entries one packet delivers: the device carrier sends an array of them and the location carrier sends a single one under `state`.
+    const entriesOf = (value: unknown): unknown[] => Array.isArray(value) ? value as unknown[] : [value];
+
+    for(const packet of capturedPackets) {
+
+      const payload = packet.data;
+
+      // The packet type holds the payload nullable, so the census reads it through the same record guard the classifier reads it through.
+      if(!isRecord(payload)) {
+
+        continue;
+      }
+
+      switch(packet.event) {
+
+        case "access.data.v2.device.update":
+
+          collect(carried.device, payload);
+
+          for(const entry of entriesOf(payload["location_states"])) {
+
+            collect(carried.entry, entry);
+          }
+
+          break;
+
+        case "access.data.v2.location.update":
+
+          collect(carried.location, payload);
+          collect(carried.entry, payload["state"]);
+
+          break;
+
+        default:
+
+          break;
+      }
+    }
+
+    // What each dialect declares: an allowlist's wire names and its exclusion set together, and for an entry the door identity beside every fact a report may state.
+    const declared = {
+
+      device: new Set([ ...Object.keys(DEVICE_FIELD_MAP), ...DEVICE_FIELD_EXCLUSIONS ]),
+      entry: new Set([ "location_id", ...Object.keys(DOOR_STATE_FACT_GUARDS) ]),
+      location: new Set([ ...Object.keys(LOCATION_FIELD_MAP), ...LOCATION_FIELD_EXCLUSIONS ])
+    };
+
+    const missing = (from: Set<string>, against: Set<string>): string[] => [...from].filter((name) => !against.has(name)).sort();
+
+    for(const dialect of [ "device", "entry", "location" ] as const) {
+
+      assert.deepEqual(missing(carried[dialect], declared[dialect]), [], "the " + dialect + " census carries a field that is neither admitted nor declared");
+      assert.deepEqual(missing(declared[dialect], carried[dialect]), [], "the " + dialect + " census declares a name no captured payload carries");
+    }
   });
 });
 
@@ -537,7 +628,7 @@ describe("the interactive capture specimens", () => {
     const event = classifyPacket(packet);
 
     // This specimen carries door state, so it is a door-state event whose device facet is where the translated device fields land. The allowlist governs that facet
-    // exactly as it governed the standalone device payload, which is the point: one translation, reached by two kinds.
+    // exactly as it governed the standalone device payload, which is the point: one translation, reached by every kind that carries a device facet.
     assert.equal(event?.kind, "doorStateChanged");
     assert.ok(event.device, "a device-carried door-state event carries the device facet");
 
@@ -560,7 +651,7 @@ describe("the interactive capture specimens", () => {
 
     assert.notEqual(wire["location_states"], undefined);
     assert.notEqual(wire["wire_state"], undefined);
-    assert.ok(Array.isArray(wire["cap"]));
+    assert.ok(Array.isArray(wire["cap"]), "the wire record really carries its capability list");
 
     // The door state the same packet carried reaches the event rather than being dropped alongside the fields the allowlist excludes.
     assert.equal(event.states.length, 1);
@@ -601,6 +692,9 @@ describe("door-state classification", () => {
 
     const entry = event.states[0];
 
+    // A report carrying no null member is admitted as the very object the packet delivered: the copy that leaves null members out is made only when there is
+    // one to leave out, and everything else is stored as delivered, the way every other wire record is.
+    assert.equal(Object.is(entry, (packet.data?.["location_states"] as unknown[])[0]), true, "a null-free entry passes through as itself");
     assert.equal(entry?.location_id, DOOR_MINI_DOOR);
     assert.equal(entry.lock, "locked");
     assert.equal(entry.dps, "close");
@@ -701,9 +795,10 @@ describe("door-state classification", () => {
 
     assert.equal(classifyPacket(withStates([]))?.kind, "deviceChanged", "an empty array reports no door, so there is no door-state event to make of it");
 
+    // A member the report leaves out is the hardware not reporting it, so what is left unreadable is a member the entry does carry, in the wrong shape.
     const invalid = entryOf(deviceCarrier);
 
-    delete invalid["emergency"];
+    invalid["lock"] = 42;
 
     assert.equal(classifyPacket(withStates([ invalid, "not-an-object" ]))?.kind, "deviceChanged");
   });
@@ -713,9 +808,9 @@ describe("door-state classification", () => {
     const packet = findPacket((entry) => (entry.event === "access.data.v2.location.update") && (entry.data?.["state"] !== undefined),
       "a v2 location update carrying door state");
 
-    // Two shapes of malformed: a record that is missing what an entry requires, and a member that is not a record at all. Both fall through to the location update
-    // the packet would otherwise have been, rather than to nothing.
-    for(const state of [ { lock: "locked" }, "not-an-object", 42 ]) {
+    // What is not a report: a state that names its door and states nothing, a member of the wrong shape, and a value that is not a record at all. Each falls
+    // through to the location update the packet would otherwise have been, rather than to nothing.
+    for(const state of [ {}, { lock: 42 }, "not-an-object", 42 ]) {
 
       const malformed = { ...packet, data: { ...packet.data, state } } as AccessEventPacket;
       const event = classifyPacket(malformed);
@@ -723,6 +818,79 @@ describe("door-state classification", () => {
       assert.equal(event?.kind, "locationChanged", JSON.stringify(state) + " is not a door-state report");
       assert.equal(event.id, packet.meta?.id);
     }
+  });
+
+  test("an entry that omits the members its hardware does not report is admitted with what it carries", () => {
+
+    // Which facts a report states is the hardware's business, so an entry is judged on what it carries and reaches the consumer carrying exactly that.
+    const sparse = entryOf(deviceCarrier);
+
+    delete sparse["dps_connected"];
+    delete sparse["emergency"];
+    delete sparse["is_unavailable"];
+
+    const event = classifyPacket(withStates([sparse]));
+
+    assert.equal(event?.kind, "doorStateChanged");
+    assert.equal(event.states.length, 1);
+    assert.deepEqual(event.states[0], { "dps": sparse["dps"], "location_id": sparse["location_id"], "lock": sparse["lock"] });
+  });
+
+  test("an entry that names its door and states nothing is not a report", () => {
+
+    // The reducer replaces a door's held entry with the one admitted, so admitting this would erase what the door last said on the strength of a payload that said
+    // nothing at all.
+    assert.equal(classifyPacket(withStates([{ "location_id": DOOR_MINI_DOOR }]))?.kind, "deviceChanged");
+  });
+
+  test("a member of the wrong shape rejects the entry whether or not the others are present", () => {
+
+    // A malformed member is a payload we did not understand, so it rejects the entry whole rather than being dropped from it, and that holds however much else the
+    // entry carries.
+    for(const [ member, fact ] of [ [ "dps_connected", "yes" ], [ "lock", 42 ], [ "emergency", "none" ] ] as [ string, unknown ][]) {
+
+      const malformed = entryOf(deviceCarrier);
+
+      malformed[member] = fact;
+
+      assert.equal(classifyPacket(withStates([malformed]))?.kind, "deviceChanged", member + " of the wrong shape rejects the whole entry");
+    }
+
+    assert.equal(classifyPacket(withStates([{ "dps": 7, "location_id": DOOR_MINI_DOOR }]))?.kind, "deviceChanged",
+      "the same holds for an entry whose one fact is malformed");
+  });
+
+  test("a location update whose state names one fact is a door-state report", () => {
+
+    const packet = findPacket((entry) => (entry.event === "access.data.v2.location.update") && (entry.data?.["state"] !== undefined),
+      "a v2 location update carrying door state");
+    const event = classifyPacket({ ...packet, data: { ...packet.data, "state": { "lock": "locked" } } });
+
+    // One well-formed fact is a report, and the envelope supplies the door the member itself never names.
+    assert.equal(event?.kind, "doorStateChanged");
+    assert.deepEqual(event.states[0], { "location_id": packet.meta?.id, "lock": "locked" });
+  });
+
+  test("a member the hardware sends as null is not stated, and an entry whose every fact is null is not a report", () => {
+
+    // On this wire null is how a member goes unreported rather than a value it can take, so it leaves the entry rather than reaching the model as something the entry
+    // type never holds.
+    const nulled = entryOf(deviceCarrier);
+    const carried = entryOf(deviceCarrier);
+
+    nulled["emergency"] = null;
+    delete carried["emergency"];
+
+    const event = classifyPacket(withStates([nulled]));
+
+    assert.equal(event?.kind, "doorStateChanged");
+    assert.equal(Object.hasOwn(event.states[0], "emergency"), false, "a member sent as null never reaches the admitted entry");
+    assert.deepEqual(event.states[0], carried);
+
+    // An entry whose every fact is null therefore names its door and states nothing, which is the identity-only refusal by another route.
+    const allNull = Object.fromEntries(Object.entries(entryOf(deviceCarrier)).map(([ member, fact ]) => [ member, (member === "location_id") ? fact : null ]));
+
+    assert.equal(classifyPacket(withStates([allNull]))?.kind, "deviceChanged");
   });
 });
 
@@ -780,7 +948,7 @@ describe("isAccessEventPacket", () => {
 
     // The corpus is the positive half of the proof, and it is what keeps the check from drifting toward over-strictness: a guard that rejected any real
     // notification would silently drop live traffic, so every specimen the controller actually sent has to pass.
-    for(const packet of allPackets) {
+    for(const packet of capturedPackets) {
 
       assert.equal(isAccessEventPacket(packet), true, packet.event + " is a packet the controller really sent");
     }

@@ -42,6 +42,7 @@ async function readStdin(): Promise<string> {
 
   for await (const chunk of process.stdin) {
 
+    // process.stdin yields Buffer chunks by default, absent an explicit setEncoding call, which is why the cast is safe.
     chunks.push(chunk as Buffer);
   }
 

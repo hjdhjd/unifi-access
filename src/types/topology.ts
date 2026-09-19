@@ -104,6 +104,7 @@ export interface AccessDoorConfigInterface {
   level: number;
   location_type: string;
   name: string;
+  // See the note on {@link AccessLocationConfigInterface.previous_name}.
   previous_name?: AccessKnownJsonValue[];
   timezone: string;
   unique_id: string;
@@ -127,6 +128,7 @@ export interface AccessFloorConfigInterface {
   level: number;
   location_type: string;
   name: string;
+  // See the note on {@link AccessLocationConfigInterface.previous_name}.
   previous_name?: AccessKnownJsonValue[];
   timezone: string;
   unique_id: string;
@@ -154,6 +156,7 @@ export interface AccessBootstrapConfigInterface {
   level: number;
   location_type: string;
   name: string;
+  // See the note on {@link AccessLocationConfigInterface.previous_name}.
   previous_name?: AccessKnownJsonValue[];
   timezone: string;
   unique_id: string;

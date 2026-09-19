@@ -11,7 +11,7 @@ import { AccessClient } from "../../index.ts";
 import type { AccessEventPacket } from "../../index.ts";
 import { accessEventPacketsInteractiveFixture } from "../../protocol/events.fixtures.ts";
 import assert from "node:assert/strict";
-import { specimen } from "./cli.helpers.ts";
+import { findPacket } from "../../protocol/capture.helpers.ts";
 
 // Scrub a value with a fresh context, for the cases that do not need one context spanning several calls.
 function scrubbed(value: unknown): unknown {
@@ -28,9 +28,10 @@ function scrubOne(key: string, planted: unknown): unknown {
 // The categories the catalog table below expects a key to be answered from.
 type CatalogCategory = "coordinate" | "email" | "embedded" | "hash" | "host" | "locale" | "mac" | "name" | "phone" | "plate" | "token";
 
-/* Every key the module catalogs, each with one realistic planted value. The sweep asserts two things per row: the planted value does not survive, and what replaced
- * it belongs to that key's category. A key that is dropped from a catalog, moved to the wrong one, or misspelled fails here rather than leaking in the field, which
- * is the whole reason the table is exhaustive rather than a sample.
+/* Every key the module catalogs for replacement, each with one realistic planted value. The sweep asserts two things per row: the planted value does not survive, and
+ * what replaced it belongs to that key's category. VERSION_KEYS is the one catalog excluded here, since its values are preserved rather than replaced, and it gets its
+ * own exhaustive test below. A key that is dropped from a catalog, moved to the wrong one, or misspelled fails here rather than leaking in the field, which is the whole
+ * reason the table is exhaustive rather than a sample.
  */
 const CATALOG_ROWS: readonly { category: CatalogCategory; key: string; planted: number | string }[] = [
 
@@ -158,7 +159,7 @@ const CATEGORY_SHAPES: Readonly<Record<Exclude<CatalogCategory, "coordinate" | "
   token: /^REDACTED-[0-9a-f]{8}-x*$/
 };
 
-const RING = specimen(accessEventPacketsInteractiveFixture, "access.remote_view");
+const RING = findPacket((packet) => packet.event === "access.remote_view", "an interactive ring", { corpus: accessEventPacketsInteractiveFixture });
 
 describe("the capture scrub", () => {
 
@@ -317,8 +318,8 @@ describe("the capture scrub", () => {
     const result = scrubbed({ secret, serial: unitSerial }) as { secret: string; serial: string };
 
     assert.equal(result.secret.length, secret.length, "the length survives so a capture still shows how long the real value was");
-    assert.ok(result.secret.startsWith("REDACTED-"));
-    assert.ok(!result.secret.includes("9f2ac1"));
+    assert.ok(result.secret.startsWith("REDACTED-"), "the cleared secret carries the redaction marker");
+    assert.ok(!result.secret.includes("9f2ac1"), "the secret's own text does not survive the scrub");
     assert.equal(result.serial.length, unitSerial.length);
     assert.notEqual(result.serial, unitSerial);
   });
@@ -330,7 +331,7 @@ describe("the capture scrub", () => {
     const result = scrubbed({ "pin_code": "482913" }) as { pin_code: string };
 
     assert.match(result.pin_code, /^REDACTED-[0-9a-f]{8}-$/);
-    assert.ok(!result.pin_code.includes("482913"));
+    assert.ok(!result.pin_code.includes("482913"), "the short credential does not survive the scrub");
   });
 
   test("a phone number lands in the fictional block and a plate in a form no jurisdiction issues", () => {
@@ -412,7 +413,7 @@ describe("the capture scrub", () => {
 
     assert.ok(result.icons.xs.endsWith("/fingerprint/icons/be028cb0_25x25.png"), "the path is evidence and survives");
     assert.ok(result.icons.l.endsWith("?v=3"), "so does the query");
-    assert.ok(!result.icons.xs.includes("host-1.acme.example"));
+    assert.ok(!result.icons.xs.includes("host-1.acme.example"), "the icon host does not survive the scrub");
     assert.match(result.icons.xs, /^https:\/\/host-\d+\.test\.local\//);
     assert.equal(new URL(result.icons.l).hostname, new URL(result.icons.xs).hostname, "one host is one stand-in across both entries");
   });
@@ -422,10 +423,10 @@ describe("the capture scrub", () => {
     // A secret inside a value, under a key no catalog would flag. The rest of the locator survives, because it is the part that carries meaning.
     const result = scrubbed({ streamUrl: "https://operator:hunter2@10.13.0.42:8443/live/feed" }) as { streamUrl: string };
 
-    assert.ok(!result.streamUrl.includes("hunter2"));
-    assert.ok(!result.streamUrl.includes("operator"));
-    assert.ok(!result.streamUrl.includes("10.13.0.42"));
-    assert.ok(result.streamUrl.startsWith("https://192.0.2."));
+    assert.ok(!result.streamUrl.includes("hunter2"), "the password in the URL does not survive the scrub");
+    assert.ok(!result.streamUrl.includes("operator"), "the user name in the URL does not survive the scrub");
+    assert.ok(!result.streamUrl.includes("10.13.0.42"), "the host address in the URL does not survive the scrub");
+    assert.ok(result.streamUrl.startsWith("https://192.0.2."), "the host address takes a documentation-range stand-in");
     assert.ok(result.streamUrl.endsWith(":8443/live/feed"), "the port and path are evidence and survive");
   });
 
@@ -451,8 +452,8 @@ describe("the capture scrub", () => {
     assert.deepEqual(Object.keys(result.headers), [ "Authorization", "X-Acme-Site" ], "the header names survive so the shape of the registration is still readable");
     assert.match(result.headers["Authorization"] ?? "", /^REDACTED-/);
     assert.match(result.headers["X-Acme-Site"] ?? "", /^REDACTED-/);
-    assert.ok(!JSON.stringify(result.headers).includes("9f2ac1"));
-    assert.ok(!JSON.stringify(result.headers).includes("warehouse-3"));
+    assert.ok(!JSON.stringify(result.headers).includes("9f2ac1"), "the authorization header's value does not survive the scrub");
+    assert.ok(!JSON.stringify(result.headers).includes("warehouse-3"), "the site header's value does not survive the scrub");
   });
 
   test("a secret container reaches through an array as well as an object", () => {
@@ -512,7 +513,7 @@ describe("the capture scrub", () => {
     };
 
     assert.equal(result.room_id, "WR-" + result.hub.mac + "-D4aKxWPrjIOp7eVbBBcfJsMtbbxVhU2n");
-    assert.ok(!result.room_id.includes("02ffee000002"));
+    assert.ok(!result.room_id.includes("02ffee000002"), "the address inside the room identifier does not survive the scrub");
     assert.ok(result.room_id.startsWith("WR-"), "the structure around the address is preserved");
   });
 
@@ -530,7 +531,7 @@ describe("the capture scrub", () => {
     assert.equal(result.console_id.length, planted.length, "the identifier keeps its exact width");
     assert.equal(suffix, "1457807768", "the structure past the address is evidence and survives");
     assert.equal(run.length, 60);
-    assert.ok(!result.console_id.includes("02FFEE000004"));
+    assert.ok(!result.console_id.includes("02FFEE000004"), "the address inside the console identifier does not survive the scrub");
     assert.notEqual(run, result.host_device_mac, "the long run is not the address stand-in, because which twelve characters were the address is unknowable");
   });
 
@@ -710,7 +711,7 @@ describe("the capture scrub", () => {
     assert.notEqual(row?.device_id, "02ffee000001");
     assert.equal(row?.key, "ssh_password", "the key text names what the row is about and is evidence, not identity");
     assert.equal(row?.tag, "credential");
-    assert.ok(!(row?.value ?? "").includes("9fK2pQ7mVx4LrT8nBwZq"));
+    assert.ok(!(row?.value ?? "").includes("9fK2pQ7mVx4LrT8nBwZq"), "the credential row's value does not survive the scrub");
   });
 
   test("a config row whose value is a container clears every string beneath it", () => {
@@ -784,10 +785,10 @@ describe("the capture scrub", () => {
 
   test("an identifier that is entirely hexadecimal at the camera width is caught by that width, in key position as well", () => {
 
-    /* The widest identifier the wire carries and the one no catalog reaches: a camera's identity arrives as an event's device identifier, as the object an event
-     * names, and as a metadata member spelled in camelCase, and controller maps key entries by it. All four have to answer alike or a scrubbed capture stops
-     * showing that they are one camera. The two neighbors are the other half of the promise: the width is matched whole, so a value one character short of it or
-     * one character past it is not an identifier and is left as the evidence it is.
+    /* The widest identifier the wire carries and the one no catalog reaches: a camera's identity arrives under several spellings - as an event's device identifier,
+     * as the object an event names, as a metadata member spelled in camelCase, and as a key the controller maps entries by. They all have to answer alike or a
+     * scrubbed capture stops showing that they are one camera. The two neighbors are the other half of the promise: the width is matched whole, so a value one
+     * character short of it or one character past it is not an identifier and is left as the evidence it is.
      */
     const identifier = "0a1b2c3d4e5f60718293a4b5";
     const context = createScrubContext();
@@ -819,7 +820,7 @@ describe("the capture scrub", () => {
     const result = scrub({ "device_id": run, "room_id": "WR-" + run + "-D4aKxWPrjIOp7eVbBBcfJsMtbbxVhU2n" }, context) as { device_id: string; room_id: string };
 
     assert.equal(result.room_id, "WR-" + result.device_id + "-D4aKxWPrjIOp7eVbBBcfJsMtbbxVhU2n", "the structure around the run survives it");
-    assert.ok(!result.room_id.includes(run));
+    assert.ok(!result.room_id.includes(run), "the run inside the room identifier does not survive the scrub");
   });
 
   test("a representative document carries none of the values planted in it", () => {

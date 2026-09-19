@@ -11,6 +11,8 @@ What happened, as a log entry describes it.
 `log_key` is the finest-grained name for the event - `access.door.unlock.success.remote.user` where `type` says only `access.door.unlock` - so it is what to
 branch on when the outcome matters. Both it and `log_category` are on the wire and in no documented schema.
 
+`published` is epoch milliseconds, unlike the epoch-seconds convention `since`, `until`, and the resource's `created_at`/`updated_at` use elsewhere in this domain.
+
 Live-verified.
 
 ## Properties

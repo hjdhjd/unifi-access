@@ -17,7 +17,7 @@ Tampering is a property of the record rather than of a notification, which is wh
 device's own row and revises it there, so a consumer asking what is true right now reads this, while the typed `tamperAlert` activity event announces the incident
 as it happens. Each answers a different question, and a consumer announcing an alert reads the state separately rather than inferring it from the alert's arrival.
 
-The neighbouring `tampering` row is the device's tampering-alert setting, and a live capture on a UA Ultra established what that setting does to the reading
+The neighboring `tampering` row is the device's tampering-alert setting, and a live capture on a UA Ultra established what that setting does to the reading
 beside it: the hardware reports no tamper input while it is off. An enclosure trip made with the setting off moved no row and raised no notification, while the
 same trip made with it on moved the input row and raised the notification. So a record whose setting row is present and reads anything but `true` answers
 `undefined` here, its input row being a stale reading rather than a quiet one, while a record carrying no setting row gates nothing, because an absent setting

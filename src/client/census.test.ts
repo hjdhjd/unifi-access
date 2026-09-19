@@ -14,7 +14,7 @@ import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
 import { topologyDevices } from "../testing.helpers.ts";
 
-// Named entries from the captured listing: the hub that describes itself, the reader attached to it, and the doors the three groups are keyed by.
+// Named entries from the captured listing: the hub that describes itself, the reader attached to it, and the doors the groups are keyed by.
 const ULTRA = "aabbcc000000";
 const HUB = "aabbcc000001";
 const READER_PRO = "aabbcc000002";
@@ -124,7 +124,7 @@ describe("officialDeviceRecord", () => {
 
   test("derives the hardware address from an address-shaped identifier, and derives none from any other", () => {
 
-    /* The derivation's whole licence is that the identifier IS the address with its separators removed. An identifier that is not address-shaped licenses nothing,
+    /* The derivation's whole license is that the identifier IS the address with its separators removed. An identifier that is not address-shaped licenses nothing,
      * and the record then carries no `mac` key at all rather than an empty string or a mangled one.
      */
     const rows: { id: string; mac?: string }[] = [

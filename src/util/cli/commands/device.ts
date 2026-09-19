@@ -3,13 +3,14 @@
  * device.ts: `ufa device <restart|settings|state|update>` - the device command group: the fleet restart policy, per-device access methods, the readings listing,
  * and the direct config write.
  */
-import type { AccessDevice, AccessDeviceConfigPayload, AccessOfficialAccessMethodValue, AccessOfficialAccessMethodsUpdate } from "../../../index.ts";
-import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand, isMember } from "../shared.ts";
+import { ACCESS_TERMINAL_INPUTS, AccessAbortedError, formatErrorChain } from "../../../index.ts";
+import type { AccessDevice, AccessDeviceConfigPayload, AccessHub, AccessOfficialAccessMethodValue, AccessOfficialAccessMethodsUpdate, AccessPortBinding,
+  AccessTerminalInput, AccessTerminalInputFacts } from "../../../index.ts";
+import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand, isMember, refuseDocumentFlags } from "../shared.ts";
 import type { CommandContext, CommandHandler, CommandSpec } from "../shared.ts";
 import { alignedList, renderDocument } from "../output/format.ts";
-import { allTargets, findTarget } from "../lookup.ts";
+import { allTargets, findTarget, hubHandle } from "../lookup.ts";
 import { requireOfficial, requireSurface } from "../client.ts";
-import { AccessAbortedError } from "../../../index.ts";
 import { parseArgs } from "node:util";
 
 const RESTART_USAGE = [
@@ -153,7 +154,7 @@ const restartHandler = async (ctx: CommandContext): Promise<void> => {
         throw error;
       }
 
-      ctx.output.line(candidate.name + " (" + candidate.id + ") - failed: " + ((error instanceof Error) ? error.message : String(error)));
+      ctx.output.line(candidate.name + " (" + candidate.id + ") - failed: " + formatErrorChain(error));
     }
   }
 };
@@ -164,7 +165,8 @@ const SETTINGS_USAGE = [
   "",
   "Read or change a device's access-method settings, through the official API. With no flags, the settings are read and printed; with them, each named",
   "method is switched and the settings are read back, because unsupported hardware answers a settings write with success and changes nothing - the",
-  "read-back is what tells a toggle that held from one the device declined.",
+  "read-back is what tells a toggle that held from one the device declined. If the read-back is cancelled or fails after the write was accepted, the",
+  "command says so rather than leaving the change looking failed.",
   "",
   "Methods: bt_button, bt_shake, bt_tap, face, mobile_wave, nfc, pin_code, qr_code, touch_pass, wave.",
   "A device reports only the methods its hardware class offers, so an absent method reads as unavailable rather than disabled.",
@@ -201,7 +203,8 @@ function parseMethod(value: string, flag: string): (typeof ACCESS_METHODS)[numbe
  * `ufa device settings`. With no flags, reads and prints the device's access-method settings; with them, composes the sparse update the wire takes - each method's
  * primary `enabled` member, in the controller's own `"yes"`/`"no"` vocabulary - writes it, awaits the write, and then reads back sequentially to report which toggles
  * held. The read-back is the point rather than a nicety: unsupported hardware answers the write with success and changes nothing, and surfacing that decline
- * per-method is the honest report.
+ * per-method is the honest report. A read-back that does not complete after the write was accepted is reported as a lost confirmation rather than a lost change,
+ * and the failure then propagates as itself.
  *
  * @category CLI
  */
@@ -234,12 +237,9 @@ const settingsHandler = async (ctx: CommandContext): Promise<void> => {
     throw new CliError("The method \"" + contradiction + "\" cannot be both enabled and disabled in one invocation.", { exitCode: 2 });
   }
 
-  // The scrub rewrites a document on its way to the terminal, and the change arm prints per-method confirmations composed here rather than anything the controller
-  // sent. Refusing beats quietly honoring it: a stated rejection is easier to predict than a flag that means nothing on the arm the operator chose.
-  if((values.scrub === true) && ((enables.length > 0) || (disables.length > 0))) {
-
-    throw new CliError("A settings change reports each method rather than printing a document, so --scrub applies to the settings read only.", { exitCode: 2 });
-  }
+  // The change arm prints per-method confirmations composed here rather than a document, so the document-only flags are refused before anything connects.
+  refuseDocumentFlags(values, { changing: (enables.length > 0) || (disables.length > 0),
+    prints: "A settings change reports each method rather than printing a document", read: "settings read" });
 
   const credentials = await ctx.loadCredentials();
 
@@ -281,7 +281,16 @@ const settingsHandler = async (ctx: CommandContext): Promise<void> => {
   // The write completes before the read-back begins - a read that raced the write could report the settings as they were, not as they held.
   await officialDevices.updateSettings(deviceId, { "access_methods": update }, { signal: ctx.signal });
 
-  const after = await officialDevices.fetchSettings(deviceId, { signal: ctx.signal });
+  // Once the controller has accepted the write, a read-back that does not complete - a Ctrl-C landing between the two calls, or the read failing on its own - is a
+  // lost confirmation rather than a lost change, and the command says so before the failure propagates, because a silent exit or a bare error here reads as the
+  // change having failed. The failure still travels as itself, so an abort exits 130 through the entry point's cascade like every other abort. An abort landing on
+  // the write is not reported here: whether an interrupted request reached the controller is the ambiguity every write in the CLI shares, not this command's own.
+  const after = await officialDevices.fetchSettings(deviceId, { signal: ctx.signal }).catch((error: unknown): never => {
+
+    ctx.output.line("The settings change was accepted, but the read-back that reports whether each method held did not complete.");
+
+    throw error;
+  });
 
   for(const [ method, value ] of requested) {
 
@@ -400,8 +409,8 @@ const STATE_USAGE = [
 
   "Usage: ufa device state [all | DEVICE_NAME_OR_ID] [--json] [--debug]",
   "",
-  "Print what the controller currently reports about each device: whether it is online, what carries it, and, for hardware that detects tampering, what",
-  "its tamper reading says.",
+  "Print what the controller currently reports about each device: whether it is online, what carries it, for hardware that detects tampering what its",
+  "tamper reading says, and, for a hub, what each of the terminals on its back reads and which door each of its ports is bound to.",
   "",
   "Targets:",
   "  all                  Report every addressable device. This is what a bare invocation does.",
@@ -410,6 +419,13 @@ const STATE_USAGE = [
   "A tamper reading of \"unreported\" means nothing has established one - a client holding only a token reads every device that way, because the official",
   "census carries no configuration rows, and a device whose tampering alert is switched off in the Access console reads that way too, because its hardware",
   "then reports no tamper input. A device whose hardware cannot detect tampering carries no tamper reading at all.",
+  "",
+  "A hub's terminals are listed by name - dps, rel, ren, rex, and side dps - each reading \"on\" or \"off\" where the hardware reports something wired to it and",
+  "a reading established, \"unreported\" where it reports something wired but no reading has been established, and \"unwired\" where it reports nothing wired.",
+  "A terminal the hardware says nothing about at all is not listed, and a device that is not a hub lists none.",
+  "",
+  "A hub's port bindings follow its terminals, each as the bound door's name (or its id where the controller gave no name) and the port where the record",
+  "names one. A hub whose ports bind no door lists none.",
   "",
   "Options:",
   "  --json      Emit one JSON object keyed by device id.",
@@ -429,20 +445,43 @@ const STATE_USAGE = [
  */
 interface DeviceReadings {
 
+  /* The bindings as the library hands them over, in the controller's own delivery order, present for a hub handle and absent for anything else. An empty list is a
+   * hub whose ports bind no door, which is a different statement from a device that has no ports to bind.
+   */
+  bindings?: readonly AccessPortBinding[];
   id: string;
   isOnline: boolean;
   isTamperCapable: boolean;
   name: string;
   tamperState: boolean | undefined;
+  /* A reading list rather than a map, because the vocabulary's own order is the order the listing renders them in and a map would leave that ordering to whoever
+   * walked it. It is present for a hub handle and absent for anything else, and an empty list is a hub with nothing to report.
+   */
+  terminals?: readonly EstablishedTerminal[];
   uplinkId: string | null;
 }
 
-// Take the plain-value snapshot of one device handle. Every value comes off the handle's own getters, so this listing reads the devices tier exactly as the
-// sibling leaves do and never reaches past it into the state model.
-function snapshotReadings(device: AccessDevice): DeviceReadings {
+// One terminal a listing carries, and the verdict behind it. The facts are narrowed to the two arms a hub established, because a terminal the hardware said
+// nothing about is left out of the listing rather than rendered as an empty reading.
+type EstablishedFacts = Exclude<AccessTerminalInputFacts, { wired?: undefined }>;
+type EstablishedTerminal = readonly [ AccessTerminalInput, EstablishedFacts ];
 
-  return { id: device.id, isOnline: device.isOnline, isTamperCapable: device.isTamperCapable, name: device.name, tamperState: device.tamperState,
+// Take the plain-value snapshot of one device handle. Every value comes off the handle's own getters, so this listing reads the devices tier exactly as the
+// sibling leaves do and never reaches past it into the state model. The hub handle arrives as an argument because resolving it is the one thing this cannot do
+// from a device handle alone, and a device that drives no door has none.
+function snapshotReadings(device: AccessDevice, hub: AccessHub | undefined): DeviceReadings {
+
+  return { bindings: hub?.portBindings, id: device.id, isOnline: device.isOnline, isTamperCapable: device.isTamperCapable,
+    name: device.name, tamperState: device.tamperState,
+    terminals: (hub === undefined) ? undefined : ACCESS_TERMINAL_INPUTS.map((input) => [ input, hub.terminalInput(input) ] as const).filter(established),
     uplinkId: device.uplinkId };
+}
+
+// Which of a hub's terminals the listing carries: the ones it established a verdict for. Narrowing the pair here is what lets the renderers read that verdict
+// without asking again whether there is one.
+function established(entry: readonly [ AccessTerminalInput, AccessTerminalInputFacts ]): entry is EstablishedTerminal {
+
+  return entry[1].wired !== undefined;
 }
 
 // How a tamper reading reads on the default form. The unestablished case is spelled out rather than left blank, because "nothing has said" is a different answer
@@ -465,11 +504,51 @@ function describeTamper(state: boolean | undefined): string {
   }
 }
 
-// One device's readings as the aligned form's description: the readings a device can always answer, and the tamper reading only where the hardware produces one.
+// How each terminal is named on the default form. The spellings are the operator's rather than the vocabulary's, which is why the side door's position sensor
+// reads as two words where the library's own name for it is one.
+const TERMINAL_LABELS = { dps: "dps", rel: "rel", ren: "ren", rex: "rex", sideDps: "side dps" } satisfies Record<AccessTerminalInput, string>;
+
+// How one terminal reads on the default form. A terminal in service whose reading has not been established is spelled out for the reason the tamper reading's
+// own unestablished case is: "nothing has said" is a different answer from "nothing is there", and a blank would read as the second.
+function describeTerminal(facts: EstablishedFacts): string {
+
+  if(!facts.wired) {
+
+    return "unwired";
+  }
+
+  switch(facts.state) {
+
+    case true:
+
+      return "on";
+
+    case false:
+
+      return "off";
+
+    default:
+
+      return "unreported";
+  }
+}
+
+// How one port binding reads on the default form. The bound door's name stands in for its identity wherever the controller gave one, because a person reading a
+// listing knows a door by its name and not by its uuid; the JSON form carries the identity instead, which is what a caller matching the door against the
+// controller's own records needs. The port is named only where the record names one.
+function describeBinding(binding: AccessPortBinding): string {
+
+  return "door " + (binding.name ?? binding.doorId) + ((binding.port !== undefined) ? " on " + binding.port : "");
+}
+
+// One device's readings as the aligned form's description: the readings a device can always answer, the tamper reading only where the hardware produces one, one
+// segment per terminal a hub established a verdict for, and one per door a hub's port is bound to.
 function describeReadings(readings: DeviceReadings): string {
 
   return [ "online " + (readings.isOnline ? "yes" : "no"), "uplink " + (readings.uplinkId ?? "none"),
-    ...(readings.isTamperCapable ? ["tamper " + describeTamper(readings.tamperState)] : []) ].join(", ");
+    ...(readings.isTamperCapable ? ["tamper " + describeTamper(readings.tamperState)] : []),
+    ...(readings.terminals ?? []).map(([ input, facts ]) => TERMINAL_LABELS[input] + " " + describeTerminal(facts)),
+    ...(readings.bindings ?? []).map(describeBinding) ].join(", ");
 }
 
 /* One device's readings as the JSON form carries them, members in alphabetical order.
@@ -477,10 +556,26 @@ function describeReadings(readings: DeviceReadings): string {
  * The tamper member is present only where the hardware can report one, and an unestablished reading is translated to null rather than left undefined, because
  * JSON.stringify drops an undefined member: without the translation a capable device that has reported nothing would be indistinguishable from a device that
  * cannot report at all, which is precisely the difference the reading exists to state.
+ *
+ * The terminals member is present only for a hub, keyed by the library's own terminal names, and a wired terminal whose reading is unestablished carries a null
+ * state for exactly the same reason: stringify would drop it, and a terminal in service that has reported nothing would then be indistinguishable from one the
+ * hardware says nothing is wired to.
+ *
+ * The bindings member is present only for a hub as well, carried as the library's own record shape rather than reshaped here, so a caller reads the same members
+ * the state tier answers with. It needs no null translation, because an absent member here means exactly what it says: this device has no ports to bind.
  */
 function jsonReadings(readings: DeviceReadings): Record<string, unknown> {
 
-  return { online: readings.isOnline, ...(readings.isTamperCapable && { tamper: readings.tamperState ?? null }), uplink: readings.uplinkId };
+  return { ...((readings.bindings !== undefined) && { bindings: readings.bindings }), online: readings.isOnline,
+    ...(readings.isTamperCapable && { tamper: readings.tamperState ?? null }),
+    ...((readings.terminals !== undefined) && { terminals: Object.fromEntries(readings.terminals.map(([ input, facts ]) => [ input, jsonTerminal(facts) ])) }),
+    uplink: readings.uplinkId };
+}
+
+// One terminal as the JSON form carries it, with the null translation the member's own comment above explains.
+function jsonTerminal(facts: EstablishedFacts): Record<string, unknown> {
+
+  return facts.wired ? { state: facts.state ?? null, wired: true } : { wired: false };
 }
 
 /**
@@ -514,7 +609,8 @@ const stateHandler: CommandHandler = async (ctx: CommandContext) => {
   await using client = await ctx.openClient({ debug: values.debug === true, refreshIntervalMs: false, signal: ctx.signal });
 
   // The keyword is tested before name resolution, which is the group's own precedence, and a bare invocation reads as the whole inventory.
-  const readings = (((target === undefined) || (target === "all")) ? allTargets(client) : [findTarget(client, target)]).map(snapshotReadings);
+  const readings = (((target === undefined) || (target === "all")) ? allTargets(client) : [findTarget(client, target)])
+    .map((device) => snapshotReadings(device, hubHandle(client, device.id)));
 
   if(values.json === true) {
 

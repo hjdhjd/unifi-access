@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * json.test.ts: Unit tests for the decode-boundary record predicate. Every caller reads a member off whatever this admits, so the two shapes that would pass a
+ * json.test.ts: Unit tests for the decode-boundary record predicate. Every caller reads a member off whatever this admits, so the shapes that would pass a
  * bare `typeof value === "object"` check - `null` and an array - are what these rows are really about.
  */
 import { describe, test } from "node:test";
@@ -39,7 +39,7 @@ describe("isRecord", () => {
 
     const decoded: unknown = { "code": "SUCCESS" };
 
-    assert.ok(isRecord(decoded));
+    assert.ok(isRecord(decoded), "a plain object is a record");
 
     // Reading through the narrowed type is the whole point of the predicate: this line does not compile against `unknown`.
     assert.equal(decoded["code"], "SUCCESS");

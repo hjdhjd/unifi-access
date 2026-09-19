@@ -34,7 +34,7 @@ const EVENT_NAME_PREFIX = "ufa:event:";
  *    host class. Consumers see only the three rails.
  * 3. It aligns subscriptions with the library's `await using` resource-lifetime discipline: a subscription is a resource, and a `Disposable` subscription completes
  *    that alignment.
- * 4. It preserves Node's battle-tested emit machinery - listener-during-emit reentrancy, sync-throw handling, listener self-removal - which has fifteen years of
+ * 4. It preserves Node's battle-tested emit machinery - listener-during-emit reentrancy, sync-throw handling, listener self-removal - which has a long history of
  *    bug-fixing behind it, without inheriting the surface bloat.
  *
  * The same internal emitter drives all three rails, so a single {@link emit} notifies every active {@link on} callback, resolves every pending {@link once} promise,
@@ -104,7 +104,7 @@ export class EventBus<EventMap extends Record<keyof EventMap, readonly unknown[]
   }
 
   /**
-   * Backpressure-aware async iterable of every subsequent emission of `event`, until `opts.signal` aborts or the consumer stops iterating. Each yielded value is the
+   * Unbounded async iterable of every subsequent emission of `event`, until `opts.signal` aborts or the consumer stops iterating. Each yielded value is the
    * event's argument tuple. The queue is unbounded by default - a slow consumer accumulates pending emissions rather than dropping them.
    *
    * @param event - The event name to stream.

@@ -52,8 +52,8 @@ export interface AccessRefreshDocuments {
 /**
  * What one pass over the official API's listings established: the device records, the door records, and the door-state facts those same doors carried.
  *
- * The three travel together because they are one reading of the controller rather than three, and applying them as one dispatch is what keeps an observer of the
- * hubs from waking before the door state a hub reads has landed.
+ * The collections here travel together because they are one reading of the controller rather than several, and applying them as one dispatch is what keeps an observer
+ * of the hubs from waking before the door state a hub reads has landed.
  *
  * @category State
  */
@@ -354,12 +354,15 @@ export class StateStore implements AsyncDisposable {
    */
   applyRefreshDocuments(documents: AccessRefreshDocuments): void {
 
+    const before = this.#state;
+
     if(documents.controller !== null) {
 
       this.dispatch({ data: documents.controller, kind: "controllerChanged" });
     }
 
     this.dispatch({ data: documents.topology, kind: "bootstrapLoaded" });
+    this.#logApplied("the refresh documents", before);
   }
 
   /**
@@ -381,15 +384,18 @@ export class StateStore implements AsyncDisposable {
    */
   applyDoorStateFacts(entries: readonly AccessDoorStateEntry[], opts: { complete?: boolean } = {}): void {
 
+    const before = this.#state;
+
     this.dispatch({ complete: opts.complete === true, entries, kind: "doorStateFactsApplied" });
+    this.#logApplied("the door-state facts", before);
   }
 
   /**
    * Apply one census from the official API's listings: the device records, the door records, and the door-state facts one pass read, in one dispatch.
    *
-   * A client with no topology seeds from this and re-seeds from it on recovery and on the refresh interval. The three collections travel together so an observer of
-   * the hubs never wakes before the door state a hub reads has landed; the reducer is where the merge, admission, and removal discipline lives. `complete` carries
-   * the same license it carries for the door facts, per collection.
+   * A client with no topology seeds from this and re-seeds from it on recovery and on the refresh interval. Every collection here travels together so an observer of the
+   * hubs never wakes before the door state a hub reads has landed; the reducer is where the merge, admission, and removal discipline lives. `complete` carries the same
+   * license it carries for the door facts, per collection.
    *
    * Package-internal, like {@link StateStore.dispatch}.
    *
@@ -400,7 +406,10 @@ export class StateStore implements AsyncDisposable {
    */
   applyCensus(census: AccessCensus, opts: { complete?: boolean } = {}): void {
 
+    const before = this.#state;
+
     this.dispatch({ complete: opts.complete === true, ...census, kind: "censusApplied" });
+    this.#logApplied("the official census", before);
   }
 
   /**
@@ -420,20 +429,24 @@ export class StateStore implements AsyncDisposable {
     this.#observers.clear();
   }
 
-  // The refresh failsafe. Ticks on the injected clock, and each tick invokes the callback, which reads and applies whatever its mode re-seeds from. A failure is not
-  // fatal: the failsafe simply retries on the next tick, so a transient controller hiccup never tears the loop down, and escalating a sustained failure into a
+  // The refresh failsafe. Delays on the injected clock, and each wake invokes the callback, which reads and applies whatever its mode re-seeds from. A failure is not
+  // fatal: the failsafe simply retries on the next wake, so a transient controller hiccup never tears the loop down, and escalating a sustained failure into a
   // health verdict belongs to the layer that owns connection policy rather than here. The loop ends only when disposal aborts the controller, which surfaces as the
-  // interval iterator throwing its abort error - the normal shutdown path, swallowed here.
+  // delay rejecting with its abort error - the normal shutdown path, swallowed here.
   async #runRefreshLoop(intervalMs: number, refresh: (signal?: AbortSignal) => Promise<void>): Promise<void> {
 
     try {
 
-      for await (const _tick of this.#clock.setInterval(intervalMs, { signal: this.#refreshController.signal })) {
+      for(;;) {
+
+        // eslint-disable-next-line no-await-in-loop
+        await this.#clock.delay(intervalMs, { signal: this.#refreshController.signal });
 
         try {
 
-          // Sequential by design: one refresh per interval, each completing before the next tick is honored.
+          // Sequential by design: one refresh per interval, each completing before the next wake is honored.
 
+          // eslint-disable-next-line no-await-in-loop
           await refresh(this.#refreshController.signal);
         } catch(error) {
 
@@ -449,8 +462,25 @@ export class StateStore implements AsyncDisposable {
       }
     } catch {
 
-      // The interval iterator throws on abort when the store is disposed. That is the expected end of the loop, not an error.
+      // The delay rejects on abort when the store is disposed. That is the expected end of the loop, not an error.
     }
+  }
+
+  /* One debug line per seed that changed what the store holds: the counts the state carries once the application has landed, so a partial delivery - a listing
+   * answered under throttling with a door missing - is diagnosable from a consumer's log at the moment it landed rather than reconstructed later from the
+   * symptoms. The counts are read after the dispatch on purpose: what a consumer can act on is what the store now holds, and a source's own row count would say
+   * nothing about what the reducer admitted. A seed that changed nothing says nothing, on the same principle that keeps the failsafe invisible until something
+   * has actually changed - a refresh that reconciled to zero drift leaves the state reference where it was, and so does any seed reaching a disposed store.
+   */
+  #logApplied(source: string, before: AccessState): void {
+
+    if(Object.is(before, this.#state)) {
+
+      return;
+    }
+
+    this.#log.debug("Applied " + source + " to the state.",
+      { devices: this.#state.devices.size, doorStates: this.#state.doorStates.size, doors: this.#state.doors.size });
   }
 }
 

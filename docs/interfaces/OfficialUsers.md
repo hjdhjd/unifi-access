@@ -544,6 +544,56 @@ The group's own members.
 
 ***
 
+### iterateAll()
+
+```ts
+iterateAll(opts?, call?): AsyncGenerator<AccessOfficialUser>;
+```
+
+Iterate every user, walking the listing to its end. `GET /users`, permission `view:user`.
+
+Composed over [OfficialUsers.fetchAll](#fetchall); the endpoint is live-verified.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `opts` | [`AccessOfficialUserListOptions`](AccessOfficialUserListOptions.md) | The expansions to request, and the page size to walk the listing in. |
+| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+
+#### Returns
+
+`AsyncGenerator`\<[`AccessOfficialUser`](AccessOfficialUser.md)\>
+
+Every user the listing reports, in the order its pages carry them.
+
+***
+
+### iterateSearch()
+
+```ts
+iterateSearch(opts?, call?): AsyncGenerator<AccessOfficialUserSearchResult>;
+```
+
+Iterate every user a search matches, walking the matches to their end. `GET /users/search`, permission `view:user`. Requires UniFi Access 3.1.30 or later.
+
+Composed over [OfficialUsers.search](#search); the endpoint is live-verified and answers no pagination member, so the walk ends after one page.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `opts` | [`AccessOfficialUserSearchOptions`](AccessOfficialUserSearchOptions.md) | The search terms, and the page size to walk the matches in. |
+| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+
+#### Returns
+
+`AsyncGenerator`\<[`AccessOfficialUserSearchResult`](AccessOfficialUserSearchResult.md)\>
+
+Every match the search reports, in the order its pages carry them.
+
+***
+
 ### search()
 
 ```ts
@@ -552,7 +602,8 @@ search(opts?, call?): Promise<AccessOfficialResult<AccessOfficialUserSearchResul
 
 Search users. `GET /users/search`, permission `view:user`. Requires UniFi Access 3.1.30 or later.
 
-Documentation-derived.
+Live-verified (2026-09-07): the keyword matches case-insensitively as a substring of the first name, the last name, and the full name; the answer carries no
+pagination member, so a walk over it ends after its first page.
 
 #### Parameters
 
@@ -565,7 +616,7 @@ Documentation-derived.
 
 `Promise`\<[`AccessOfficialResult`](AccessOfficialResult.md)\<[`AccessOfficialUserSearchResult`](AccessOfficialUserSearchResult.md)[]\>\>
 
-The page of matches, and the pagination describing it.
+The page of matches; pagination is not reported by this endpoint.
 
 ***
 
@@ -782,7 +833,7 @@ Upload a user's profile picture. `POST /users/:id/avatar`, permission `edit:user
 
 Supported for local users only - an account backed by a UI account updates its picture through the UI account interface instead.
 
-Documentation-derived.
+Live-verified (2026-09-18): a multipart upload sending the image under the field `file` answered the stored picture's location under `url`.
 
 #### Parameters
 

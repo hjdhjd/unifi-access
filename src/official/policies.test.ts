@@ -4,21 +4,12 @@
  * type assertions below establish that the response vocabularies stayed open where the wire has outgrown its documentation and closed where a caller composes a
  * request.
  */
-import type { AccessOfficialAccessPolicy, AccessOfficialAccessPolicyResourceRef, AccessOfficialSchedule } from "./policies.ts";
+import type { AccessOfficialAccessPolicy, AccessOfficialAccessPolicyResource, AccessOfficialAccessPolicyResourceRef, AccessOfficialSchedule } from "./policies.ts";
+import { PATH_ID, PATH_ID_ENCODED, VOID_OK, describeDomainTable, officialPath } from "./domain.helpers.ts";
 import { describe, test } from "node:test";
-import { describeDomainTable, officialPath } from "./domain.helpers.ts";
-import type { AccessOfficialAccessPolicyResource } from "./policies.ts";
 import type { DomainRow } from "./domain.helpers.ts";
 import { OfficialAccessPolicies } from "./policies.ts";
 import assert from "node:assert/strict";
-
-// A path parameter carrying a space and a slash, so every row that interpolates one fails mechanically if the method forgot to encode it.
-const ID = "a b/c";
-const ENCODED = "a%20b%2Fc";
-
-// The success envelope with no `data` member at all, exactly as the reference's own samples spell it for a mutation that returns nothing. A void method that went
-// through the typed read instead of the void arm throws on this rather than resolving.
-const VOID_OK = { "code": "SUCCESS", "msg": "success" };
 
 // Transcribed from a live controller.
 const POLICY = { "id": "0ace0000-0000-4000-8000-000000000009", "name": "Default Site Policy",
@@ -42,13 +33,14 @@ const rows: readonly DomainRow<OfficialAccessPolicies>[] = [
     reply: { "code": "SUCCESS", "data": POLICY, "msg": "success" },
     run: async (domain, call) => domain.create({ name: "Nights", "schedule_id": "sched-1" }, call), verb: "POST" },
 
-  { body: "{\"name\":\"Days\"}", expected: POLICY, method: "update", path: officialPath("/access_policies/" + ENCODED), reply:
-    { "code": "SUCCESS", "data": POLICY, "msg": "success" }, run: async (domain, call) => domain.update(ID, { name: "Days" }, call), verb: "PUT" },
+  { body: "{\"name\":\"Days\"}", expected: POLICY, method: "update", path: officialPath("/access_policies/" + PATH_ID_ENCODED), reply:
+    { "code": "SUCCESS", "data": POLICY, "msg": "success" }, run: async (domain, call) => domain.update(PATH_ID, { name: "Days" }, call), verb: "PUT" },
 
-  { method: "delete", path: officialPath("/access_policies/" + ENCODED), reply: VOID_OK, run: async (domain, call) => domain.delete(ID, call), verb: "DELETE" },
+  { method: "delete", path: officialPath("/access_policies/" + PATH_ID_ENCODED), reply: VOID_OK, run: async (domain, call) => domain.delete(PATH_ID, call),
+    verb: "DELETE" },
 
-  { expected: POLICY, method: "fetch", path: officialPath("/access_policies/" + ENCODED), reply: { "code": "SUCCESS", "data": POLICY, "msg": "success" },
-    run: async (domain, call) => domain.fetch(ID, call), verb: "GET" },
+  { expected: POLICY, method: "fetch", path: officialPath("/access_policies/" + PATH_ID_ENCODED), reply: { "code": "SUCCESS", "data": POLICY, "msg": "success" },
+    run: async (domain, call) => domain.fetch(PATH_ID, call), verb: "GET" },
 
   { expected: [POLICY], method: "fetchAll", path: officialPath("/access_policies"), reply: { "code": "SUCCESS", "data": [POLICY], "msg": "success" },
     run: async (domain, call) => domain.fetchAll(call), verb: "GET" },
@@ -56,15 +48,15 @@ const rows: readonly DomainRow<OfficialAccessPolicies>[] = [
   { body: "{\"name\":\"Holidays\"}", expected: HOLIDAY_GROUP, method: "createHolidayGroup", path: officialPath("/access_policies/holiday_groups"), reply:
     { "code": "SUCCESS", "data": HOLIDAY_GROUP, "msg": "success" }, run: async (domain, call) => domain.createHolidayGroup({ name: "Holidays" }, call), verb: "POST" },
 
-  { body: "{\"name\":\"Holidays\"}", expected: HOLIDAY_GROUP, method: "updateHolidayGroup", path: officialPath("/access_policies/holiday_groups/" + ENCODED),
-    reply: { "code": "SUCCESS", "data": HOLIDAY_GROUP, "msg": "success" }, run: async (domain, call) => domain.updateHolidayGroup(ID, { name: "Holidays" }, call),
+  { body: "{\"name\":\"Holidays\"}", expected: HOLIDAY_GROUP, method: "updateHolidayGroup", path: officialPath("/access_policies/holiday_groups/" + PATH_ID_ENCODED),
+    reply: { "code": "SUCCESS", "data": HOLIDAY_GROUP, "msg": "success" }, run: async (domain, call) => domain.updateHolidayGroup(PATH_ID, { name: "Holidays" }, call),
     verb: "PUT" },
 
-  { method: "deleteHolidayGroup", path: officialPath("/access_policies/holiday_groups/" + ENCODED), reply: VOID_OK,
-    run: async (domain, call) => domain.deleteHolidayGroup(ID, call), verb: "DELETE" },
+  { method: "deleteHolidayGroup", path: officialPath("/access_policies/holiday_groups/" + PATH_ID_ENCODED), reply: VOID_OK,
+    run: async (domain, call) => domain.deleteHolidayGroup(PATH_ID, call), verb: "DELETE" },
 
-  { expected: HOLIDAY_GROUP, method: "fetchHolidayGroup", path: officialPath("/access_policies/holiday_groups/" + ENCODED), reply:
-    { "code": "SUCCESS", "data": HOLIDAY_GROUP, "msg": "success" }, run: async (domain, call) => domain.fetchHolidayGroup(ID, call), verb: "GET" },
+  { expected: HOLIDAY_GROUP, method: "fetchHolidayGroup", path: officialPath("/access_policies/holiday_groups/" + PATH_ID_ENCODED), reply:
+    { "code": "SUCCESS", "data": HOLIDAY_GROUP, "msg": "success" }, run: async (domain, call) => domain.fetchHolidayGroup(PATH_ID, call), verb: "GET" },
 
   { expected: [HOLIDAY_GROUP_SUMMARY], method: "fetchAllHolidayGroups", path: officialPath("/access_policies/holiday_groups"), reply:
     { "code": "SUCCESS", "data": [HOLIDAY_GROUP_SUMMARY], "msg": "success" }, run: async (domain, call) => domain.fetchAllHolidayGroups(call), verb: "GET" },
@@ -73,17 +65,17 @@ const rows: readonly DomainRow<OfficialAccessPolicies>[] = [
     path: officialPath("/access_policies/schedules"), reply: { "code": "SUCCESS", "data": SCHEDULE, "msg": "success" },
     run: async (domain, call) => domain.createSchedule({ name: "Nights", "week_schedule": WEEK }, call), verb: "POST" },
 
-  { body: "{\"name\":\"Nights\"}", method: "updateSchedule", path: officialPath("/access_policies/schedules/" + ENCODED), reply: VOID_OK,
-    run: async (domain, call) => domain.updateSchedule(ID, { name: "Nights" }, call), verb: "PUT" },
+  { body: "{\"name\":\"Nights\"}", method: "updateSchedule", path: officialPath("/access_policies/schedules/" + PATH_ID_ENCODED), reply: VOID_OK,
+    run: async (domain, call) => domain.updateSchedule(PATH_ID, { name: "Nights" }, call), verb: "PUT" },
 
-  { expected: SCHEDULE, method: "fetchSchedule", path: officialPath("/access_policies/schedules/" + ENCODED), reply:
-    { "code": "SUCCESS", "data": SCHEDULE, "msg": "success" }, run: async (domain, call) => domain.fetchSchedule(ID, call), verb: "GET" },
+  { expected: SCHEDULE, method: "fetchSchedule", path: officialPath("/access_policies/schedules/" + PATH_ID_ENCODED), reply:
+    { "code": "SUCCESS", "data": SCHEDULE, "msg": "success" }, run: async (domain, call) => domain.fetchSchedule(PATH_ID, call), verb: "GET" },
 
   { expected: [SCHEDULE], method: "fetchAllSchedules", path: officialPath("/access_policies/schedules"), reply:
     { "code": "SUCCESS", "data": [SCHEDULE], "msg": "success" }, run: async (domain, call) => domain.fetchAllSchedules(call), verb: "GET" },
 
-  { method: "deleteSchedule", path: officialPath("/access_policies/schedules/" + ENCODED), reply: VOID_OK,
-    run: async (domain, call) => domain.deleteSchedule(ID, call), verb: "DELETE" }
+  { method: "deleteSchedule", path: officialPath("/access_policies/schedules/" + PATH_ID_ENCODED), reply: VOID_OK,
+    run: async (domain, call) => domain.deleteSchedule(PATH_ID, call), verb: "DELETE" }
 ];
 
 describeDomainTable({ domainClass: OfficialAccessPolicies, name: "OfficialAccessPolicies", rows });

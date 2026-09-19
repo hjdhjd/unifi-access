@@ -13,7 +13,7 @@ describe("noopLog", () => {
 
     // A no-op logger is proven by what never reaches the process streams, so we intercept both writers for the duration of the calls and count the bytes they are
     // handed. Counting bytes rather than merely flagging that a write happened means a single stray newline fails this as loudly as a full message would. The
-    // interception window covers only the four synchronous calls below, so the test runner's own reporter output is never caught in it.
+    // interception window covers only the synchronous calls below, so the test runner's own reporter output is never caught in it.
     const originalStdoutWrite = process.stdout.write.bind(process.stdout);
     const originalStderrWrite = process.stderr.write.bind(process.stderr);
     let capturedBytes = 0;

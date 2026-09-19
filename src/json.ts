@@ -7,8 +7,8 @@
  * Whether a decoded value is a record - a non-null, non-array object - which is the shape every envelope, payload, and wire record must have before a member is
  * read off it.
  *
- * One definition because every decode boundary in the library asks the same question: the notification classifier testing a frame, the official dispatch testing
- * an envelope, the webhook decoder testing a delivery, and the reducer's merge deciding whether two values recurse or replace.
+ * One definition because every decode boundary in the library asks the same question, among them the notification classifier testing a frame, the official dispatch
+ * testing an envelope, the webhook decoder testing a delivery, and the reducer's merge deciding whether two values recurse or replace.
  *
  * @param value - Any decoded value.
  *

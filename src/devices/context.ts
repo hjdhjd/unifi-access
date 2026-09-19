@@ -33,6 +33,9 @@ export type StateReader = Pick<StateStore, "observe" | "snapshot">;
  * the official facade. A projection holding the facade could issue an official call outside the routing decision; a projection holding the service could write to
  * the capability verdicts it keeps. This tier decides neither, and the type is what says so.
  *
+ * `log` is carried on the same terms as every other subsystem the composition root wires together, each of which receives the client's own injected logger
+ * regardless of whether it calls it yet; keeping the shape consistent here is what spares a future projection that does need to log from widening this type.
+ *
  * @category Devices
  */
 export interface AccessDeviceContext {

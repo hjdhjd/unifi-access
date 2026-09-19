@@ -6,9 +6,8 @@
 import { ACCESS_OFFICIAL_API_PATH_PREFIX, ACCESS_OFFICIAL_API_PORT } from "../settings.ts";
 import { describe, test } from "node:test";
 import { officialEndpoint, officialHost, officialNotificationUrl, officialPageQuery } from "./endpoints.ts";
+import { HOST } from "./domain.helpers.ts";
 import assert from "node:assert/strict";
-
-const HOST = "10.0.0.1";
 
 describe("official endpoints", () => {
 

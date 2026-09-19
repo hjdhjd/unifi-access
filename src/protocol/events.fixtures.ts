@@ -1,6 +1,10 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * events.fixtures.ts: Real UniFi Access notification packets, captured from live controllers and embedded verbatim.
+ *
+ * The controller document the topology fixtures carry was captured on 2026-08-13 and reported UniFi Access v4.3.3+12030, and the 2026 captures in this file come
+ * from that controller, the tamper window aside; the 2024 captures and the tamper window have no recorded version. A notification packet carries no schema version
+ * of its own on the wire, so that application version is what a recapture is compared against.
  */
 import type { AccessEventPacket } from "../types/index.ts";
 
@@ -8,8 +12,8 @@ import type { AccessEventPacket } from "../types/index.ts";
  * type model against real wire material. Nothing here is tidied: key order, casing, and the nineteen-digit revision strings are the controller's own.
  */
 
-/* The 2026 corpus: one continuous capture window from a controller running both notification dialects. It carries all eight event names the window produced,
- * including the paired legacy and v2 emissions for the same physical change and a v2-only burst with no legacy twin.
+/* The 2026 corpus: one continuous capture window from a controller running both notification dialects. It carries every event name the window produced, including
+ * the paired legacy and v2 emissions for the same physical change and a v2-only burst with no legacy twin.
  *
  * Captured from a live controller, 2026.
  */
@@ -12791,8 +12795,8 @@ export const accessEventPacketsFixture: AccessEventPacket[] = [
   }
 ];
 
-/* Two specimens from an older controller, kept because they pin the legacy dialect's shape on firmware that predates the v2 namespace entirely: a location update
- * and a full-record device update.
+/* Specimens from an older controller, kept because they pin the legacy dialect's shape on firmware that predates the v2 namespace entirely: a location update and
+ * a full-record device update.
  *
  * Captured from a live controller, 2024.
  */

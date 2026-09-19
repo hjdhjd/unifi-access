@@ -66,6 +66,7 @@ export interface AccessControllerSettingsConfigInterface {
   evacuation: boolean;
   exit_greet: string;
   exit_salutation: string;
+  // The element shapes are not settled: both lists have only ever been observed empty, so the open JSON type admits whatever the controller sends.
   express_mode_device_ids: AccessKnownJsonValue[];
   face_anti_spoofing_device_ids: AccessKnownJsonValue[];
   // A string-encoded boolean, sent as `"no"` rather than as `false`.
@@ -107,6 +108,7 @@ export interface AccessControllerSettingsConfigInterface {
   };
   // Transposed the other way from `mgnt_network` above. Both spellings are the controller's own.
   mngt_network_id: string;
+  // A rate limit expressed as a count-over-interval pattern, such as `"5-count/10-seconds"`.
   nfc_limit: string;
   notify_to_admin: boolean;
   pin_code_length: number;
@@ -114,6 +116,7 @@ export interface AccessControllerSettingsConfigInterface {
   pin_code_length_type: string;
   pin_code_shuffle: boolean;
   pin_code_strong: boolean;
+  // A rate limit expressed as a count-over-interval pattern, such as `"5-count/10-seconds"`.
   pin_limit: string;
   // Sent as `null`, so the populated shape is unpinned and the open JSON type admits whatever the controller sends.
   pro_remote_channel: Nullable<AccessKnownJsonValue>;

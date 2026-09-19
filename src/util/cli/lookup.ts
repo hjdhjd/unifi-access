@@ -3,6 +3,7 @@
  * lookup.ts: Finding things in a connected client by what the operator typed - the one home for resolving a device, a door, or an official record by id or name.
  */
 import type { AccessClient, AccessDevice, AccessHub, AccessStateDoor } from "../../index.ts";
+import { AccessApiError } from "../../index.ts";
 import { CliError } from "./shared.ts";
 
 /**
@@ -38,6 +39,26 @@ export interface DeviceResolution {
 export function allTargets(client: AccessClient): readonly AccessDevice[] {
 
   return [ ...client.devices, ...client.accessPoints ];
+}
+
+/**
+ * The hub-capable handle behind one device, where the device has one.
+ *
+ * Both collections are consulted because a hub reaches a consumer two ways and neither alone is the whole set: single-door hardware is a hub in its own right,
+ * while each port of a multi-port hub is an access point. A device that drives no door answers `undefined` from both, and so does a whole multi-port hub record,
+ * which the registry mints no hub handle for on purpose - its ports are what address its doors. Every command that needs the hub behind a device resolves it
+ * here, so the two-collection rule is stated once rather than at each caller.
+ *
+ * @param client - The connected client.
+ * @param id     - The device identifier.
+ *
+ * @returns The hub handle, or `undefined` where the device has none.
+ *
+ * @category CLI
+ */
+export function hubHandle(client: AccessClient, id: string): AccessHub | undefined {
+
+  return client.hub(id) ?? client.accessPoint(id);
 }
 
 /**
@@ -169,7 +190,7 @@ function matchDoor(doors: ReadonlyMap<string, AccessStateDoor>, token: string): 
     if(second !== undefined) {
 
       throw new CliError([ "More than one door matches \"" + token + "\" - name the one to command:",
-        ...matched.map(([ id, door ]) => "  " + door.full_name + " => " + id) ].join("\n"));
+        ...matched.map(([ id, door ]) => "  " + doorName(door) + " => " + id) ].join("\n"));
     }
 
     if(first !== undefined) {
@@ -207,7 +228,7 @@ export function findDoorTarget(client: AccessClient, token: string): DoorTarget 
 
   if(device !== undefined) {
 
-    const hub = client.hub(device.id) ?? client.accessPoint(device.id);
+    const hub = hubHandle(client, device.id);
 
     if(hub === undefined) {
 
@@ -230,7 +251,7 @@ export function findDoorTarget(client: AccessClient, token: string): DoorTarget 
 
     if(second !== undefined) {
 
-      throw new CliError([ "More than one device drives the door \"" + door.full_name + "\" - name the one to command:",
+      throw new CliError([ "More than one device drives the door \"" + doorName(door) + "\" - name the one to command:",
         ...candidates.map((hub) => "  " + hub.name + " => " + hub.id) ].join("\n"));
     }
 
@@ -238,15 +259,30 @@ export function findDoorTarget(client: AccessClient, token: string): DoorTarget 
   }
 
   // Nothing matched, so the listing carries both vocabularies: the devices and the topology's doors.
-  const doorListing = [...doors.values()].map((door) => "  " + door.full_name + " => " + door.unique_id);
+  const doorListing = [...doors.values()].map((door) => "  " + doorName(door) + " => " + door.unique_id);
 
   throw new CliError([ "No device or door matches \"" + token + "\" by id or name.", ...deviceListing(allTargets(client)),
     ...((doorListing.length > 0) ? [ "", "Doors:", ...doorListing ] : []) ].join("\n"));
 }
 
 /**
+ * How the CLI spells a door wherever it names one: the topology's full name, which is what tells one floor's "Loading Dock" from another's. Every line that
+ * names a door - a confirmation, an ambiguity listing, a refusal, a watch row - reads this one spelling, so the choice lives here and nowhere else.
+ *
+ * @param door - The door record.
+ *
+ * @returns The door's display spelling.
+ *
+ * @category CLI
+ */
+export function doorName(door: AccessStateDoor): string {
+
+  return door.full_name;
+}
+
+/**
  * How a door command names the door it acted on. The command addresses a door rather than the hardware in front of it, so the confirmation names the door: its
- * full name and the identity the command sent, whichever arm carried it.
+ * spelling from {@link doorName} and the identity the command sent, whichever arm carried it.
  *
  * The hub arm falls back to naming the hardware when the state holds no record for the door it drives, which keeps the line truthful for a client whose census
  * seeded a handle and not the door behind it. Callers capture the label BEFORE issuing the command, so a record leaving controller state while the command is in
@@ -262,19 +298,35 @@ export function doorLabel(target: DoorTarget): string {
 
   if(target.kind === "door") {
 
-    return target.door.full_name + " (" + target.doorId + ")";
+    return doorName(target.door) + " (" + target.doorId + ")";
   }
 
   const hub = target.hub;
   const door = hub.door;
 
-  return (door !== undefined) ? (door.full_name + " (" + hub.doorId + ")") : (hub.name + " (" + hub.id + ")");
+  return (door !== undefined) ? (doorName(door) + " (" + hub.doorId + ")") : (hub.name + " (" + hub.id + ")");
+}
+
+// The shared matching rule behind every official resolution: an exact id first, then a case-insensitive exact match on the record's display name. It answers
+// `undefined` rather than throwing, because one caller wants the listing error where nothing matches and another wants to widen its search instead.
+function matchOfficialRecord<T extends { id: string }>(records: readonly T[], token: string, name: (record: T) => string): T | undefined {
+
+  const byId = records.find((record) => record.id === token);
+
+  if(byId !== undefined) {
+
+    return byId;
+  }
+
+  const lowered = token.toLowerCase();
+
+  return records.find((record) => name(record).toLowerCase() === lowered);
 }
 
 /**
  * Resolve the operator's token to one official record, by the shared matching rule: an exact id first, then a case-insensitive exact match on the record's display
- * name. The one resolver behind every official listing the CLI addresses by name - users, visitors, webhook endpoints, and the token-mode device inventory - so what
- * "resolve by id or name" means is written once, and each caller supplies only what a name is for its record kind.
+ * name. The one resolver behind every official listing the CLI addresses by name - users, visitors, and webhook endpoints - so what "resolve by id or name" means
+ * is written once, and each caller supplies only what a name is for its record kind.
  *
  * @typeParam T - The record type, carrying its own `id`.
  *
@@ -290,19 +342,11 @@ export function doorLabel(target: DoorTarget): string {
  */
 export function findOfficialRecord<T extends { id: string }>(records: readonly T[], token: string, opts: { kind: string; name: (record: T) => string }): T {
 
-  const byId = records.find((record) => record.id === token);
+  const match = matchOfficialRecord(records, token, opts.name);
 
-  if(byId !== undefined) {
+  if(match !== undefined) {
 
-    return byId;
-  }
-
-  const lowered = token.toLowerCase();
-  const byName = records.find((record) => opts.name(record).toLowerCase() === lowered);
-
-  if(byName !== undefined) {
-
-    return byName;
+    return match;
   }
 
   const listing = records.map((record) => "  " + opts.name(record) + " => " + record.id);
@@ -310,4 +354,83 @@ export function findOfficialRecord<T extends { id: string }>(records: readonly T
   const heading = plural.charAt(0).toUpperCase() + plural.slice(1) + ":";
 
   throw new CliError([ "No " + opts.kind + " matches \"" + token + "\" by id or name.", ...((listing.length > 0) ? [ "", heading, ...listing ] : []) ].join("\n"));
+}
+
+/**
+ * What resolving one official record by what the operator typed takes: how to read one record by its id, how a record spells its display name, how to walk the whole
+ * listing, and - where the kind has a keyword search that can narrow a name - how to run one and how a hit spells its name.
+ *
+ * @typeParam T - The record type the resolution answers, carrying its own `id`.
+ * @typeParam S - The hit type a search yields, a narrower record than `T` where the two differ.
+ *
+ * @category CLI
+ */
+export interface OfficialRecordResolution<T extends { id: string }, S extends { id: string } = T> {
+
+  /** Read one record by its id - the single request an id costs. */
+  fetch: (id: string) => Promise<T>;
+
+  /** What the diagnostics call this kind of record. */
+  kind: string;
+
+  /** How a full record spells its display name. */
+  name: (record: T) => string;
+
+  /** A keyword search, for the kinds that have one that can help, and how a hit spells its name. */
+  search?: { name: (hit: S) => string; run: (keyword: string) => AsyncIterable<S> };
+
+  /** The whole listing, walked to its end. */
+  walk: () => AsyncIterable<T>;
+}
+
+/**
+ * Resolve the operator's token to one official record in as few requests as the token allows: the by-id fetch first, then a keyword search where the kind has one
+ * that can help, then the whole listing through {@link findOfficialRecord}. An id costs one request, because the controller answers an unknown one with a typed
+ * refusal rather than a match. Any refusal falls through to the arm behind it and everything else is rethrown: a token that is a name can draw a code other than
+ * not-found for its shape, while a systemic refusal - an invalid token, a missing permission - is refused again by the next arm and reaches the operator either
+ * way. A search narrows a name to its hits and the same matching rule picks the exact name among them; a search that finds no exact name falls to the walk, so a
+ * search can only ever save requests, and a token matching nothing still errors with every record listed.
+ *
+ * Every arm but the direct id fetch ends in a fetch of the resolved id. A search hit is a narrower record than a full one, the visitor listing takes an `expand`
+ * the by-id read does not, and the by-id read is what the callers render.
+ *
+ * @typeParam T - The record type, carrying its own `id`.
+ * @typeParam S - The hit type the kind's search yields.
+ *
+ * @param token - The id or name as typed.
+ * @param opts  - How to fetch, name, and walk this kind of record, and the keyword search where it has one.
+ *
+ * @returns The matching record, as the by-id fetch answers it.
+ *
+ * @throws {@link CliError} listing the records when nothing matches.
+ *
+ * @category CLI
+ */
+export async function resolveOfficialRecord<T extends { id: string }, S extends { id: string } = T>(token: string,
+  opts: OfficialRecordResolution<T, S>): Promise<T> {
+
+  try {
+
+    return await opts.fetch(token);
+  } catch(error) {
+
+    if(!(error instanceof AccessApiError)) {
+
+      throw error;
+    }
+  }
+
+  if(opts.search !== undefined) {
+
+    const hit = matchOfficialRecord(await Array.fromAsync(opts.search.run(token)), token, opts.search.name);
+
+    if(hit !== undefined) {
+
+      return opts.fetch(hit.id);
+    }
+  }
+
+  const found = findOfficialRecord(await Array.fromAsync(opts.walk()), token, { kind: opts.kind, name: opts.name });
+
+  return opts.fetch(found.id);
 }

@@ -12,7 +12,7 @@
  * where it holds only a token - and every later notification advances that same state. Periodic re-reading is a permanent failsafe against a controller's
  * occasionally lossy event delivery, reconciled here so a refresh that finds no drift produces no observable change at all.
  *
- * Three guarantees make the observation layer above this cheap and correct:
+ * The guarantees below make the observation layer above this cheap and correct:
  *
  * - **Immutability.** No function here mutates its input. Every step returns either the same reference, meaning nothing changed, or a new one.
  * - **Structural sharing.** A change rebuilds only the path from the root to the changed node; every untouched device, map, and nested object keeps its existing
@@ -31,7 +31,7 @@ import { isDeepStrictEqual } from "node:util";
 import { isRecord } from "../json.ts";
 import { normalizeMacAddress } from "./vocabulary.ts";
 
-/* The records as they are stored, shaped by two principles.
+/* The records as they are stored, shaped by these principles.
  *
  * PRUNING: a record never embeds a collection another map owns. The wire nests the topology - the root holds floors, floors hold doors, and doors hold the hardware
  * attached to them - so storing those records as they arrive would put every door inside its floor and every device inside its door, the same record would exist in
@@ -39,8 +39,8 @@ import { normalizeMacAddress } from "./vocabulary.ts";
  * exactly one home. The principle is what governs here rather than the enumeration, which is why the root drops its own device group as well as its floors.
  *
  * CENSUS WIDTH: a record type carries as required only what every census that feeds its map can establish, and everything else as optional. The controller is
- * censused two ways - the topology document a credential client reads, and the official API's listings a token-only client reads - and they carry different
- * amounts. Requiring a member only one of them supplies would force the other's projection to invent a value or to lie in its type, so the type states the
+ * censused more than one way - the topology document a credential client reads, and the official API's listings a token-only client reads - and they carry
+ * different amounts. Requiring a member only one of them supplies would force the other's projection to invent a value or to lie in its type, so the type states the
  * intersection and a consumer reads an absent member as not established by that census rather than as a value. A topology record satisfies these types unchanged,
  * which is what lets one record shape serve both censuses through the same selectors and projections.
  */
@@ -57,10 +57,18 @@ import { normalizeMacAddress } from "./vocabulary.ts";
 export type AccessStateDoor = Pick<AccessDoorConfig, "full_name" | "location_type" | "name" | "unique_id" | "up_id"> &
   Partial<OmitMembers<AccessDoorConfig, "device_groups">>;
 
-/** A floor as stored: the wire's floor record without the doors the doors map owns. The topology document is the only census that lists floors. */
+/**
+ * A floor as stored: the wire's floor record without the doors the doors map owns. The topology document is the only census that lists floors.
+ *
+ * @category Reducer
+ */
 export type AccessStateFloor = OmitMembers<AccessFloorConfig, "doors">;
 
-/** The topology root as stored: the wire's root record without the floors and the root-level device group that the other maps own. */
+/**
+ * The topology root as stored: the wire's root record without the floors and the root-level device group that the other maps own.
+ *
+ * @category Reducer
+ */
 export type AccessStateRoot = OmitMembers<AccessBootstrapConfig, "device_groups" | "floors">;
 
 /**
@@ -139,9 +147,10 @@ export function createInitialState(): AccessState {
  *
  * State transitions advance the model: `bootstrapLoaded` reconciles against a freshly fetched topology, `censusApplied` folds the official API's listings into the
  * devices, the doors, and their state together, `controllerChanged` stores a freshly fetched controller document, `deviceChanged` merges a partial into a device,
- * `deviceRemoved` deletes one, `locationChanged` merges a partial into whichever location record it names, and `doorStateChanged` folds the doors a packet reported
- * while merging that packet's own carrier facet. Activity signals - `doorbellRing`, `doorbellCancel`, and `unlock` - are occurrences rather than conditions, so
- * they reach consumers through the event rails and the reducer returns the state unchanged for them.
+ * `deviceRemoved` deletes one, `locationChanged` merges a partial into whichever location record it names, `doorStateChanged` folds the doors a packet reported while
+ * merging that packet's own carrier facet, and `doorStateFactsApplied` folds facts about doors from a source that answers only part of a report. Activity signals -
+ * `doorbellRing`, `doorbellCancel`, `tamperAlert`, and `unlock` - are occurrences rather than conditions, so they reach consumers through the event rails and the reducer
+ * returns the state unchanged for them.
  *
  * @param state - The current state.
  * @param event - The typed event to apply.
@@ -261,8 +270,8 @@ export function applyBootstrap(state: AccessState, bootstrap: AccessBootstrapCon
     }
   }
 
-  /* The pruning itself. Naming the two collections in the destructure is what excludes them from the rest, so the bindings exist to be discarded rather than read;
-   * the underscore prefix says so. Building the stored record this way keeps it assignable to the pruned type with no cast.
+  /* The pruning itself. Naming `device_groups` and `floors` in the destructure is what excludes them from the rest, so the bindings exist to be discarded rather than
+   * read; the underscore prefix says so. Building the stored record this way keeps it assignable to the pruned type with no cast.
    */
   const { device_groups: _rootDeviceGroups, floors: _rootFloors, ...storedRoot } = bootstrap;
   const devices = reconcileMap(state.devices, nextDevices);
@@ -337,19 +346,19 @@ function applyDeviceChange(state: AccessState, id: string, payload: Record<strin
  * The facet takes the exact path its standalone kind takes, so there is one merge implementation per collection reached by two event kinds rather than two that can
  * drift. The door state and the facet are independent: either can change while the other does not, and the state reference advances when either did.
  *
- * THE LIFECYCLE, in full, because this collection is fed from more than one kind of source. An entry is born one of three ways: from a door-state event; from the
- * connect-time seed {@link applyBootstrap} derives from the serving hardware's own flags; and from the facts an official read supplies. The two seeds are
- * subordinate to the wire in different ways - the topology seed fills only doors that have never reported at all, and the official merge writes member by member
- * over whatever is held - so neither can overwrite a live reading with an interpretation. An entry updates on later door-state events naming its door.
+ * THE LIFECYCLE, in full, because this collection is fed from more than one kind of source. An entry is born from a door-state event, from the connect-time seed
+ * {@link applyBootstrap} derives from the serving hardware's own flags, or from the facts an official read supplies. The two seeds are subordinate to the wire in
+ * different ways - the topology seed fills only doors that have never reported at all, and the official merge writes member by member over whatever is held - so neither
+ * can overwrite a live reading with an interpretation. An entry updates on later door-state events naming its door.
  *
- * It dies one of two ways, both of them a census of the controller's doors that no longer names it: a fresh topology document, and an official read that enumerated
- * every door it knows of. Neither a device removal nor a partial official read removes anything - losing the hub that reported a door is not the door leaving the
- * controller, and a source that spoke about some doors has said nothing about the others.
+ * It dies when a census of the controller's doors no longer names it: a fresh topology document, or an official read that enumerated every door it knows of. Neither a
+ * device removal nor a partial official read removes anything - losing the hub that reported a door is not the door leaving the controller, and a source that spoke about
+ * some doors has said nothing about the others.
  *
  * A reconnect therefore retains whatever each surviving door last reported. That is eventual consistency with a partial reconciliation source: the topology document
  * carries the hardware flags the seed reads but no door state of its own, so a door that has reported once is restated by nothing until it reports again.
- * `dps_connected` and `is_unavailable` are the wire's own statements about whether an entry means anything, both checked at admission, and both readable by a
- * consumer that wants to know how much to trust a reading.
+ * `dps_connected` and `is_unavailable` are the wire's own statements about whether an entry means anything, each checked at admission where a report carries it
+ * and absent where it did not, and both readable by a consumer that wants to know how much to trust a reading.
  */
 function applyDoorStateChange(state: AccessState, event: Extract<AccessTypedEvent, { kind: "doorStateChanged" }>): AccessState {
 
@@ -366,14 +375,14 @@ function applyDoorStateChange(state: AccessState, event: Extract<AccessTypedEven
   return Object.is(doorStates, state.doorStates) ? next : { ...next, doorStates };
 }
 
-/* Fold a source that answers only part of what a record can carry onto one collection: supplied members win, held members survive, a record the collection does not
- * hold is admitted whole, and a complete, non-empty enumeration drops what it no longer names. One definition for the door states, the devices, and the doors, so
- * three collections cannot drift apart on the merge, the admission, or the removal license - each supplies only how its records are keyed and how a held record
- * takes a supplied one (the door-state entry is a fresh object off the wire every time and merges by spread; the device and door records are wire records and merge
- * through the same null-skipping deep merge a notification takes).
+/* Fold a source that answers only part of what a record can carry onto one collection: supplied members win, held members survive, a record the collection does not hold
+ * is admitted whole, and a complete, non-empty enumeration drops what it no longer names. One definition for the door states, the devices, and the doors, so they cannot
+ * drift apart on the merge, the admission, or the removal license - each supplies only how its records are keyed and how a held record takes a supplied one (the
+ * door-state entry is a fresh object off the wire every time and merges by spread; the device and door records are wire records and merge through the same null-skipping
+ * deep merge a notification takes).
  *
  * An enumeration of no records removes nothing at all: a controller that answers an empty list while degraded is a real hazard, where a site that genuinely lost
- * its last record is the degenerate case, so the asymmetry favours keeping state that a later non-empty read will reconcile.
+ * its last record is the degenerate case, so the asymmetry favors keeping state that a later non-empty read will reconcile.
  *
  * Reference stability is the same discipline as everywhere else here: identical merged values mint no new entry and no new map, so re-applying facts that changed
  * nothing wakes no observer.
@@ -414,12 +423,12 @@ function applyDoorStateFacts(state: AccessState, entries: readonly AccessDoorSta
 
 /* Fold the official API's listings into the state, for a client whose only census of the controller's hardware and doors those listings are.
  *
- * The three collections land in one step so that a hub and the door it drives appear together, exactly as the topology document lands them: an observer of the hubs
- * never wakes to find the door state it reads still absent. Each collection takes the shared reconciliation, because the listing is a source of facts in the
- * door-facts sense - it answers a fixed subset of what a record can carry. That cuts both ways, on the same eventual-consistency terms the topology document
- * accepts: a member the listing is silent about survives - the firmware a notification established stays - and a member it does supply wins, so a listing read that
- * began before a notification and settled after it restates the listing's value until the next notification advances it again. The client keeps that window small
- * by reading on a schedule the stream otherwise owns.
+ * The door states, the devices, and the doors land in one step so that a hub and the door it drives appear together, exactly as the topology document lands them: an
+ * observer of the hubs never wakes to find the door state it reads still absent. Each collection takes the shared reconciliation, because the listing is a source of
+ * facts in the door-facts sense - it answers a fixed subset of what a record can carry. That cuts both ways, on the same eventual-consistency terms the topology document
+ * accepts: a member the listing is silent about survives - the firmware a notification established stays - and a member it does supply wins, so a listing read that began
+ * before a notification and settled after it restates the listing's value until the next notification advances it again. The client keeps that window small by reading on
+ * a schedule the stream otherwise owns.
  *
  * Removal carries the topology document's own authority, per collection: a complete listing that no longer names a device or a door says it is gone, and a listing
  * that names nothing says nothing. A listing that is partial without being empty prunes what it omits, exactly as a partial topology document would; that is the
@@ -461,7 +470,7 @@ function removeDevice(state: AccessState, id: string): AccessState {
  * and the notification names its subject by identity alone, so the routing is a lookup rather than a branch on the payload.
  *
  * The root is a merge target like the others. That is safe precisely because it is pruned: a stored root holds no floors and no device group, so merging into it
- * cannot make a stale second copy of a record another map owns. A notification naming none of the three leaves the state untouched.
+ * cannot make a stale second copy of a record another map owns. A notification naming none of these leaves the state untouched.
  */
 function applyLocationChange(state: AccessState, id: string, payload: Record<string, AccessKnownJsonValue>): AccessState {
 
@@ -545,14 +554,14 @@ function flattenDeviceGroups(groups: AccessDeviceConfig[][] | undefined, into: A
 }
 
 /* Place one caller-computed value under its key, and hand back the map itself when that changed nothing. This is the per-key upsert mechanics every collection here
- * shares - the equality test, the copy-on-write, and the reference discipline - defined once so four callers cannot drift apart on any of the three. What each
+ * shares - the equality test, the copy-on-write, and the reference discipline - defined once so its callers cannot drift apart on any of the three. What each
  * caller keeps is its own: how the next value is computed, and whether an absent key is a no-op or an insertion.
  *
  * The equality test is two-stage because the callers arrive with different guarantees. A merge hands back the stored record itself when the patch changed nothing,
  * so the identity check settles it outright and costs one comparison. A door-state entry is a fresh object off the wire every time, so identity can never settle
  * it and the structural compare is what keeps a re-reported, unchanged door from waking observers. The trade is that a merge that genuinely changed something pays
  * one structural compare that is guaranteed to disagree; that runs at notification cadence over a single record, which is worth one definition of these mechanics
- * rather than four.
+ * rather than one apiece.
  */
 function upsertEntry<T>(map: ReadonlyMap<string, T>, key: string, next: T): ReadonlyMap<string, T> {
 
@@ -634,8 +643,8 @@ function seedDoorStates(existing: ReadonlyMap<string, AccessDoorStateEntry>, doo
 // typing with no widening.
 function reconcileMap<T extends { unique_id: string }>(existing: ReadonlyMap<string, T>, records: readonly T[]): ReadonlyMap<string, T> {
 
-  // A size mismatch means something was added or removed, which is necessarily a change. Seeding from it catches the same-size-different-membership case, which the
-  // per-record checks below then confirm.
+  // A size mismatch means something was added or removed, which is necessarily a change, and that alone is what seeding `changed` from it catches. A same-size membership
+  // swap, and any per-value change, is caught independently by the per-record checks below, which run regardless of what the size check found.
   let changed = records.length !== existing.size;
   const next = new Map<string, T>();
 

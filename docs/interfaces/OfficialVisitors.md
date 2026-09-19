@@ -227,6 +227,32 @@ The page of visitors, and the pagination describing it.
 
 ***
 
+### iterateAll()
+
+```ts
+iterateAll(opts?, call?): AsyncGenerator<AccessOfficialVisitor>;
+```
+
+Iterate every visitor, walking the listing to its end. `GET /visitors`, permission `view:visitor`. License plates on the returned records require UniFi Access
+3.3.10 or later.
+
+Composed over [OfficialVisitors.fetchAll](#fetchall); the endpoint is live-verified.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `opts` | [`AccessOfficialVisitorListOptions`](AccessOfficialVisitorListOptions.md) | The status to narrow to, the expansions to request, and the page size to walk the listing in. |
+| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+
+#### Returns
+
+`AsyncGenerator`\<[`AccessOfficialVisitor`](AccessOfficialVisitor.md)\>
+
+Every visitor the listing reports, in the order its pages carry them.
+
+***
+
 ### unassignLicensePlate()
 
 ```ts
@@ -267,6 +293,9 @@ unassignNfcCard(
 ```
 
 Unassign an NFC card from a visitor. `PUT /visitors/:id/nfc_cards/delete`, permission `edit:visitor`.
+
+The `/delete` path suffix on a `PUT` is the same verb-tunneling workaround [OfficialUsers.unassignNfcCard](OfficialUsers.md#unassignnfccard) explains in full: the operation carries a
+body, so it goes through a verb that allows one, with the suffix carrying the delete semantics.
 
 Documentation-derived.
 

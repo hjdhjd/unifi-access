@@ -334,8 +334,8 @@ token-only client cannot produce it and says so rather than answering something 
 
 #### Throws
 
-[AccessCapabilityError](AccessCapabilityError.md) on a client with no credentials, [AccessBootstrapError](AccessBootstrapError.md) when the document cannot be fetched or parsed, or a
-  transport-level `AccessError`.
+[AccessCapabilityError](AccessCapabilityError.md) on a client with no credentials, [AccessBootstrapError](AccessBootstrapError.md) when the document cannot be fetched, is refused, or cannot
+  be parsed, or a transport-level `AccessError`.
 
 ***
 

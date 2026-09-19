@@ -7,16 +7,17 @@
  */
 import { AccessAbortedError, AccessAuthError, AccessThrottledError } from "../errors.ts";
 import type { Interceptable, MockAgent } from "undici";
+import { assertRejectsWith, errnoError, settleUntil, subscribeTo } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
-import { makeMockTransport, url } from "./mock-controller.helpers.ts";
+import { heldReply, makeMockTransport, url } from "./mock-controller.helpers.ts";
 import { ACCESS_API_ERROR_LIMIT } from "../settings.ts";
 import type { AccessAuthReloginPayload } from "../diagnostics.ts";
 import { AuthSession } from "./auth.ts";
 import type { AuthSessionOptions } from "./auth.ts";
-import type { FakeClock } from "../testing.helpers.ts";
+import type { TestClock } from "homebridge-plugin-utils/testing";
 import type { Transport } from "./http.ts";
 import assert from "node:assert/strict";
-import diagnosticsChannel from "node:diagnostics_channel";
+import { channels } from "../diagnostics.ts";
 
 // The endpoints the session drives, relative to the mock controller origin.
 const LOGIN_PATH = "/api/auth/login";
@@ -35,7 +36,7 @@ interface AuthFixture {
 
   agent: MockAgent;
   auth: AuthSession;
-  clock: FakeClock;
+  clock: TestClock;
   host: string;
   pool: Interceptable;
   transport: Transport;
@@ -89,17 +90,10 @@ async function driveAdminTrue(fixture: AuthFixture): Promise<void> {
 async function captureRelogin(run: () => Promise<void>): Promise<AccessAuthReloginPayload[]> {
 
   const payloads: AccessAuthReloginPayload[] = [];
-  const onRelogin = (message: unknown): void => void payloads.push(message as AccessAuthReloginPayload);
 
-  diagnosticsChannel.subscribe("unifi-access:auth:relogin", onRelogin);
+  using reloginSub = subscribeTo(channels.authRelogin, (message) => void payloads.push(message));
 
-  try {
-
-    await run();
-  } finally {
-
-    diagnosticsChannel.unsubscribe("unifi-access:auth:relogin", onRelogin);
-  }
+  await run();
 
   return payloads;
 }
@@ -221,16 +215,13 @@ describe("AuthSession", () => {
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
       pool.intercept({ method: "GET", path: ROOT_PATH }).reply(500, "unavailable");
 
-      await assert.rejects(auth.login({ ...CREDENTIALS, host }), (error: unknown) => {
+      await assertRejectsWith(auth.login({ ...CREDENTIALS, host }), AccessAuthError, { check: (error) => {
 
-        assert.ok(error instanceof AccessAuthError);
         assert.equal(error.identity, "credentials", "the login handshake is the credential leg, so it attributes its own refusal to that leg");
 
         // Consumer-facing copy a caller may render verbatim, so the sentence is asserted exactly rather than matched loosely.
         assert.equal(error.message, "Unable to authenticate with the UniFi Access controller. Please check the configured address, username, and password.");
-
-        return true;
-      });
+      } });
 
       assert.equal(auth.isAuthenticated, false);
     });
@@ -353,22 +344,36 @@ describe("AuthSession", () => {
       await login(fixture);
 
       let loginPosts = 0;
+      let secondRefusalSeen = false;
 
-      // Two independent requests each come back 401 and each invoke the relogin hook. The delay holds the first handshake open long enough for the second 401 to
-      // arrive while it is still in flight, which is the window the coalescing exists for. Two interceptors are registered so that a second handshake would find
-      // one waiting - the count, not a missing interceptor, is what fails this test if the guard is gone.
+      /* Two independent requests each come back 401 and each invoke the relogin hook. The handshake is held until the test releases it, and the release waits
+       * on the second refusal, so the second 401 arrives while the first handshake is still in flight - the window the coalescing exists for. Two interceptors
+       * are registered so that a second handshake would find one waiting - the count, not a missing interceptor, is what fails this test if the guard is gone.
+       */
+      const handshake = heldReply(200, "", { headers: { "set-cookie": "TOKEN=new", "x-csrf-token": "csrf2" } });
+
       pool.intercept({ method: "GET", path: "/one" }).reply(401, "stale");
       pool.intercept({ method: "GET", path: "/one" }).reply(200, { ok: 1 });
-      pool.intercept({ method: "GET", path: "/two" }).reply(401, "stale");
+      pool.intercept({ method: "GET", path: "/two" }).reply(401, () => {
+
+        secondRefusalSeen = true;
+
+        return "stale";
+      });
       pool.intercept({ method: "GET", path: "/two" }).reply(200, { ok: 2 });
-      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(200, () => {
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply((opts) => {
 
         loginPosts++;
 
-        return "";
-      }, { headers: { "set-cookie": "TOKEN=new", "x-csrf-token": "csrf2" } }).delay(20).times(2);
+        return handshake.reply(opts);
+      }).times(2);
 
-      const [ first, second ] = await Promise.all([ fixture.transport.send(url(host, "/one")), fixture.transport.send(url(host, "/two")) ]);
+      const pair = Promise.all([ fixture.transport.send(url(host, "/one")), fixture.transport.send(url(host, "/two")) ]);
+
+      await settleUntil(() => secondRefusalSeen, { message: "expected the second request to be refused while the handshake was still in flight" });
+      handshake.release();
+
+      const [ first, second ] = await pair;
 
       assert.equal(first.statusCode, 200, "the first request retried successfully after the shared relogin");
       assert.equal(second.statusCode, 200, "the second request retried successfully off the same relogin");
@@ -434,14 +439,18 @@ describe("AuthSession", () => {
 
       await login(fixture);
 
-      /* The controller never hears about a logout - it is client-side state - so a login already in flight succeeds regardless. Writing that session would silently
-       * re-arm a session the caller explicitly ended, which is what the identity check at the write site prevents.
+      /* The controller never hears about a logout - it is client-side state - so a login already in flight succeeds regardless. Writing that session would
+       * silently re-arm a session the caller explicitly ended, which is what the identity check at the write site prevents. The handshake is held until the
+       * test releases it, so the logout provably lands inside it.
        */
-      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(200, "", { headers: { "set-cookie": "TOKEN=resurrected", "x-csrf-token": "csrf9" } }).delay(30);
+      const handshake = heldReply(200, "", { headers: { "set-cookie": "TOKEN=resurrected", "x-csrf-token": "csrf9" } });
+
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(handshake.reply);
 
       const pending = auth.reauthenticate();
 
       auth.logout();
+      handshake.release();
 
       assert.equal(await pending, false, "a handshake that outlived its session reports failure rather than success");
       assert.equal(auth.isAuthenticated, false);
@@ -456,10 +465,13 @@ describe("AuthSession", () => {
 
       await login(fixture);
 
-      /* The relogin's login POST is held open and will be refused. While it is in flight the caller logs out and logs in afresh, so by the time that failure lands
-       * it describes a session that no longer exists. A fresh login does not queue behind an in-flight relogin, which is what makes the overlap reachable.
+      /* The relogin's login POST is held until the test releases it and will be refused. While it is in flight the caller logs out and logs in afresh, so by
+       * the time that failure lands it describes a session that no longer exists. A fresh login does not queue behind an in-flight relogin, which is what makes
+       * the overlap reachable.
        */
-      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "rejected").delay(40);
+      const refusal = heldReply(401, "rejected");
+
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(refusal.reply);
 
       const stale = auth.reauthenticate();
 
@@ -467,6 +479,8 @@ describe("AuthSession", () => {
       replyLogin(pool, "TOKEN=second; Path=/", "csrf2");
 
       await auth.login({ ...CREDENTIALS, host });
+
+      refusal.release();
 
       assert.equal(await stale, false, "the stale handshake still reports its own failure");
       assert.equal(auth.isAuthenticated, true, "the replacement session survives a failure that was never about it");
@@ -633,7 +647,7 @@ describe("AuthSession", () => {
       await login(fixture);
       await driveAdminTrue(fixture);
 
-      pool.intercept({ method: "GET", path: SELF_PATH }).replyWithError(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
+      pool.intercept({ method: "GET", path: SELF_PATH }).replyWithError(errnoError("connect ECONNREFUSED", "ECONNREFUSED"));
 
       assert.equal(await auth.refreshAdminStatus(), true);
     });
@@ -645,6 +659,7 @@ describe("AuthSession", () => {
 
       await login(fixture);
 
+      // The reply stays open far longer than the cancellation needs, so the delay is the margin the abort lands inside rather than a wait this test performs.
       pool.intercept({ method: "GET", path: SELF_PATH }).reply(200, { scopes: [] }).delay(2000);
 
       const controller = new AbortController();
@@ -681,13 +696,17 @@ describe("AuthSession", () => {
 
       await login(fixture);
 
-      // The response grants privilege, but it lands after the session it describes is gone. Writing it would attribute one session's privileges to whatever
-      // replaced it.
-      pool.intercept({ method: "GET", path: SELF_PATH }).reply(200, { scopes: [ADMIN_SCOPE] }).delay(30);
+      /* The response grants privilege, but it lands after the session it describes is gone. Writing it would attribute one session's privileges to whatever
+       * replaced it. The reply is held until the test releases it, which is what puts the logout inside the check rather than before or after one.
+       */
+      const verdict = heldReply(200, { scopes: [ADMIN_SCOPE] });
+
+      pool.intercept({ method: "GET", path: SELF_PATH }).reply(verdict.reply);
 
       const pending = auth.refreshAdminStatus();
 
       auth.logout();
+      verdict.release();
 
       assert.equal(await pending, null);
       assert.equal(auth.isAdmin, null, "a verdict that outlived its session must not be written to the session that replaced it");
@@ -709,7 +728,7 @@ describe("AuthSession", () => {
         selfGets++;
 
         return { scopes: [ADMIN_SCOPE] };
-      }).delay(20).times(2);
+      }).times(2);
 
       const [ first, second ] = await Promise.all([ auth.refreshAdminStatus(), auth.refreshAdminStatus() ]);
 

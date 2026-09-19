@@ -3,7 +3,7 @@
  * doctor.ts: `ufa doctor` - a structured, per-subsystem health check exercising every public surface the client's mode offers. The canonical "is my install
  * healthy?" command.
  */
-import { AccessAbortedError, AccessClient, channels, selectControllerUptime } from "../../../index.ts";
+import { AccessAbortedError, AccessClient, channels, formatErrorChain, selectControllerUptime } from "../../../index.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
 import type { AccessEventPacket } from "../../../index.ts";
 import { COMMON_OPTIONS } from "../shared.ts";
@@ -153,7 +153,7 @@ const doctorHandler: CommandHandler = async (ctx) => {
         throw error;
       }
 
-      results.push({ detail: (error instanceof Error) ? error.message : String(error), name, status: "fail" });
+      results.push({ detail: formatErrorChain(error), name, status: "fail" });
     }
   };
 
@@ -190,7 +190,7 @@ const doctorHandler: CommandHandler = async (ctx) => {
         throw error;
       }
 
-      results.push({ detail: (error instanceof Error) ? error.message : String(error), name: "Connect and authenticate", status: "fail" });
+      results.push({ detail: formatErrorChain(error), name: "Connect and authenticate", status: "fail" });
 
       const ok = (values.json === true) ? false : renderReport(ctx.output, results);
 
@@ -264,8 +264,8 @@ const doctorHandler: CommandHandler = async (ctx) => {
       });
     }
 
-    /* The stream window runs once, here, and feeds two checks: whether anything arrived, and what the classifier made of it. It is a plain step rather than a check
-     * of its own because one observation cannot be made twice - a second window would either wait all over again or report on a different packet.
+    /* The stream window runs once, here, and feeds every check that reports on the observed packet. It is a plain step rather than a check of its own because one
+     * observation cannot be made twice - a second window would either wait all over again or report on a different packet.
      */
     let observed: AccessEventPacket | null = null;
     let windowFailure: string | undefined;
@@ -279,7 +279,7 @@ const doctorHandler: CommandHandler = async (ctx) => {
       // stream failure and belongs to the firehose check below, which is the one that owns stream health.
       if(!(error instanceof AccessAbortedError)) {
 
-        windowFailure = (error instanceof Error) ? error.message : String(error);
+        windowFailure = formatErrorChain(error);
       }
     }
 
@@ -305,6 +305,8 @@ const doctorHandler: CommandHandler = async (ctx) => {
       });
     });
 
+    // The connection monitor already judges its own health continuously, so this check reports that verdict rather than deriving a second one from state or
+    // throttle alone.
     await check("Connection monitor", () => Promise.resolve({
 
       detail: "state=" + connected.connection.state + ", throttled=" + connected.connection.isThrottled.toString(),

@@ -4,57 +4,11 @@
  * varied, so the derivation is exercised against the shapes a controller actually issues rather than against invented ones, and every absence assertion asks
  * whether the member is there at all rather than comparing it to undefined - the seed's spread depends on key absence, which a value comparison would not catch.
  */
-import type { AccessDeviceConfig, AccessDeviceEntryConfig } from "../types/index.ts";
+import { MINI_ID, READER_ID, UAH_ID, ULTRA_ID, captured, withDuty, withFlags } from "./capture.helpers.ts";
 import { deriveDoorState, officialDoorPosition, officialLockState } from "./door-state.ts";
 import { describe, test } from "node:test";
 import type { AccessDoorStateFacts } from "./door-state.ts";
-import { accessBootstrap2026Fixture } from "./topology.fixtures.ts";
 import assert from "node:assert/strict";
-
-// The real hardware from the committed capture, by identity: a UA Ultra, a UA Hub and one of its readers, and a UA Hub Door Mini.
-const ULTRA_ID = "aabbcc000000";
-const UAH_ID = "aabbcc000001";
-const READER_ID = "aabbcc000002";
-const MINI_ID = "aabbcc000004";
-
-// Every device the capture carries, flattened out of the document's double nesting so a row can name the one it wants.
-const capturedDevices = (): AccessDeviceConfig[] => {
-
-  const devices: AccessDeviceConfig[] = [];
-
-  for(const floor of (accessBootstrap2026Fixture.floors ?? [])) {
-
-    for(const door of floor.doors) {
-
-      for(const group of door.device_groups) {
-
-        devices.push(...group);
-      }
-    }
-  }
-
-  return devices;
-};
-
-const captured = (id: string): AccessDeviceConfig => {
-
-  const device = capturedDevices().find((candidate) => candidate.unique_id === id);
-
-  assert.ok(device !== undefined, "the capture should carry device " + id);
-
-  return device;
-};
-
-/* One captured device wearing a different set of flags. The record is real - its identity, model, and every member the derivation does not read come from the
- * capture - and only the configuration rows a row wants to vary are replaced, which is what keeps these tests about the flags rather than about a mock shape.
- */
-const withFlags = (id: string, flags: Record<string, string>): AccessDeviceConfig => {
-
-  const device = captured(id);
-  const configs: AccessDeviceEntryConfig[] = Object.entries(flags).map(([ key, value ]) => ({ "device_id": id, key, "tag": "hub_action", value }));
-
-  return { ...device, configs };
-};
 
 // The door as the derivation reads it. Most rows have nothing to say about the door itself, so the extras default to absent.
 const doorWith = (extras: Record<string, string> = {}): { extras: Record<string, string> } => ({ extras });
@@ -80,12 +34,22 @@ describe("deriveDoorState", () => {
       assert.deepEqual(facts, { "dps": "none", "dps_connected": false });
     });
 
-    test("says nothing about position at all when the hardware reports no wiring pair", () => {
+    test("reads the duty selector as the wiring evidence where the hardware reports no pair", () => {
 
-      /* This is the UA Ultra's ordinary condition rather than a fault: it reports its position input and no wiring keys whatsoever, so there is no evidence
-       * either way about whether that input is connected to anything. Claiming disconnection would be as much an invention as claiming a position.
+      /* A UA Ultra reports no wiring keys whatsoever, which is its ordinary condition rather than a fault. What it does report is which duty its one assignable
+       * input terminal is serving, and a terminal assigned to door-position duty is a position sensor in service - so the input reads under the family's polarity
+       * exactly as a pair-proven one does.
        */
-      const facts = deriveDoorState(doorWith(), [withFlags(ULTRA_ID, { "input_d1_dps": "on" })]);
+      assert.deepEqual(deriveDoorState(doorWith(), [withFlags(ULTRA_ID, { "input_d1_dps": "on" })]), { "dps": "close", "dps_connected": true });
+      assert.deepEqual(deriveDoorState(doorWith(), [withFlags(ULTRA_ID, { "input_d1_dps": "off" })]), { "dps": "open", "dps_connected": true });
+    });
+
+    test("says nothing about position at all when the hardware reports neither a wiring pair nor a duty selector", () => {
+
+      /* The same hardware with nothing left to qualify its input: no wiring keys and no port extension to say what the terminal is for. There is no evidence
+       * either way about whether that input is connected to anything, and claiming disconnection would be as much an invention as claiming a position.
+       */
+      const facts = deriveDoorState(doorWith(), [withDuty(ULTRA_ID, undefined)]);
 
       assert.equal(Object.hasOwn(facts, "dps"), false);
       assert.equal(Object.hasOwn(facts, "dps_connected"), false);
@@ -121,8 +85,8 @@ describe("deriveDoorState", () => {
 
     test("accepts the same facts duplicated onto the door's extras", () => {
 
-      /* A UA Hub copies its position facts onto the door under a prefixed name. They are the same three facts under longer names, so a hub whose own record has
-       * gone quiet on them is still read through the door.
+      /* A UA Hub copies its position facts onto the door under a prefixed name. They are the same facts under longer names, so a hub whose own record has gone quiet
+       * on them is still read through the door.
        */
       const door = doorWith({ "uah-input_state_dps": "on", "uah-wiring_state_dps-neg": "on", "uah-wiring_state_dps-pos": "on" });
       const facts = deriveDoorState(door, [withFlags(UAH_ID, { "input_state_rly-lock_dry": "off" })]);
@@ -168,12 +132,19 @@ describe("deriveDoorState", () => {
 
     test("derives the UA Ultra exactly as the capture describes it", () => {
 
-      // The Ultra's captured record verbatim: a position input, a lock relay, and no wiring pair. What it establishes is its lock and nothing else.
+      // The Ultra's captured record verbatim: a duty selector reading door position, a position input reading off, a lock relay reading off, and no wiring pair.
       const facts = deriveDoorState(doorWith(), [captured(ULTRA_ID)]);
 
-      assert.deepEqual(facts, { lock: "locked" });
-      assert.equal(Object.hasOwn(facts, "dps"), false);
-      assert.equal(Object.hasOwn(facts, "dps_connected"), false);
+      assert.deepEqual(facts, { "dps": "open", "dps_connected": true, "lock": "locked" });
+    });
+
+    test("derives an Ultra assigned to request-to-exit duty as disconnected for position", () => {
+
+      // The same record with its one terminal assigned elsewhere. The hardware is then reporting that nothing is wired to a position sensor, which is the
+      // vocabulary's own disconnected reading rather than the silence an unqualified input gets.
+      const facts = deriveDoorState(doorWith(), [withDuty(ULTRA_ID, "rex")]);
+
+      assert.deepEqual(facts, { "dps": "none", "dps_connected": false, "lock": "locked" });
     });
 
     test("derives a door served by a hub and its readers from the hub", () => {

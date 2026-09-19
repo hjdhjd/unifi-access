@@ -3,7 +3,7 @@
  * cli-door.test.ts: Tests for the ufa door group and the door resolution behind it - the device arm, the phased door arm, the two-arm target, and the commands
  * each arm carries. Every test runs offline against the structural fake.
  */
-import { CREDENTIALS_PAIR, CREDENTIALS_TOKEN, makeCommandContext, makeFakeClient, rendered } from "./cli.helpers.ts";
+import { CREDENTIALS_PAIR, CREDENTIALS_TOKEN, asAccessClient, makeCommandContext, makeFakeClient, officialCallSignal, parsedJson, rendered } from "./cli.helpers.ts";
 import { describe, test } from "node:test";
 import { AccessCapabilityError } from "../../index.ts";
 import { CliError } from "./shared.ts";
@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { door } from "./commands/door.ts";
 import { findDoorTarget } from "./lookup.ts";
 
-/* A fixture with a topology behind it: two hubs driving their own doors, a reader that drives none, and the state's own door records.
+/* A fixture with a topology behind it: hubs driving their own doors, a reader that drives none, and the state's own door records.
  *
  * Each door's full name is deliberately unlike its short name, unlike the name of the hub that drives it, and - for the second door - not even a superstring of
  * its own short name. A confirmation line or a listing that fell back to any shorter spelling therefore cannot satisfy the anchored assertions below.
@@ -71,15 +71,15 @@ describe("door resolution", () => {
 
     const { client } = makeFakeClient(HUB_SPEC);
 
-    assert.deepEqual(resolved(findDoorTarget(client as never, "Acme Name 6")), { id: "hub-1", kind: "hub" });
-    assert.deepEqual(resolved(findDoorTarget(client as never, "hub-2")), { id: "hub-2", kind: "hub" });
+    assert.deepEqual(resolved(findDoorTarget(asAccessClient(client), "Acme Name 6")), { id: "hub-1", kind: "hub" });
+    assert.deepEqual(resolved(findDoorTarget(asAccessClient(client), "hub-2")), { id: "hub-2", kind: "hub" });
   });
 
   test("a resolvable device that drives no door earns its own distinct error", () => {
 
     const { client } = makeFakeClient(HUB_SPEC);
 
-    assert.throws(() => findDoorTarget(client as never, "Reader"),
+    assert.throws(() => findDoorTarget(asAccessClient(client), "Reader"),
       (error: unknown) => (error instanceof CliError) && error.message.includes("is not a hub, so it drives no door"));
   });
 
@@ -87,9 +87,9 @@ describe("door resolution", () => {
 
     const { client } = makeFakeClient(HUB_SPEC);
 
-    assert.deepEqual(resolved(findDoorTarget(client as never, "door-2")), { id: "hub-2", kind: "hub" }, "the identifier phase");
-    assert.deepEqual(resolved(findDoorTarget(client as never, "acme name 13")), { id: "hub-1", kind: "hub" }, "the name phase");
-    assert.deepEqual(resolved(findDoorTarget(client as never, "2f - loading bay")), { id: "hub-2", kind: "hub" }, "the full-name phase");
+    assert.deepEqual(resolved(findDoorTarget(asAccessClient(client), "door-2")), { id: "hub-2", kind: "hub" }, "the identifier phase");
+    assert.deepEqual(resolved(findDoorTarget(asAccessClient(client), "acme name 13")), { id: "hub-1", kind: "hub" }, "the name phase");
+    assert.deepEqual(resolved(findDoorTarget(asAccessClient(client), "2f - loading bay")), { id: "hub-2", kind: "hub" }, "the full-name phase");
   });
 
   test("a token that is one door's name and another's full name resolves the name match", () => {
@@ -99,7 +99,7 @@ describe("door resolution", () => {
         [ "door-2", { "full_name": "Annex", "name": "Side Door", "unique_id": "door-2" } ] ]) } });
 
     // The name phase runs first and matches exactly one door, so the full-name phase that would have matched the other is never reached.
-    assert.deepEqual(resolved(findDoorTarget(client as never, "annex")), { id: "hub-1", kind: "hub" });
+    assert.deepEqual(resolved(findDoorTarget(asAccessClient(client), "annex")), { id: "hub-1", kind: "hub" });
   });
 
   test("two doors sharing a name refuse the phase and list both full spellings", () => {
@@ -108,7 +108,7 @@ describe("door resolution", () => {
       snapshot: { doors: new Map<string, FakeDoorSpec>([ [ "door-1", { "full_name": "1F - Loading Dock", "name": "Acme Name 13", "unique_id": "door-1" } ],
         [ "door-2", { "full_name": "2F - Loading Dock", "name": "Acme Name 13", "unique_id": "door-2" } ] ]) } });
 
-    assert.throws(() => findDoorTarget(client as never, "Acme Name 13"),
+    assert.throws(() => findDoorTarget(asAccessClient(client), "Acme Name 13"),
       (error: unknown) => (error instanceof CliError) && error.message.includes("More than one door matches") &&
         error.message.includes("1F - Loading Dock => door-1") && error.message.includes("2F - Loading Dock => door-2"));
   });
@@ -118,7 +118,7 @@ describe("door resolution", () => {
     const { client } = makeFakeClient({ ...HUB_SPEC,
       devices: [ { doorId: "door-1", id: "hub-1", name: "Acme Name 6" }, { doorId: "door-1", id: "hub-2", name: "Side Hub" } ] });
 
-    assert.throws(() => findDoorTarget(client as never, "Acme Name 13"),
+    assert.throws(() => findDoorTarget(asAccessClient(client), "Acme Name 13"),
       (error: unknown) => (error instanceof CliError) && error.message.includes("More than one device") && error.message.includes("1F - Loading Dock") &&
         error.message.includes("Acme Name 6") && error.message.includes("Side Hub"));
   });
@@ -127,27 +127,36 @@ describe("door resolution", () => {
 
     const { client } = makeFakeClient({ ...HUB_SPEC, snapshot: { doors: DOORS_WITH_ORPHAN } });
 
-    assert.deepEqual(resolved(findDoorTarget(client as never, "Orphan")), { id: "door-9", kind: "door" });
+    assert.deepEqual(resolved(findDoorTarget(asAccessClient(client), "Orphan")), { id: "door-9", kind: "door" });
   });
 
   test("a token-mode operator naming the driving device resolves through the device union, exactly as any other identity does", () => {
 
     const { client } = makeFakeClient(TOKEN_SPEC);
 
-    assert.deepEqual(resolved(findDoorTarget(client as never, "Acme Name 6")), { id: "hub-1", kind: "hub" });
+    assert.deepEqual(resolved(findDoorTarget(asAccessClient(client), "Acme Name 6")), { id: "hub-1", kind: "hub" });
   });
 
   test("an unmatched token lists the devices and the doors by their full spellings", () => {
 
     const { client } = makeFakeClient(HUB_SPEC);
 
-    assert.throws(() => findDoorTarget(client as never, "Nothing"),
+    assert.throws(() => findDoorTarget(asAccessClient(client), "Nothing"),
       (error: unknown) => (error instanceof CliError) && error.message.includes("Acme Name 6 => hub-1") && error.message.includes("2F - Loading Bay => door-2") &&
         !error.message.includes("Side Door => door-2"));
   });
 });
 
 describe("the door unlock command", () => {
+
+  test("the unlock command requires exactly one door", async () => {
+
+    const { client } = makeFakeClient(HUB_SPEC);
+    const { ctx } = makeCommandContext({ args: ["unlock"], client });
+
+    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
+      (error.message === "Specify one door by name or id. Run \"ufa door unlock --help\" for usage."));
+  });
 
   test("a bare unlock calls the hub's own unlock and confirms with the door", async () => {
 
@@ -190,6 +199,7 @@ describe("the door unlock command", () => {
       (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("whole-minute"));
 
     assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 0);
   });
 
   test("the hold flag establishes the keep-unlock rule", async () => {
@@ -211,6 +221,7 @@ describe("the door unlock command", () => {
     await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
 
     assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 0);
   });
 
   test("an actor threads through the hub unlock as the attribution pair", async () => {
@@ -255,6 +266,7 @@ describe("the door unlock command", () => {
         (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("attributed unlock"), extra.join(" "));
 
       assert.equal(calls.opens.length, 0);
+      assert.equal(calls.credentialLoads, 0);
     }
   });
 
@@ -267,6 +279,7 @@ describe("the door unlock command", () => {
       (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("auto, direct-only, official-only"));
 
     assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 0);
   });
 
   test("the api override threads through to the opener verbatim", async () => {
@@ -327,7 +340,7 @@ describe("the door arm - a door no handle drives", () => {
     /* The shape assertion above cannot tell the command's own lifetime signal from any other unaborted one, because `deepEqual` compares two of those as equal.
      * Each facade row here follows it with an identity check, which is what establishes the signal threaded is the one Ctrl-C actually fires.
      */
-    assert.equal((calls.official[0]?.args[2] as { signal?: AbortSignal } | undefined)?.signal, ctx.signal);
+    assert.equal(officialCallSignal(calls.official[0]), ctx.signal, "the facade call carries the command's own signal");
     assert.deepEqual(calls.unlocks, [], "there is no handle to have issued it");
     assert.match(rendered(lines)[0] ?? "", /^B1 - Service Entrance \(od-9\) - unlocked\.$/);
   });
@@ -341,7 +354,7 @@ describe("the door arm - a door no handle drives", () => {
 
     assert.deepEqual(calls.official,
       [{ args: [ "od-9", { actor: { id: "auto-1", name: "Night Automation" } }, { signal: ctx.signal } ], method: "spaces.unlock" }]);
-    assert.equal((calls.official[0]?.args[2] as { signal?: AbortSignal } | undefined)?.signal, ctx.signal);
+    assert.equal(officialCallSignal(calls.official[0]), ctx.signal, "the facade call carries the command's own signal");
   });
 
   test("a duration reaches the facade as the custom rule", async () => {
@@ -352,7 +365,7 @@ describe("the door arm - a door no handle drives", () => {
     await door.run(ctx);
 
     assert.deepEqual(calls.official, [{ args: [ "od-9", { interval: 5, type: "custom" }, { signal: ctx.signal } ], method: "spaces.setLockRule" }]);
-    assert.equal((calls.official[0]?.args[2] as { signal?: AbortSignal } | undefined)?.signal, ctx.signal);
+    assert.equal(officialCallSignal(calls.official[0]), ctx.signal, "the facade call carries the command's own signal");
     assert.deepEqual(calls.lockRules, []);
     assert.match(rendered(lines)[0] ?? "", /^B1 - Service Entrance \(od-9\) - unlocked for 5 minutes\.$/);
   });
@@ -365,7 +378,7 @@ describe("the door arm - a door no handle drives", () => {
     await door.run(ctx);
 
     assert.deepEqual(calls.official, [{ args: [ "od-9", { type: "keep_unlock" }, { signal: ctx.signal } ], method: "spaces.setLockRule" }]);
-    assert.equal((calls.official[0]?.args[2] as { signal?: AbortSignal } | undefined)?.signal, ctx.signal);
+    assert.equal(officialCallSignal(calls.official[0]), ctx.signal, "the facade call carries the command's own signal");
     assert.match(rendered(lines)[0] ?? "", /^B1 - Service Entrance \(od-9\) - unlocked until reset\.$/);
   });
 
@@ -387,7 +400,7 @@ describe("the door arm - a door no handle drives", () => {
     await door.run(ctx);
 
     assert.deepEqual(calls.official, [{ args: [ "od-9", { type: "keep_unlock" }, { signal: ctx.signal } ], method: "spaces.setLockRule" }]);
-    assert.equal((calls.official[0]?.args[2] as { signal?: AbortSignal } | undefined)?.signal, ctx.signal);
+    assert.equal(officialCallSignal(calls.official[0]), ctx.signal, "the facade call carries the command's own signal");
     assert.deepEqual(calls.lockRules, []);
     assert.match(rendered(lines)[0] ?? "", /^B1 - Service Entrance \(od-9\) - lock rule set to keep-unlock\.$/);
   });
@@ -400,7 +413,7 @@ describe("the door arm - a door no handle drives", () => {
     await door.run(ctx);
 
     assert.deepEqual(calls.official, [{ args: [ "od-9", { controlCmd: "close" }, { signal: ctx.signal } ], method: "spaces.unlock" }]);
-    assert.equal((calls.official[0]?.args[2] as { signal?: AbortSignal } | undefined)?.signal, ctx.signal);
+    assert.equal(officialCallSignal(calls.official[0]), ctx.signal, "the facade call carries the command's own signal");
     assert.deepEqual(calls.closes, []);
     assert.match(rendered(lines)[0] ?? "", /^B1 - Service Entrance \(od-9\) - closed\.$/);
   });
@@ -413,7 +426,7 @@ describe("the door arm - a door no handle drives", () => {
     await door.run(ctx);
 
     assert.deepEqual(calls.official, [{ args: [ "door-9", {}, { signal: ctx.signal } ], method: "spaces.unlock" }]);
-    assert.equal((calls.official[0]?.args[2] as { signal?: AbortSignal } | undefined)?.signal, ctx.signal);
+    assert.equal(officialCallSignal(calls.official[0]), ctx.signal, "the facade call carries the command's own signal");
     assert.deepEqual(calls.unlocks, []);
     assert.match(rendered(lines)[0] ?? "", /^B1 - Service Entrance \(door-9\) - unlocked\.$/);
   });
@@ -460,26 +473,32 @@ describe("the confirmation label", () => {
 
   test("a record that leaves controller state mid-command still confirms, because the label was captured before the command ran", async () => {
 
-    const handles: Record<string, unknown>[] = [];
-    const { calls, client } = makeFakeClient({ ...HUB_SPEC, devices: [ { beforeUnlock: (): void => {
+    const fake = makeFakeClient({ ...HUB_SPEC, devices: [ { beforeUnlock: (): void => {
 
       // The handle's record leaves controller state while its own unlock is in flight.
-      (handles[0]?.["markAbsent"] as () => void)();
+      fake.markAbsent("hub-1");
     }, doorId: "door-1", id: "hub-1", name: "Acme Name 6" }, { doorId: "door-2", id: "hub-2", name: "Side Hub" } ] });
-
-    handles.push(...(client["devices"] as Record<string, unknown>[]));
-
-    const { ctx, lines } = makeCommandContext({ args: [ "unlock", "Acme Name 13" ], calls, client });
+    const { ctx, lines } = makeCommandContext({ args: [ "unlock", "Acme Name 13" ], calls: fake.calls, client: fake.client });
 
     await door.run(ctx);
 
-    assert.deepEqual(calls.unlocks, [{ id: "hub-1" }]);
+    assert.deepEqual(fake.calls.unlocks, [{ id: "hub-1" }]);
     assert.match(rendered(lines)[0] ?? "", /^1F - Loading Dock \(door-1\) - unlocked\.$/);
-    assert.throws(() => handles[0]?.["door"], ReferenceError, "reading the door after the command would have thrown, which is what the capture avoids");
+    assert.throws(() => asAccessClient(fake.client).hub("hub-1")?.door, ReferenceError,
+      "reading the door after the command would have thrown, which is what the capture avoids");
   });
 });
 
 describe("the door close command", () => {
+
+  test("the close command requires exactly one door", async () => {
+
+    const { client } = makeFakeClient(HUB_SPEC);
+    const { ctx } = makeCommandContext({ args: ["close"], client });
+
+    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
+      (error.message === "Specify one door by name or id. Run \"ufa door close --help\" for usage."));
+  });
 
   test("close calls the hub's own close", async () => {
 
@@ -507,6 +526,15 @@ describe("the door close command", () => {
 
 describe("the door lock-rule command", () => {
 
+  test("the lock-rule command requires a door", async () => {
+
+    const { client } = makeFakeClient(HUB_SPEC);
+    const { ctx } = makeCommandContext({ args: ["lock-rule"], client });
+
+    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
+      (error.message === "Specify one door by name or id, and optionally a rule. Run \"ufa door lock-rule --help\" for usage."));
+  });
+
   test("the read renders the official rule for the resolved door", async () => {
 
     const { calls, client } = makeFakeClient({ ...HUB_SPEC, capabilities: { mode: "dual", official: true, override: "auto" },
@@ -529,6 +557,7 @@ describe("the door lock-rule command", () => {
       (error: unknown) => (error instanceof CliError) && error.message.includes("lock-rule read") && error.message.includes("official API"));
 
     assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 1);
   });
 
   test("the read refuses a direct-only override as a usage error, before anything connects", async () => {
@@ -539,6 +568,7 @@ describe("the door lock-rule command", () => {
     await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
 
     assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 1);
   });
 
   test("each kebab verb maps onto its wire spelling through the hub", async () => {
@@ -579,6 +609,7 @@ describe("the door lock-rule command", () => {
       (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("keep-lock") && error.message.includes("30m"));
 
     assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 0);
   });
 
   test("each official-only verb surfaces the routing service's own capability refusal on a credential-only client", async () => {
@@ -616,6 +647,15 @@ describe("the door emergency command", () => {
   const officialSpec = { ...HUB_SPEC, capabilities: { mode: "dual", official: true, override: "auto" } as const,
     official: { emergency: { "evacuation": false, "lockdown": true } } };
 
+  test("the emergency command takes at most one state", async () => {
+
+    const { client } = makeFakeClient(HUB_SPEC);
+    const { ctx } = makeCommandContext({ args: [ "emergency", "lockdown", "evacuation" ], client });
+
+    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
+      (error.message === "Specify at most one emergency state. Run \"ufa door emergency --help\" for usage."));
+  });
+
   test("the read renders both status flags", async () => {
 
     const { calls, client } = makeFakeClient(officialSpec);
@@ -652,6 +692,7 @@ describe("the door emergency command", () => {
       (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("evacuation, lockdown, normal"));
 
     assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 0);
   });
 
   test("a credential-only identity is refused, and a direct-only pin is a usage error", async () => {
@@ -667,6 +708,7 @@ describe("the door emergency command", () => {
     await assert.rejects(async () => door.run(pinned.ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
 
     assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 2);
   });
 
   test("a dual client whose official capability folded away gets the calm post-connect refusal", async () => {
@@ -704,7 +746,7 @@ describe("the door capture scrub", () => {
 
     const text = rendered(scrubbedRun.lines)[0] ?? "";
 
-    assert.ok(!text.includes("Dr. Jane Smith"));
+    assert.ok(!text.includes("Dr. Jane Smith"), "the rule's actor name does not survive the scrub");
     assert.ok(text.includes("keep_unlock"), "the rule vocabulary is evidence and survives");
     assert.ok(text.includes("1755300000"), "and so does the time the rule ends");
   });
@@ -718,9 +760,9 @@ describe("the door capture scrub", () => {
     await door.run(ctx);
 
     const text = rendered(lines)[0] ?? "";
-    const printed = JSON.parse(text) as { evacuation: boolean; lockdown: boolean };
+    const printed = parsedJson<{ evacuation: boolean; lockdown: boolean }>(lines);
 
-    assert.ok(!text.includes("Dr. Jane Smith"));
+    assert.ok(!text.includes("Dr. Jane Smith"), "the emergency's actor name does not survive the scrub");
     assert.equal(printed.lockdown, true, "the state in force is the point of the read and survives");
     assert.equal(printed.evacuation, false);
   });
@@ -734,6 +776,7 @@ describe("the door capture scrub", () => {
       (error.message === "A rule change prints a confirmation rather than a document, so --scrub applies to the rule read only."));
 
     assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 0);
   });
 
   test("a state change asked to scrub is refused before anything connects", async () => {
@@ -745,5 +788,30 @@ describe("the door capture scrub", () => {
       (error.message === "A state change prints a confirmation rather than a document, so --scrub applies to the state read only."));
 
     assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 0);
+  });
+
+  test("a rule change asked for JSON is refused before anything connects, the way the scrub is", async () => {
+
+    const { calls, client } = makeFakeClient(OFFICIAL_SPEC);
+    const { ctx } = makeCommandContext({ args: [ "lock-rule", "Acme Name 13", "keep-unlock", "--json" ], calls, client });
+
+    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
+      (error.message === "A rule change prints a confirmation rather than a document, so --json applies to the rule read only."));
+
+    assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 0);
+  });
+
+  test("a state change asked for JSON is refused before anything connects, the way the scrub is", async () => {
+
+    const { calls, client } = makeFakeClient(OFFICIAL_SPEC);
+    const { ctx } = makeCommandContext({ args: [ "emergency", "lockdown", "--json" ], calls, client });
+
+    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
+      (error.message === "A state change prints a confirmation rather than a document, so --json applies to the state read only."));
+
+    assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 0);
   });
 });

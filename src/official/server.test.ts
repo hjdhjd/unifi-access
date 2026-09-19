@@ -1,14 +1,12 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * server.test.ts: Unit tests for the official API's own certificate management. The upload row is the third multipart consumer, and it asserts the two-part
+ * server.test.ts: Unit tests for the official API's own certificate management. The upload row is the second multipart consumer, and it asserts the two-part
  * framing and the caller-supplied filenames - the reference's own sample names are deliberately not what the fixture sends.
  */
-import { describeDomainTable, officialPath, parseMultipart } from "./domain.helpers.ts";
+import { VOID_OK, describeDomainTable, officialPath, parseMultipart } from "./domain.helpers.ts";
 import type { DomainRow } from "./domain.helpers.ts";
 import { OfficialApiServer } from "./server.ts";
 import assert from "node:assert/strict";
-
-const VOID_OK = { "code": "SUCCESS", "msg": "success" };
 
 const rows: readonly DomainRow<OfficialApiServer>[] = [
 

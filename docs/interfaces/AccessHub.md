@@ -95,9 +95,9 @@ resolves it to its own door by construction rather than by a special case. Singl
 its door. Publishing the resolution keeps it single-sourced: a consumer matching a topology door to the handle that drives it reads this rather than restating
 the port-extension rule.
 
-Where a record carries several port bindings, the first of them as the controller delivered them is what this answers with. That ordering is the controller's
-own and nothing here promises it will hold, so commanding a particular door of hardware that drives more than one is what the door commands' `doorId` target
-is for.
+Where a record carries several port bindings, the first of them as the controller delivered them is what this answers with, which is the contract
+[AccessHub.portBindings](#portbindings) states and where every one of them is reachable. Commanding a particular door of hardware that drives more than one is what the
+door commands' `doorId` target is for.
 
 ##### Throws
 
@@ -146,7 +146,7 @@ get isOnline(): boolean;
 
 Whether the controller currently reports this device as online.
 
-This reads the controller's own `is_online` and nothing else. The record carries neighbouring flags - adopted, managed, connected - that describe how the
+This reads the controller's own `is_online` and nothing else. The record carries neighboring flags - adopted, managed, connected - that describe how the
 device is enrolled rather than whether it is reachable now, and a consumer wanting a stricter definition composes them itself off `config`. Folding them in
 here would make this getter one consumer's policy rather than the controller's report.
 
@@ -200,9 +200,9 @@ If the device is no longer present in the controller state.
 get name(): string;
 ```
 
-The device's display name: the alias an administrator gave it when there is one, and the controller's own name for the hardware otherwise. The precedence is
-the controller interface's own - an alias is what a person chose to call this device, so it wins wherever one is set - and an alias set to the empty string
-counts as unset, which is how clearing an alias in the interface reads on the wire.
+The device's display name, as [deviceDisplayName](../functions/deviceDisplayName.md) answers it: the alias an administrator gave it when there is one, and the controller's own name
+for the hardware otherwise. The rule and its rationale live with that selector, so a consumer labelling a device from its record and a handle reading its
+own name cannot drift apart.
 
 ##### Throws
 
@@ -215,6 +215,35 @@ If the device is no longer present in the controller state.
 #### Inherited from
 
 [`AccessDevice`](AccessDevice.md).[`name`](AccessDevice.md#name)
+
+***
+
+### portBindings
+
+#### Get Signature
+
+```ts
+get portBindings(): readonly AccessPortBinding[];
+```
+
+The doors this hub's ports are bound to, read through the state tier's own `portBindings` selector: one binding per port that names a door, in the order the
+controller delivered them. That selector's own documentation is the full statement of the contract.
+
+It is mirrored here for the reason [AccessHub.terminalInput](#terminalinput) is: the port bindings are hub hardware and the hub is the projection a consumer holds for
+it. A per-port handle of a multi-port hub answers an empty list, because it already is one port and the door it serves is [AccessHub.doorId](#doorid).
+
+What each binding means is the consumer's to decide - which of a gate's doors is the main one is policy this library holds no opinion about - so this answers
+the list the controller delivered and ranks nothing.
+
+##### Throws
+
+If the device is no longer present in the controller state.
+
+##### Returns
+
+readonly [`AccessPortBinding`](AccessPortBinding.md)[]
+
+Every door this hub's ports are bound to, in delivered order.
 
 ***
 
@@ -315,7 +344,7 @@ say rather than this library's.
 #### Throws
 
 [AccessCapabilityError](../classes/AccessCapabilityError.md) when the client holds no direct path and its official rail is absent, revoked, or refused for this device,
-  [AccessRequestError](../classes/AccessRequestError.md) when the controller accepts the request but reports the close unsuccessful, the classified `FatalError` on a non-2xx, or a
+  [AccessApiError](../classes/AccessApiError.md) when the controller accepts the request but reports the close unsuccessful, the classified `FatalError` on a non-2xx, or a
   transport-level `AccessError` on failure.
 
 ***
@@ -402,7 +431,7 @@ non-2xx classifies and throws, and a 2xx whose envelope reports anything other t
 #### Throws
 
 [AccessCapabilityError](../classes/AccessCapabilityError.md) when this client has no path that can carry the restart - one held to the official API, which cannot express it, or one
-  holding only a token, whose credentials the Access application's own endpoints require. [AccessRequestError](../classes/AccessRequestError.md) when the controller accepts the request but
+  holding only a token, whose credentials the Access application's own endpoints require. [AccessApiError](../classes/AccessApiError.md) when the controller accepts the request but
   reports the restart unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
 
 #### Inherited from
@@ -447,8 +476,8 @@ If a custom rule's interval is not a positive whole number - caller misuse, rais
 
 #### Throws
 
-[AccessCapabilityError](../classes/AccessCapabilityError.md) when no available path can carry the rule, [AccessRequestError](../classes/AccessRequestError.md) when the controller accepts the request but reports
-  the rule unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
+[AccessCapabilityError](../classes/AccessCapabilityError.md) when no available path can carry the rule, [AccessApiError](../classes/AccessApiError.md) when the controller accepts the request but reports the
+  rule unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
 
 ***
 
@@ -480,8 +509,38 @@ Which gate is halted is this handle's own door unless `doorId` picks out another
 
 #### Throws
 
-[AccessCapabilityError](../classes/AccessCapabilityError.md) when no available path can carry the stop, [AccessOfficialApiError](../classes/AccessOfficialApiError.md) when the controller refuses it in its own
+[AccessCapabilityError](../classes/AccessCapabilityError.md) when no available path can carry the stop, [AccessApiError](../classes/AccessApiError.md) when the controller refuses it in its own
   vocabulary, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
+
+***
+
+### terminalInput()
+
+```ts
+terminalInput(input): AccessTerminalInputFacts;
+```
+
+What this hub reports about one of the terminals on its back, read through the state tier's own `terminalInput` selector: whether the hardware has something in
+service on that terminal, and what it currently reads. That selector's own documentation is the full statement of the contract.
+
+It is mirrored here rather than on [AccessDevice](AccessDevice.md) because terminals are hub hardware and the hub is the projection a consumer holds for it, exactly as
+the door reads are. A per-port handle of a multi-port hub answers for its own port, where the whole hub answers no evidence for the terminals its ports share.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `input` | `"dps"` \| `"rel"` \| `"ren"` \| `"rex"` \| `"sideDps"` | Which terminal to read. |
+
+#### Returns
+
+[`AccessTerminalInputFacts`](../type-aliases/AccessTerminalInputFacts.md)
+
+What the hardware established about it.
+
+#### Throws
+
+If the device is no longer present in the controller state.
 
 ***
 
@@ -524,8 +583,8 @@ door id names, and nothing here checks it against the state first.
 
 #### Throws
 
-[AccessCapabilityError](../classes/AccessCapabilityError.md) when no available path can carry the unlock as asked, [AccessRequestError](../classes/AccessRequestError.md) when the controller accepts the request
-  but reports the unlock unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
+[AccessCapabilityError](../classes/AccessCapabilityError.md) when no available path can carry the unlock as asked, [AccessApiError](../classes/AccessApiError.md) when the controller accepts the request but
+  reports the unlock unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
 
 ***
 

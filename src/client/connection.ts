@@ -20,7 +20,7 @@
  * actionable answer than "cooling down". A transition is therefore just "recompute after any input, and announce when the answer changed" - there is no transition
  * table to fall out of step with the machine.
  *
- * **Coupling is narrow and inverted.** The transport dependency is the structural {@link ThrottleSource} - the throttle verdict and its two rails, nothing more -
+ * **Coupling is narrow and inverted.** The transport dependency is the structural {@link ThrottleSource} - the throttle verdict and its rails, nothing more -
  * rather than the concrete class; the store is read only through its public observation surface; and every other piece of I/O is an injected function the
  * composition root supplies. The monitor publishes on no diagnostics channel of its own, because it does not know which controller it is monitoring: the client
  * that does know owns every publish.
@@ -28,7 +28,7 @@
  * @module AccessConnectionMonitor
  */
 import { ACCESS_REBOOT_UPTIME_DROP_MINIMUM, ACCESS_RECOVERY_BACKOFF_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
-import { AccessAbortedError, AccessError, AccessNetworkError } from "../errors.ts";
+import { AccessAbortedError, AccessError, AccessNetworkError, formatErrorChain } from "../errors.ts";
 import type { AccessEventPacket, Nullable } from "../types/index.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
@@ -58,7 +58,8 @@ export type ConnectionState = RecoveryPhase | "throttled";
 
 /**
  * One edge of the connection state machine, carried on the `stateChanged` rail and yielded by {@link ConnectionMonitor.observe}. `reason` is present when a typed
- * fault - a stall, a failed reachability probe - is what drove the edge.
+ * fault - a stall, a failed reachability probe - is what drove the edge, and it holds that failure's whole cause chain as {@link formatErrorChain} renders it, so
+ * the controller's own diagnosis reaches a consumer rather than the wrapper's sentence alone: the edge into `lost` carries exactly the text its own warning logs.
  *
  * @category Client
  */
@@ -145,8 +146,9 @@ export interface ConnectionMonitorOptions {
  * subscription in place before the socket can deliver anything. On relaunch the subscriptions are disposed *before* the old stream is torn down, so a dying
  * socket's late frames reach neither the monitor nor a consumer.
  *
- * It listens only for faults. The stream routes every termination it did not initiate onto that rail - a stall, a socket error, and a peer closing a live socket,
- * which is how a controller going down arrives - while a close the stream initiated itself stays informational. So the fault rail alone is the recovery signal.
+ * It listens only for faults. The stream routes the faults of a stream that opened onto that rail - a stall, a socket error, and a peer dropping a live socket,
+ * which is how a controller going down arrives - while a close the stream initiated itself, and any failure that lands before it opened, stay off it. So the
+ * fault rail alone is the recovery signal.
  */
 class ManagedEventStream implements AsyncDisposable {
 
@@ -191,13 +193,6 @@ class ManagedEventStream implements AsyncDisposable {
    * relaunched stream simply starts from now, and the re-bootstrap that precedes it is what covers whatever was missed.
    */
   async relaunch(): Promise<void> {
-
-    // Relaunching a channel that was never opened is a caller's mistake rather than a runtime condition, because the only caller is a recovery loop that runs
-    // behind a completed open.
-    if(this.#stream === null) {
-
-      throw new Error("The UniFi Access realtime notification channel cannot be relaunched before it has been opened.");
-    }
 
     await this.#teardown();
 
@@ -496,7 +491,7 @@ export class ConnectionMonitor {
     const from = this.#reportedState;
 
     this.#reportedState = next;
-    this.#bus.emit("stateChanged", { from, to: next, ...((this.#lastFault !== null) && { reason: this.#lastFault.message }) });
+    this.#bus.emit("stateChanged", { from, to: next, ...((this.#lastFault !== null) && { reason: formatErrorChain(this.#lastFault) }) });
   }
 
   // Move to a phase and recompute. Entering `lost` goes through its own path instead, so the announcement fires once per episode.
@@ -520,7 +515,7 @@ export class ConnectionMonitor {
     if(announce) {
 
       this.#log.warn("The UniFi Access controller appears to be unreachable; the connection is lost and recovery is polling for its return.",
-        { reason: reason.message });
+        { reason: formatErrorChain(reason) });
       this.#bus.emit("controllerLost", reason);
     }
   }
@@ -537,7 +532,7 @@ export class ConnectionMonitor {
   #onStreamFault(error: AccessError): void {
 
     this.#lastFault = error;
-    this.#log.debug("The UniFi Access realtime notification channel faulted; beginning recovery.", { reason: error.message });
+    this.#log.debug("The UniFi Access realtime notification channel faulted; beginning recovery.", { reason: formatErrorChain(error) });
 
     if(this.#phase === "healthy") {
 
@@ -550,8 +545,8 @@ export class ConnectionMonitor {
   /* The guarded recovery loop: one schedule, walked out to a steady floor it then polls at for as long as the monitor lives.
    *
    * The delay generator yields the wait before each attempt - the staged prefix, then the floor forever - so the loop itself is just "wait, then attempt". A wait
-   * ends one of three ways: it elapses and the attempt runs on schedule; a detected restart wakes it, so the attempt runs now rather than sleeping out a backoff
-   * that a returned controller has made pointless; or disposal aborts it and the loop ends. Recovery therefore keeps polling a slow-to-return controller
+   * ends when it elapses and the attempt runs on schedule, when a detected restart wakes it so the attempt runs now rather than sleeping out a backoff that a
+   * returned controller has made pointless, or when disposal aborts it and the loop ends. Recovery therefore keeps polling a slow-to-return controller
    * indefinitely rather than giving up after a handful of tries. The guard makes a re-entrant fault a no-op, so one episode runs one loop.
    */
   async #recover(): Promise<void> {
@@ -578,10 +573,10 @@ export class ConnectionMonitor {
         try {
 
           // eslint-disable-next-line no-await-in-loop
-          await this.#clock.wait(delay, { signal: AbortSignal.any([ this.#controller.signal, wake.signal ]) });
+          await this.#clock.delay(delay, { signal: AbortSignal.any([ this.#controller.signal, wake.signal ]) });
         } catch {
 
-          // The wait aborted. Disposal means we are done; anything else is the wake, so we fall through and attempt now.
+          // The delay aborted. Disposal means we are done; anything else is the wake, so we fall through and attempt now.
           if(this.#controller.signal.aborted) {
 
             return;
@@ -650,7 +645,7 @@ export class ConnectionMonitor {
        */
       if(this.#controller.signal.aborted) {
 
-        this.#log.debug("Recovery of the connection to the UniFi Access controller ended with its disposal.", { reason: fault.message });
+        this.#log.debug("Recovery of the connection to the UniFi Access controller ended with its disposal.", { reason: formatErrorChain(fault) });
 
         return false;
       }
@@ -684,7 +679,7 @@ export class ConnectionMonitor {
 
   // Recovery completed. Clear the fault, return to healthy, and announce a recovery only when the episode had actually reached lost - a transient stall that
   // re-bootstrapped without the controller ever going unreachable does not warrant one. The transient case still confirms itself at the stream level, so each
-  // recovery logs exactly one closing line and the two cases cannot both fire.
+  // recovery logs exactly one closing line and the cases cannot both fire.
   #onRecovered(): void {
 
     const recovered = this.#wasLost;

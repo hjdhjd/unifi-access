@@ -11,15 +11,15 @@
  * @module AccessTypesCommon
  */
 
-/* The deep partial event payloads are typed against. Three properties matter, and each answers something the Access wire does.
+/* The deep partial event payloads are typed against.
  *
- * Every member is optional because a notification payload is a sparse projection of the record it describes: a v2 device update carries eighteen keys where the
- * bootstrap record carries forty-seven, and a legacy update carries a full record. Both inhabit this one type, so no separate full-record payload type is needed.
+ * Every member is optional because a notification payload is a sparse projection of the record it describes: a v2 device update carries substantially fewer keys than
+ * the bootstrap record, and a legacy update carries a full record. Both inhabit this one type, so no separate full-record payload type is needed.
  *
  * Every member also admits `null`, which is the property that separates this from a plain deep partial. On this wire a null-valued member means NOT CARRIED, never
- * cleared: a legacy device update nulls thirteen distinct keys whose stored values are real and stable across the same window, and the devices did not lose those
- * fields. Ten of those keys are declared non-nullable on the record types, which is accurate for a record and wrong for a payload, so the null tolerance lives here
- * rather than loosening the record declarations. The reducer's merge is what honors the semantics by skipping a null at every depth.
+ * cleared: a legacy device update nulls fields whose stored values are real and stable across the same window, and the devices did not lose those fields. Some of those
+ * nulled fields are declared non-nullable on the record types, which is accurate for a record and wrong for a payload, so the null tolerance lives here rather than
+ * loosening the record declarations. The reducer's merge is what honors the semantics by skipping a null at every depth.
  *
  * The `NonNullable` guard on the array and object branches is what lets an optional member partialize correctly. Reading `T[P] extends (infer I)[]` against an
  * optional member tests `I[] | undefined`, which matches neither branch and falls through to the primitive passthrough, so an optional array member would be typed as
@@ -43,7 +43,7 @@ export type DeepWirePartial<T> = {
  * every declared member into the index signature, so the member information the rest of the type surface depends on is destroyed. Mapping over `keyof T` directly
  * preserves each declared member, its optionality, and the index signature alongside them.
  *
- * Two properties follow from keeping that index signature, and neither should be over-read. The pruning is advisory at the type level, since the retained index
+ * Keeping the index signature has consequences worth naming, and neither should be over-read. The pruning is advisory at the type level, since the retained index
  * signature still admits the excluded key: the runtime rest-destructure in the reducer and the `Object.hasOwn` test assertions are what actually enforce it. And `K`
  * is deliberately unconstrained, because a `keyof`-based constraint is vacuous over an index-signatured interface, where `keyof` collapses to `string`. A misspelled
  * exclusion key is still caught, at the construction site, where the rest-destructured object fails to satisfy a type that still requires the member the typo failed

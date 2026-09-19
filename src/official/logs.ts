@@ -6,6 +6,7 @@ import type { AccessOfficialCallOptions, AccessOfficialResult, OfficialDispatch,
 import { officialEndpoint, officialPageQuery } from "./endpoints.ts";
 import type { AccessOfficialPageOptions } from "./endpoints.ts";
 import type { Nullable } from "../types/index.ts";
+import { officialPages } from "./pages.ts";
 
 /**
  * The activity categories a log query can ask for.
@@ -51,6 +52,8 @@ export interface AccessOfficialSystemLogAuthentication {
  *
  * `log_key` is the finest-grained name for the event - `access.door.unlock.success.remote.user` where `type` says only `access.door.unlock` - so it is what to
  * branch on when the outcome matters. Both it and `log_category` are on the wire and in no documented schema.
+ *
+ * `published` is epoch milliseconds, unlike the epoch-seconds convention `since`, `until`, and the resource's `created_at`/`updated_at` use elsewhere in this domain.
  *
  * Live-verified.
  *
@@ -163,7 +166,8 @@ export interface AccessOfficialSystemLogFetchOptions extends AccessOfficialPageO
 }
 
 /**
- * Export the system log as CSV. The window between `since` and `until` cannot exceed one month, and `timezone` is an IANA zone name such as `America/New_York`.
+ * Export the system log as CSV. `since` and `until` are unix epoch seconds, as with {@link AccessOfficialSystemLogFetchOptions}; the window between them cannot exceed
+ * one month, and `timezone` is an IANA zone name such as `America/New_York`.
  *
  * @category Official
  */
@@ -209,6 +213,33 @@ export class OfficialSystemLogs {
 
     return this.#dispatch.request<AccessOfficialSystemLogHits>(officialEndpoint(this.#host, "/system/logs", officialPageQuery(opts)),
       { json: { "actor_id": opts.actor_id, "since": opts.since, "topic": opts.topic, "until": opts.until }, method: "POST", retry: true }, call);
+  }
+
+  /**
+   * Iterate every log entry the query matches, walking the pages to their end. `POST /system/logs`, permission `view:system_log`.
+   *
+   * A log is unbounded in a way a listing is not, so a caller bounds the walk with `since` and `until`, or stops iterating early - returning from a `for await`
+   * ends the walk at the page it is on.
+   *
+   * Composed over {@link OfficialSystemLogs.fetch}; the endpoint is live-verified.
+   *
+   * @param opts - The topic to query, the window to query it over, and the page size to walk it in.
+   * @param call - The per-call options - an optional abort signal.
+   *
+   * @returns Every entry the query matches, in the order its pages carry them.
+   */
+  async *iterate(opts: AccessOfficialSystemLogFetchOptions, call: AccessOfficialCallOptions = {}): AsyncGenerator<AccessOfficialSystemLogHit> {
+
+    yield* officialPages(async (page) => {
+
+      const result = await this.fetch({ ...opts, ...page }, call);
+
+      /* This endpoint answers its records under a `hits` member where every other paginated one answers a bare array, so the page the walker reads is the
+       * envelope with the hits in place of the payload. The pagination stays exactly where it arrived, beside the records, which is what the walker reads to
+       * decide whether another page exists.
+       */
+      return { ...result, data: result.data.hits };
+    }, opts);
   }
 
   /**

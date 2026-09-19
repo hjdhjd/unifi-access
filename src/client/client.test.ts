@@ -4,30 +4,19 @@
  * real controller document, the typed error for each failure stage, the diagnostics the client publishes, and clean teardown. Driven against a mocked controller
  * and an injected notification socket, so the whole composition runs without a live controller.
  */
-import { AccessAuthError, AccessBootstrapError } from "../errors.ts";
+import { AccessApiError, AccessAuthError, AccessBootstrapError, AccessProtocolError } from "../errors.ts";
 import type { AccessConnectionTransitionPayload, AccessStoreDispatchPayload } from "../diagnostics.ts";
+import { CONTROLLER_PATH, DOOR_HUB, HOST, HUB, LOGIN_PATH, SELF_PATH, TOPOLOGY_PATH, mockController } from "./client-modes.helpers.ts";
 import type { Interceptable, MockAgent } from "undici";
+import { TestClock, settle, silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
+import { assertRejectsWith, present, settleUntil, subscribeTo } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
-import { expectAt, fakeClock, silentLog } from "../testing.helpers.ts";
 import { AccessClient } from "./client.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
-import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
-import { MockAgent as UndiciMockAgent } from "undici";
 import assert from "node:assert/strict";
-import diagnosticsChannel from "node:diagnostics_channel";
-import { settle } from "homebridge-plugin-utils/testing";
-
-const HOST = "10.0.0.1";
-const LOGIN_PATH = "/api/auth/login";
-const SELF_PATH = "/api/users/self";
-const CONTROLLER_PATH = "/proxy/access/api/v2/access/info";
-const TOPOLOGY_PATH = "/proxy/access/api/v2/devices/topology4";
-
-// Named entries from the 2026 topology document.
-const HUB = "aabbcc000001";
-const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
+import { channels } from "../diagnostics.ts";
 
 // The controller wraps every REST result in an envelope, and the two documents sit in it differently: the controller's own information is the payload itself, while
 // the topology arrives as a single-element collection. Both unwraps are what connect has to get right.
@@ -37,18 +26,15 @@ const controllerBody = (uptime?: number): string => JSON.stringify({ code: 200, 
 const topologyBody = (documents: unknown[] = [accessBootstrap2026Fixture]): string => JSON.stringify({ code: 200, codeS: "SUCCESS", data: documents,
   error: "", msg: "" });
 
+/* Two envelopes a bootstrap read can meet inside a 200. The first is the refusal a door hub answered a close command with on 2026-09-16, carried verbatim, standing
+ * here for the controller declining to hand a document over; the second reports success and then carries no document at all.
+ */
+const REFUSAL_BODY = JSON.stringify({ "cloud_code": "", "code": -3, "codeS": "CODE_SYSTEM_ERROR", "error": "CODE[-3];Mesg:;CauseBy:",
+  "msg": "Server system error. " });
+const DOCUMENTLESS_BODY = JSON.stringify({ "code": 1, "codeS": "SUCCESS", "msg": "success" });
+
 // The account record the privilege check reads, with the grant that marks an administrator.
 const selfBody = (admin: boolean): string => JSON.stringify({ scopes: admin ? [ "edit:access.device", "view:access.device" ] : ["view:access.device"] });
-
-// A mocked controller with net connections disabled, so an unmocked request fails loudly rather than reaching a network.
-function mockController(): { agent: MockAgent; pool: Interceptable } {
-
-  const agent = new UndiciMockAgent();
-
-  agent.disableNetConnect();
-
-  return { agent, pool: agent.get("https://" + HOST) };
-}
 
 function interceptLogin(pool: Interceptable): void {
 
@@ -65,7 +51,7 @@ function interceptPass(pool: Interceptable, options: { admin?: boolean; topology
 
 // Connect with the test defaults: the mocked dispatcher, an injected socket that opens on its own so the atomic connect completes, the refresh failsafe disabled,
 // and a silent logger.
-function connect(agent: MockAgent, options: { clock?: FakeClock; refreshIntervalMs?: number | false } = {}): Promise<AccessClient> {
+function connect(agent: MockAgent, options: { clock?: TestClock; refreshIntervalMs?: number | false } = {}): Promise<AccessClient> {
 
   return AccessClient.connect({ dispatcher: agent, host: HOST, log: silentLog(), password: "p",
     refreshIntervalMs: options.refreshIntervalMs ?? false, username: "u", webSocket: () => new FakeWebSocket(),
@@ -80,7 +66,7 @@ interface CapturedConnect {
 }
 
 // Connect while capturing the notification socket the factory builds, so a test can drive realtime frames into the live client.
-async function connectCapturing(agent: MockAgent, options: { clock?: FakeClock; refreshIntervalMs?: number | false } = {}): Promise<CapturedConnect> {
+async function connectCapturing(agent: MockAgent, options: { clock?: TestClock; refreshIntervalMs?: number | false } = {}): Promise<CapturedConnect> {
 
   let ws: Nullable<FakeWebSocket> = null;
   const client = await AccessClient.connect({ dispatcher: agent, host: HOST, log: silentLog(), password: "p",
@@ -178,7 +164,7 @@ describe("AccessClient.connect", () => {
       assert.equal(client.accessPoint("no-such-port"), undefined);
       assert.equal(client.doorStates.size, 3, "every door the topology's own hardware establishes something about carries an entry from the connect seed");
       assert.ok(client.transport, "the transport escape hatch is exposed");
-      assert.ok(client.connection.isHealthy);
+      assert.ok(client.connection.isHealthy, "the connection reports healthy once the connect completes");
     });
 
     test("wires the notification socket with the session cookie and nothing else", async () => {
@@ -202,7 +188,7 @@ describe("AccessClient.connect", () => {
           return new FakeWebSocket();
         } });
 
-      assert.ok(client.connection.isHealthy);
+      assert.ok(client.connection.isHealthy, "the connection reports healthy once the connect completes");
 
       // The login interception answers with this cookie, so the value here is the one the session really holds rather than one the test asserted into place.
       assert.deepEqual(captured, { Cookie: "TOKEN=abc" });
@@ -246,13 +232,10 @@ describe("AccessClient.connect", () => {
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad");
       pool.intercept({ method: "GET", path: "/" }).reply(500, "unavailable");
 
-      await assert.rejects(connect(agent), (error: unknown) => {
+      await assertRejectsWith(connect(agent), AccessAuthError, { check: (error) => {
 
-        assert.ok(error instanceof AccessAuthError);
         assert.equal(error.identity, "credentials", "a credential-only connect can only have been refused its credentials");
-
-        return true;
-      });
+      } });
     });
 
     test("a refused document fetch rejects at the fetch stage", async () => {
@@ -263,13 +246,10 @@ describe("AccessClient.connect", () => {
       pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody());
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(500, "boom");
 
-      await assert.rejects(connect(agent), (error: unknown) => {
+      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
 
-        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "fetch");
-
-        return true;
-      });
+      } });
     });
 
     test("a topology collection with no document rejects at the parse stage", async () => {
@@ -283,13 +263,10 @@ describe("AccessClient.connect", () => {
       // failure instead.
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody([]));
 
-      await assert.rejects(connect(agent), (error: unknown) => {
+      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
 
-        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "parse");
-
-        return true;
-      });
+      } });
     });
 
     test("a body that will not parse rejects at the parse stage", async () => {
@@ -300,13 +277,92 @@ describe("AccessClient.connect", () => {
       pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody());
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, "not-json{");
 
-      await assert.rejects(connect(agent), (error: unknown) => {
+      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
 
-        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "parse");
+      } });
+    });
 
-        return true;
-      });
+    test("a document read the controller refuses inside a 200 rejects at the fetch stage, with the refusal as the cause", async () => {
+
+      const { agent, pool } = mockController();
+
+      /* A refusal in the envelope is the controller declining to hand the document over, which is the same event as the non-2xx the fetch stage already reports -
+       * so it classifies there rather than as a document that arrived and could not be read. The controller's own code travels one link down the chain.
+       */
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, REFUSAL_BODY);
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());
+
+      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
+
+        assert.equal(error.stage, "fetch");
+        assert.ok(error.cause instanceof AccessApiError, "the controller's refusal is the cause rather than a message this layer composed");
+        assert.equal(error.cause.code, "CODE_SYSTEM_ERROR");
+      } });
+    });
+
+    test("a refused topology read rejects at the fetch stage exactly as a refused controller read does", async () => {
+
+      const { agent, pool } = mockController();
+
+      // The pair is read by one rule, so which of the two documents the controller declined does not change how the failure reports.
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody());
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, REFUSAL_BODY);
+
+      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
+
+        assert.equal(error.stage, "fetch");
+        assert.ok(error.cause instanceof AccessApiError, "the controller's refusal is the cause");
+        assert.equal(error.cause.code, "CODE_SYSTEM_ERROR");
+      } });
+    });
+
+    test("a 200 carrying a document that is not an envelope rejects at the parse stage", async () => {
+
+      const { agent, pool } = mockController();
+
+      // The other polarity of the read: a body that parses but reports no verdict at all is the document arriving and not being the document.
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, "{}");
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());
+
+      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
+
+        assert.equal(error.stage, "parse");
+        assert.ok(error.cause instanceof AccessProtocolError, "a body that is not an envelope surfaces as the protocol error the reader raised");
+      } });
+    });
+
+    test("a success envelope carrying no document rejects at the parse stage, for either document", async () => {
+
+      const first = mockController();
+
+      /* The controller reported success and then sent nothing to read. Taking that as a document would hand the store an undefined controller record, which is the
+       * silence this presence test exists to end - and it reads the same way whichever of the two documents came back empty.
+       */
+      interceptLogin(first.pool);
+      first.pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, DOCUMENTLESS_BODY);
+      first.pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());
+
+      await assertRejectsWith(connect(first.agent), AccessBootstrapError, { check: (error) => {
+
+        assert.equal(error.stage, "parse");
+        assert.ok(error.cause instanceof TypeError, "the absent controller document surfaces as the presence test's own refusal");
+      } });
+
+      const second = mockController();
+
+      interceptLogin(second.pool);
+      second.pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody());
+      second.pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, DOCUMENTLESS_BODY);
+
+      await assertRejectsWith(connect(second.agent), AccessBootstrapError, { check: (error) => {
+
+        assert.equal(error.stage, "parse");
+        assert.ok(error.cause instanceof TypeError, "the absent topology document surfaces the same way");
+      } });
     });
 
     test("a notification socket that never opens rejects and leaves nothing behind", async () => {
@@ -333,7 +389,7 @@ describe("AccessClient.connect", () => {
     test("two overlapping passes share one fetch rather than issuing two", async () => {
 
       const { agent, pool } = mockController();
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       interceptLogin(pool);
       interceptPass(pool);
@@ -354,7 +410,10 @@ describe("AccessClient.connect", () => {
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, () => topologyBody()).persist();
       pool.intercept({ method: "GET", path: SELF_PATH }).reply(200, () => selfBody(true)).persist();
 
-      const { client, ws } = await connectCapturing(agent, { clock, refreshIntervalMs: 1000 });
+      const captured = await connectCapturing(agent, { clock, refreshIntervalMs: 1000 });
+
+      await using client = captured.client;
+      const { ws } = captured;
 
       /* Count the controller-information requests as they are dispatched rather than as they are answered, which is what lets a request still in flight be counted
        * at all. Only the document fetch asks for that endpoint - the reachability probe asks for the topology - so it is what cleanly tells one shared fetch from
@@ -362,63 +421,48 @@ describe("AccessClient.connect", () => {
        */
       let controllerRequests = 0;
       const phases: string[] = [];
-      const onStart = (message: unknown): void => {
 
-        if((message as { url: string }).url.includes("/access/info")) {
+      using startSub = subscribeTo(channels.httpRequestStart, (message) => {
+
+        if(message.url.includes("/access/info")) {
 
           controllerRequests++;
         }
-      };
-      const onTransition = (message: unknown): void => void phases.push((message as AccessConnectionTransitionPayload).to);
+      });
+      using transitionSub = subscribeTo(channels.connectionTransition, (message) => void phases.push(message.to));
 
-      diagnosticsChannel.subscribe("unifi-access:http:request:start", onStart);
-      diagnosticsChannel.subscribe("unifi-access:connection:transition", onTransition);
+      clock.advance(1000);
+      await settle();
+      assert.equal(controllerRequests, 1, "expected the refresh pass to be dispatched");
 
-      try {
+      /* The pass is now in flight and parked on the gate. Fault the channel so recovery probes and then re-bootstraps, which reaches for the same pair while the
+       * first is still outstanding. Joining it is what makes two passes unable to settle out of order, and so unable to land a stale controller document on top
+       * of a fresher one. Recovery parks on the clock before its first attempt, so the clock is released on every poll until the reconnecting edge appears; the
+       * edge is announced immediately before recovery reaches for the pair, and one more turn of the event loop is the join.
+       */
+      ws.emitError(new Error("socket dropped"));
 
-        // Release the refresh loop's next pass. Ticking until it lands is necessary because the notification stream's own watchdog shares the interval queue.
-        await expectAt(async () => {
+      await settleUntil(() => {
 
-          await clock.tick();
+        clock.advance(0);
 
-          return controllerRequests === 1;
-        }, { message: "expected the refresh pass to be dispatched" });
+        return phases.includes("reconnecting");
+      }, { message: "expected recovery to reach the re-bootstrap" });
+      await settle();
 
-        /* The pass is now in flight and parked on the gate. Fault the channel so recovery probes and then re-bootstraps, which reaches for the same pair while the
-         * first is still outstanding. Joining it is what makes two passes unable to settle out of order, and so unable to land a stale controller document on top
-         * of a fresher one. Recovery parks on the clock before its first attempt, so the clock is released on every poll until the reconnecting edge appears; the
-         * edge is announced immediately before recovery reaches for the pair, and one more turn of the event loop is the join.
-         */
-        ws.emitError(new Error("socket dropped"));
+      assert.equal(controllerRequests, 1, "the second caller joined the fetch already in flight rather than dispatching its own");
 
-        await expectAt(() => {
+      release.resolve(undefined);
 
-          clock.advance(0);
+      await settleUntil(() => client.connection.state === "healthy", { message: "expected recovery to complete" });
 
-          return phases.includes("reconnecting");
-        }, { message: "expected recovery to reach the re-bootstrap" });
-        await settle();
-
-        assert.equal(controllerRequests, 1, "the second caller joined the fetch already in flight rather than dispatching its own");
-
-        release.resolve(undefined);
-
-        await expectAt(() => client.connection.state === "healthy", { message: "expected recovery to complete" });
-
-        assert.equal(controllerRequests, 1, "and the shared pass settled both callers without a second fetch");
-      } finally {
-
-        diagnosticsChannel.unsubscribe("unifi-access:http:request:start", onStart);
-        diagnosticsChannel.unsubscribe("unifi-access:connection:transition", onTransition);
-      }
-
-      await client[Symbol.asyncDispose]();
+      assert.equal(controllerRequests, 1, "and the shared pass settled both callers without a second fetch");
     });
 
     test("a rejected fetch clears the slot so the next pass starts fresh", async () => {
 
       const { agent, pool } = mockController();
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       interceptLogin(pool);
       interceptPass(pool);
@@ -434,61 +478,45 @@ describe("AccessClient.connect", () => {
 
       // Count dispatches rather than replies, which is independent of how the mock chooses to serve them.
       let controllerRequests = 0;
-      const onStart = (message: unknown): void => {
+      let controllerSettled = 0;
 
-        if((message as { url: string }).url.includes("/access/info")) {
+      using startSub = subscribeTo(channels.httpRequestStart, (message) => {
+
+        if(message.url.includes("/access/info")) {
 
           controllerRequests++;
         }
-      };
+      });
+      using endSub = subscribeTo(channels.httpRequestEnd, (message) => {
 
-      let controllerSettled = 0;
-      const onEnd = (message: unknown): void => {
-
-        if((message as { url: string }).url.includes("/access/info")) {
+        if(message.url.includes("/access/info")) {
 
           controllerSettled++;
         }
-      };
+      });
 
-      diagnosticsChannel.subscribe("unifi-access:http:request:start", onStart);
-      diagnosticsChannel.subscribe("unifi-access:http:request:end", onEnd);
+      clock.advance(1000);
+      await settle();
+      assert.equal(controllerRequests, 1, "expected the first pass to be dispatched");
 
-      try {
+      // The refusal has to settle before the next pass can start fresh: the slot clears when the refused fetch rejects, and the transport announces every
+      // request's end on one signal whatever its outcome. Waiting on that signal rather than on the wall clock makes the second dispatch a measurement of the
+      // slot, not of timing.
+      await settleUntil(() => controllerSettled === 1, { message: "expected the refused fetch to settle" });
+      await settle();
 
-        await expectAt(async () => {
+      clock.advance(1000);
+      await settle();
+      assert.equal(controllerRequests, 2, "the pass after a failure must dispatch its own fetch rather than joining the failed one");
 
-          await clock.tick();
-
-          return controllerRequests === 1;
-        }, { message: "expected the first pass to be dispatched" });
-
-        // The refusal has to settle before the next pass can start fresh: the slot clears when the refused fetch rejects, and the transport announces every
-        // request's end on one signal whatever its outcome. Waiting on that signal rather than on the wall clock makes the second dispatch a measurement of the
-        // slot, not of timing.
-        await expectAt(() => controllerSettled === 1, { message: "expected the refused fetch to settle" });
-        await settle();
-
-        await expectAt(async () => {
-
-          await clock.tick();
-
-          return controllerRequests === 2;
-        }, { message: "the pass after a failure must dispatch its own fetch rather than joining the failed one" });
-      } finally {
-
-        diagnosticsChannel.unsubscribe("unifi-access:http:request:start", onStart);
-        diagnosticsChannel.unsubscribe("unifi-access:http:request:end", onEnd);
-      }
-
-      await expectAt(() => client.controllerInfo?.host.uptime === (accessControllerInfoFixture.host.uptime + 3600),
+      await settleUntil(() => client.controllerInfo?.host.uptime === (accessControllerInfoFixture.host.uptime + 3600),
         { message: "the second pass's documents reached the state model" });
     });
 
     test("a pass still in flight at disposal neither hangs nor dispatches into the disposed store", async () => {
 
       const { agent, pool } = mockController();
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       interceptLogin(pool);
       interceptPass(pool);
@@ -520,28 +548,22 @@ describe("AccessClient.connect", () => {
 
       // The pass's two requests are counted as they settle, on the transport's end-of-request signal, which fires for an answered request and an aborted one alike.
       let settled = 0;
-      const onEnd = (): void => { settled++; };
 
-      diagnosticsChannel.subscribe("unifi-access:http:request:end", onEnd);
+      using endSub = subscribeTo(channels.httpRequestEnd, () => { settled++; });
 
-      try {
+      await settle();
+      clock.advance(1000);
+      await settle();
 
-        await settle();
-        await clock.tick();
+      // Dispose while the pass is parked on the gate, then release the gate and let both requests settle. Whatever the pass does next meets the store's terminal
+      // guard and changes nothing.
+      await client[Symbol.asyncDispose]();
+      release.resolve(undefined);
 
-        // Dispose while the pass is parked on the gate, then release the gate and let both requests settle. Whatever the pass does next meets the store's terminal
-        // guard and changes nothing.
-        await client[Symbol.asyncDispose]();
-        release.resolve(undefined);
+      await settleUntil(() => settled === 2, { message: "expected both of the pass's requests to settle" });
+      await settle();
 
-        await expectAt(() => settled === 2, { message: "expected both of the pass's requests to settle" });
-        await settle();
-
-        assert.equal(wakes.length, 0, "the late settlement woke no observer");
-      } finally {
-
-        diagnosticsChannel.unsubscribe("unifi-access:http:request:end", onEnd);
-      }
+      assert.equal(wakes.length, 0, "the late settlement woke no observer");
 
       ac.abort();
       await watching;
@@ -557,7 +579,10 @@ describe("AccessClient.connect", () => {
       interceptLogin(pool);
       interceptPass(pool);
 
-      const { client, ws } = await connectCapturing(agent);
+      const captured = await connectCapturing(agent);
+
+      await using client = captured.client;
+      const { ws } = captured;
       const firehose: AccessWireEvent[] = [];
 
       client.on("packet", (event) => void firehose.push(event));
@@ -569,8 +594,6 @@ describe("AccessClient.connect", () => {
       assert.equal(client.device(HUB)?.name, "Renamed");
       assert.equal(firehose.length, 1);
       assert.equal(firehose[0]?.kind, "deviceChanged");
-
-      await client[Symbol.asyncDispose]();
     });
 
     test("a door-state frame reaches both the door-state view and the hub that drives that door", async () => {
@@ -580,10 +603,11 @@ describe("AccessClient.connect", () => {
       interceptLogin(pool);
       interceptPass(pool);
 
-      const { client, ws } = await connectCapturing(agent);
-      const hub = client.hub(HUB);
+      const captured = await connectCapturing(agent);
 
-      assert.ok(hub);
+      await using client = captured.client;
+      const { ws } = captured;
+      const hub = present(client.hub(HUB), "the hub");
 
       // What the connect seed established for this door from the hub's own flags: a lock at rest, and no report-only members.
       const before = hub.doorState;
@@ -597,8 +621,6 @@ describe("AccessClient.connect", () => {
 
       assert.equal(client.doorStates.get(DOOR_HUB)?.lock, "unlocked", "the door-state view carries it");
       assert.equal(reported?.lock, "unlocked", "and the hub reads its own door's entry without the consumer resolving the door");
-
-      await client[Symbol.asyncDispose]();
     });
 
     test("a handle taken from the connected client observes through the real wiring", async () => {
@@ -608,10 +630,11 @@ describe("AccessClient.connect", () => {
       interceptLogin(pool);
       interceptPass(pool);
 
-      const { client, ws } = await connectCapturing(agent);
-      const hub = client.hub(HUB);
+      const captured = await connectCapturing(agent);
 
-      assert.ok(hub);
+      await using client = captured.client;
+      const { ws } = captured;
+      const hub = present(client.hub(HUB), "the hub");
 
       /* The composition check: the handle's observation runs through the read-only store slice the client built into its context, so this fails if that wiring is
        * wrong in a way no unit test with a hand-built context would catch.
@@ -630,12 +653,11 @@ describe("AccessClient.connect", () => {
 
       ws.emitMessage(deviceFrame(HUB, { "alias": "Observed" }));
 
-      await expectAt(() => seen.length === 1);
+      await settleUntil(() => seen.length === 1);
       assert.deepEqual(seen, ["Observed"]);
 
       ac.abort();
       await watching;
-      await client[Symbol.asyncDispose]();
     });
 
     test("the raw firehose carries the frames the classifier declines", async () => {
@@ -645,7 +667,10 @@ describe("AccessClient.connect", () => {
       interceptLogin(pool);
       interceptPass(pool);
 
-      const { client, ws } = await connectCapturing(agent);
+      const captured = await connectCapturing(agent);
+
+      await using client = captured.client;
+      const { ws } = captured;
       const controller = new AbortController();
       const raw: string[] = [];
       const task = (async (): Promise<void> => {
@@ -660,14 +685,12 @@ describe("AccessClient.connect", () => {
       ws.emitMessage(deviceFrame(HUB));
       ws.emitMessage(unmodeledFrame());
 
-      await expectAt(() => raw.length === 2);
+      await settleUntil(() => raw.length === 2);
 
       controller.abort();
       await task;
 
       assert.deepEqual(raw, [ "access.data.device.update", "access.base.info" ]);
-
-      await client[Symbol.asyncDispose]();
     });
 
     test("the typed firehose ends quietly on the caller's own abort", async () => {
@@ -677,7 +700,10 @@ describe("AccessClient.connect", () => {
       interceptLogin(pool);
       interceptPass(pool);
 
-      const { client, ws } = await connectCapturing(agent);
+      const captured = await connectCapturing(agent);
+
+      await using client = captured.client;
+      const { ws } = captured;
       const controller = new AbortController();
       const collected: AccessWireEvent[] = [];
       const task = (async (): Promise<void> => {
@@ -689,14 +715,65 @@ describe("AccessClient.connect", () => {
       })();
 
       ws.emitMessage(deviceFrame(HUB));
-      await expectAt(() => collected.length === 1);
+      await settleUntil(() => collected.length === 1);
 
       controller.abort();
       await task;
 
       assert.equal(collected.length, 1);
+    });
 
-      await client[Symbol.asyncDispose]();
+    test("the typed firehose rethrows a failure that is not the caller's abort", async () => {
+
+      const { agent, pool } = mockController();
+
+      interceptLogin(pool);
+      interceptPass(pool);
+
+      const { client, ws } = await connectCapturing(agent);
+      const iterator = client.events();
+      const pending = iterator.next();
+
+      // One frame resolves the first read and leaves the generator resting at its yield, which is where a thrown failure has to land to reach the catch at all.
+      ws.emitMessage(deviceFrame(HUB));
+      await pending;
+
+      /* The catch finds no aborted signal - this consumer passed none - so the rethrow is what rejects the call. That is the arm the abort sugar is defined
+       * against: a caller's own cancellation ends the loop quietly and everything else reaches the consumer intact. The disposal is in a finally because a
+       * failing assertion that skipped it would leave the mock dispatcher and the notification stream holding the event loop, and the file would run to the
+       * runner's ceiling rather than failing fast.
+       */
+      try {
+
+        await assert.rejects(iterator.throw(new Error("injected")), { message: "injected" });
+      } finally {
+
+        await client[Symbol.asyncDispose]();
+      }
+    });
+
+    test("the raw firehose rethrows a failure that is not the caller's abort", async () => {
+
+      const { agent, pool } = mockController();
+
+      interceptLogin(pool);
+      interceptPass(pool);
+
+      const { client, ws } = await connectCapturing(agent);
+      const iterator = client.rawPackets();
+      const pending = iterator.next();
+
+      ws.emitMessage(deviceFrame(HUB));
+      await pending;
+
+      // The raw rail carries the same contract as the typed one, and it is a separate generator with its own catch, so it needs its own case.
+      try {
+
+        await assert.rejects(iterator.throw(new Error("injected")), { message: "injected" });
+      } finally {
+
+        await client[Symbol.asyncDispose]();
+      }
     });
 
     test("once resolves on the next emission and stream yields the raw tuples", async () => {
@@ -706,7 +783,10 @@ describe("AccessClient.connect", () => {
       interceptLogin(pool);
       interceptPass(pool);
 
-      const { client, ws } = await connectCapturing(agent);
+      const captured = await connectCapturing(agent);
+
+      await using client = captured.client;
+      const { ws } = captured;
 
       // once registers synchronously, so it catches the emission that follows it.
       const pending = client.once("packet");
@@ -737,13 +817,11 @@ describe("AccessClient.connect", () => {
       await settle();
       ws.emitMessage(deviceFrame(HUB, { "alias": "Streamed" }));
 
-      await expectAt(() => seen.length === 1);
+      await settleUntil(() => seen.length === 1);
       assert.deepEqual(seen, ["deviceChanged"]);
 
       controller.abort();
       await consumer;
-
-      await client[Symbol.asyncDispose]();
     });
 
     test("an already-aborted firehose signal ends both rails quietly", async () => {
@@ -785,23 +863,37 @@ describe("AccessClient.connect", () => {
 
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(500, "boom");
 
-      await assert.rejects(() => client.fetchBootstrap(), (error: unknown) => {
+      await assertRejectsWith(() => client.fetchBootstrap(), AccessBootstrapError, { check: (error) => {
 
-        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "fetch");
-
-        return true;
-      });
+      } });
 
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, "not-json{");
 
-      await assert.rejects(() => client.fetchBootstrap(), (error: unknown) => {
+      await assertRejectsWith(() => client.fetchBootstrap(), AccessBootstrapError, { check: (error) => {
 
-        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "parse");
+      } });
+    });
 
-        return true;
-      });
+    test("fetchBootstrap reports a refusal inside a 200 at the fetch stage, carrying the controller's code", async () => {
+
+      const { agent, pool } = mockController();
+
+      interceptLogin(pool);
+      interceptPass(pool);
+
+      await using client = await connect(agent);
+
+      // The on-demand read of the topology document judges the envelope by the same rule the connect-time read does, so one endpoint is not read two ways.
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, REFUSAL_BODY);
+
+      await assertRejectsWith(() => client.fetchBootstrap(), AccessBootstrapError, { check: (error) => {
+
+        assert.equal(error.stage, "fetch");
+        assert.ok(error.cause instanceof AccessApiError, "the controller's refusal is the cause");
+        assert.equal(error.cause.code, "CODE_SYSTEM_ERROR");
+      } });
     });
 
     test("the static classifier runs without a connection", () => {
@@ -848,31 +940,25 @@ describe("AccessClient.connect", () => {
       interceptLogin(pool);
       interceptPass(pool);
 
-      const { client, ws } = await connectCapturing(agent);
+      const captured = await connectCapturing(agent);
+
+      await using client = captured.client;
+      const { ws } = captured;
       const payloads: AccessStoreDispatchPayload[] = [];
-      const onDispatch = (message: unknown): void => void payloads.push(message as AccessStoreDispatchPayload);
 
-      diagnosticsChannel.subscribe("unifi-access:store:dispatch", onDispatch);
+      using dispatchSub = subscribeTo(channels.storeDispatch, (message) => void payloads.push(message));
 
-      try {
-
-        ws.emitMessage(deviceFrame(HUB, { "alias": "Published" }));
-        ws.emitMessage(doorStateFrame(DOOR_HUB, "unlocked"));
-      } finally {
-
-        diagnosticsChannel.unsubscribe("unifi-access:store:dispatch", onDispatch);
-      }
+      ws.emitMessage(deviceFrame(HUB, { "alias": "Published" }));
+      ws.emitMessage(doorStateFrame(DOOR_HUB, "unlocked"));
 
       // Content rather than counts: the host is the controller this client addresses, and the kind is the reducer's own vocabulary.
       assert.deepEqual(payloads, [ { host: HOST, kind: "deviceChanged" }, { host: HOST, kind: "doorStateChanged" } ]);
-
-      await client[Symbol.asyncDispose]();
     });
 
     test("the connection-transition channel reports each edge with the controller stamped on", async () => {
 
       const { agent, pool } = mockController();
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       interceptLogin(pool);
       interceptPass(pool);
@@ -882,34 +968,28 @@ describe("AccessClient.connect", () => {
       pool.intercept({ method: "GET", path: SELF_PATH }).reply(200, selfBody(true));
 
       const payloads: AccessConnectionTransitionPayload[] = [];
-      const onTransition = (message: unknown): void => void payloads.push(message as AccessConnectionTransitionPayload);
-      const { client, ws } = await connectCapturing(agent, { clock });
+      const captured = await connectCapturing(agent, { clock });
 
-      diagnosticsChannel.subscribe("unifi-access:connection:transition", onTransition);
+      await using client = captured.client;
+      const { ws } = captured;
 
-      try {
+      using transitionSub = subscribeTo(channels.connectionTransition, (message) => void payloads.push(message));
 
-        // Fault the channel and let recovery run: the edges are degraded, then reconnecting, then healthy.
-        ws.emitError(new Error("socket dropped"));
+      // Fault the channel and let recovery run: the edges are degraded, then reconnecting, then healthy.
+      ws.emitError(new Error("socket dropped"));
 
-        // Recovery parks on the clock before its first attempt, so the clock is released on every poll until the connection reads healthy again.
-        await expectAt(() => {
+      // Recovery parks on the clock before its first attempt, so the clock is released on every poll until the connection reads healthy again.
+      await settleUntil(() => {
 
-          clock.advance(0);
+        clock.advance(0);
 
-          return client.connection.state === "healthy";
-        }, { message: "expected recovery to complete" });
-      } finally {
-
-        diagnosticsChannel.unsubscribe("unifi-access:connection:transition", onTransition);
-      }
+        return client.connection.state === "healthy";
+      }, { message: "expected recovery to complete" });
 
       assert.deepEqual(payloads.map((payload) => payload.to), [ "degraded", "reconnecting", "healthy" ]);
       assert.ok(payloads.every((payload) => payload.host === HOST), "every edge carries the controller it belongs to");
       assert.equal(payloads[0]?.from, "healthy");
       assert.equal(typeof payloads[0].reason, "string", "the edge a fault drove carries that fault's reason");
-
-      await client[Symbol.asyncDispose]();
     });
   });
 

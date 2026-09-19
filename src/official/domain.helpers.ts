@@ -3,9 +3,9 @@
  * domain.helpers.ts: The shared test rig for the official API's domain suites - the mocked controller each domain is driven against, the recording wrappers that
  * observe what a domain asked the layer below it for, the table runner every domain suite is written as, and a multipart reader for the upload rows.
  *
- * Every domain suite is the same test written ten times over different rows: arrange an interception naming a verb and a path, call the method, assert what came
- * back, and establish that the call really went out. Writing that once here is what keeps a domain's own suite down to its table - the part that differs - and what
- * makes the census below possible at all.
+ * Every domain suite is the same test written once per domain over different rows: arrange an interception naming a verb and a path, call the method, assert what
+ * came back, and establish that the call really went out. Writing that once here is what keeps a domain's own suite down to its table - the part that differs - and
+ * what makes the census below possible at all.
  */
 import type { AccessOfficialCallOptions, AccessOfficialRequestOptions, AccessOfficialResult, OfficialDomainOptions } from "./dispatch.ts";
 import type { Interceptable, MockAgent } from "undici";
@@ -20,6 +20,15 @@ import { officialHost } from "./endpoints.ts";
 
 /** The controller address every official suite is driven against. */
 export const HOST = "10.0.0.1";
+
+/** The controller's void success envelope: the body every endpoint that answers with no payload of its own comes back with. */
+export const VOID_OK = { "code": "SUCCESS", "msg": "success" };
+
+/* The specimen every path-encoding row is written against: an id carrying a space and a slash, beside its percent-encoding. Both characters have to survive the
+ * trip into a path segment, so an id the controller would accept but a URL cannot spell verbatim is what establishes that the encoding happens at all.
+ */
+export const PATH_ID = "a b/c";
+export const PATH_ID_ENCODED = "a%20b%2Fc";
 
 /**
  * The path an interception matches: the application prefix plus the endpoint's own path, which is the portion of an official URL below the origin.
@@ -129,6 +138,46 @@ export interface SeenRequest {
   headers: Record<string, string>;
 }
 
+/**
+ * Intercept one request, record it as the controller received it, and answer the reply the caller states.
+ *
+ * The callback reply form is what makes the request itself readable: a body the caller can state exactly goes on the interception's own matcher, but a multipart
+ * body carries a boundary minted per request, so a row that asserts against one has to read the bytes and the headers back out of the callback instead. The getter
+ * this hands back is what carries the narrowing...a call that never reached the interceptor fails here, naming that, rather than further down on a read of an
+ * undefined body.
+ *
+ * @param pool      - The interceptable to install the interception on.
+ * @param intercept - What the request has to match: its verb, its path, and the exact serialized body where the caller can state one.
+ * @param reply     - What the controller answers with: the envelope or the raw bytes, and the headers that describe them.
+ *
+ * @returns A getter answering the request the interceptor received, asserting that one arrived.
+ */
+export function captureRequest(pool: Interceptable, intercept: { body?: string; method: string; path: string },
+  reply: { data: Buffer | object | string; headers?: Record<string, string> }): () => SeenRequest {
+
+  let seen: SeenRequest | undefined;
+
+  pool.intercept({ ...((intercept.body !== undefined) && { body: intercept.body }), method: intercept.method, path: intercept.path }).reply((request) => {
+
+    const body = request.body ?? "";
+
+    /* Undici types the callback's body as the whole `BodyInit` union, and no `Buffer.from` overload accepts what is left of that union once the string arm is
+     * narrowed away, so the byte arm carries one cast. It stands for every body a request in this corpus actually sends: a serialized document, or the bytes a
+     * multipart upload frames.
+     */
+    seen = { body: (typeof body === "string") ? Buffer.from(body) : Buffer.from(body as Uint8Array), headers: (request.headers ?? {}) as Record<string, string> };
+
+    return { data: reply.data, responseOptions: { headers: reply.headers ?? {} }, statusCode: 200 };
+  });
+
+  return (): SeenRequest => {
+
+    assert.ok(seen, "the request reached the interceptor");
+
+    return seen;
+  };
+}
+
 /** One endpoint's row in a domain suite's table. */
 export interface DomainRow<T> {
 
@@ -166,10 +215,10 @@ export interface DomainRow<T> {
 /**
  * Register a domain suite from its endpoint table.
  *
- * Each row becomes one test that asserts the verb, the path, and where applicable the exact body, then establishes three things beyond the returned value: that the
- * interception was consumed, so a method that never dispatched cannot pass by returning the right nothing; that the method passed the retry argument its row
- * declares, so a stray hard-coded override in either direction fails here; and, once across the whole table, that the rows and the class's own methods are the same
- * set, so neither a new method without a row nor a lost row survives review.
+ * Each row becomes one test that asserts the verb, the path, and where applicable the exact body, then establishes, beyond the returned value: that the interception
+ * was consumed, so a method that never dispatched cannot pass by returning the right nothing; that the method passed the retry argument its row declares, so a stray
+ * hard-coded override in either direction fails here; and, once across the whole table, that the rows and the class's own methods are the same set, so neither a new
+ * method without a row nor a lost row survives review.
  *
  * The same table is then run a second time with a caller's abort signal in the per-call options, which is what asserts the convention every domain method shares.
  * Deriving both passes from one row list is deliberate: a second hand-written list would restate every method's minimal arguments, and the two would drift.
@@ -188,19 +237,8 @@ export function describeDomainTable<T>(opts: { domainClass: new (options: Offici
       test(row.method + ": " + row.verb + " " + row.path, async () => {
 
         const rig = domainRig((options) => new opts.domainClass(options));
-
-        let seen: SeenRequest | undefined;
-
-        /* The callback reply form is what makes the request itself readable. A row whose body is deterministic states it through the interception's own matcher,
-         * but a multipart body carries a boundary minted per request, so its row reads the bytes and the headers back here instead.
-         */
-        rig.pool.intercept({ ...((row.body !== undefined) && { body: row.body }), method: row.verb, path: row.path }).reply((request) => {
-
-          seen = { body: Buffer.from((request.body ?? "") as string), headers: (request.headers ?? {}) as Record<string, string> };
-
-          return { data: row.reply, responseOptions: { headers: row.replyHeaders ?? {} }, statusCode: 200 };
-        });
-
+        const seen = captureRequest(rig.pool, { ...((row.body !== undefined) && { body: row.body }), method: row.verb, path: row.path },
+          { data: row.reply, headers: row.replyHeaders });
         const result = await row.run(rig.domain, {});
 
         if(row.expected !== undefined) {
@@ -210,8 +248,7 @@ export function describeDomainTable<T>(opts: { domainClass: new (options: Offici
 
         if(row.inspect !== undefined) {
 
-          assert.ok(seen, "the request reached the controller");
-          row.inspect(seen);
+          row.inspect(seen());
         }
 
         // A method that never dispatched leaves its interception pending, which is the only way to tell a correct void return from a method that did nothing.
@@ -268,6 +305,75 @@ export function describeDomainTable<T>(opts: { domainClass: new (options: Offici
   });
 }
 
+/** One iterating method's row in a domain suite's walk table. */
+export interface WalkRow<T> {
+
+  /** The class method the row covers. */
+  method: string;
+
+  /** The paths the walk must request, in the order it must request them. */
+  paths: readonly [ string, string ];
+
+  /** The record each page answers with, paired to the path in the same position above. */
+  records: readonly [ object, object ];
+
+  /** Drains the iterating method into an array, threading the per-call options into whichever trailing position the method's own shape puts them. */
+  run: (domain: T, call: AccessOfficialCallOptions) => Promise<unknown[]>;
+}
+
+/**
+ * Register a domain suite's walk table: one test per iterating method, driven against a population that spans two pages.
+ *
+ * A page method's own row says nothing about any of this, because one request is all it makes. Each row here arranges a population of two records in pages of one,
+ * so the only way the method under test can produce both is by asking for the second page - and the assertions are that both page numbers went out in order, that
+ * the records came back in page order, and that the caller's own signal reached the later request as well as the first.
+ *
+ * @param opts             - The suite to register.
+ * @param opts.domainClass - The class under test.
+ * @param opts.name        - The suite's name.
+ * @param opts.rows        - The walk table.
+ */
+export function describeWalkTable<T>(opts: { domainClass: new (options: OfficialDomainOptions) => T; name: string; rows: readonly WalkRow<T>[] }): void {
+
+  describe(opts.name, () => {
+
+    for(const row of opts.rows) {
+
+      test(row.method + ": walks the listing to its end, on the caller's own options", async () => {
+
+        const rig = domainRig((options) => new opts.domainClass(options));
+        const controller = new AbortController();
+
+        for(const [ index, path ] of row.paths.entries()) {
+
+          rig.pool.intercept({ method: "GET", path }).reply(() => ({ data: { "code": "SUCCESS", "data": [row.records[index]], "msg": "success",
+            "pagination": { "page_num": index + 1, "page_size": 1, "total": row.records.length } }, statusCode: 200 }));
+        }
+
+        assert.deepEqual(await row.run(rig.domain, { signal: controller.signal }), row.records);
+
+        // A walk that stopped after the first page leaves the second interception pending, and one that asked for a third would find nothing to answer it.
+        rig.agent.assertNoPendingInterceptors();
+
+        const requested = rig.dispatch.calls.map((call) => {
+
+          const url = new URL(call.url);
+
+          return url.pathname + url.search;
+        });
+
+        assert.deepEqual(requested, row.paths);
+
+        for(const call of rig.dispatch.calls) {
+
+          // By identity rather than by shape: two unaborted signals are structurally equal, so anything short of this would pass on a signal minted along the way.
+          assert.equal(call.call.signal, controller.signal, row.method + " passed the caller's own signal on every page");
+        }
+      });
+    }
+  });
+}
+
 /** One part read back out of an assembled multipart body. */
 export interface MultipartPart {
 
@@ -299,6 +405,7 @@ export function parseMultipart(body: Uint8Array, contentType: string): Multipart
   const buffer = Buffer.from(body);
   const delimiter = Buffer.from("--" + boundary);
 
+  // The closing delimiter is the boundary's own two dashes plus a trailing CRLF, four bytes beyond the boundary text itself.
   assert.ok(buffer.subarray(buffer.length - (delimiter.length + 4)).equals(Buffer.from("--" + boundary + "--\r\n")), "the body ends with the closing delimiter");
 
   const positions: number[] = [];

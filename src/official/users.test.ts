@@ -1,19 +1,14 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * users.test.ts: Unit tests for the official API's user domain. Beyond the per-endpoint rows, these assert the three shapes this domain is easiest to get wrong on: the
- * bare-array bodies that carry no wrapper member, the string-valued expansion parameter the reference's field table mislabels, and the avatar upload's multipart
- * framing.
+ * users.test.ts: Unit tests for the official API's user domain. Beyond the per-endpoint rows, these assert the shapes this domain is easiest to get wrong on: the bare-
+ * array bodies that carry no wrapper member, the string-valued expansion parameter the reference's field table mislabels, and the avatar upload's multipart framing.
  */
 import type { AccessOfficialUser, AccessOfficialUserCreated, AccessOfficialUserExpand, AccessOfficialUserGroupMember, AccessOfficialUserUpdate } from "./users.ts";
+import type { DomainRow, WalkRow } from "./domain.helpers.ts";
+import { PATH_ID, PATH_ID_ENCODED, VOID_OK, describeDomainTable, describeWalkTable, officialPath, parseMultipart } from "./domain.helpers.ts";
 import { describe, test } from "node:test";
-import { describeDomainTable, officialPath, parseMultipart } from "./domain.helpers.ts";
-import type { DomainRow } from "./domain.helpers.ts";
 import { OfficialUsers } from "./users.ts";
 import assert from "node:assert/strict";
-
-const ID = "a b/c";
-const ENCODED = "a%20b%2Fc";
-const VOID_OK = { "code": "SUCCESS", "msg": "success" };
 
 // Transcribed from a live controller.
 const USER = { "alias": "", "avatar_relative_path": "", "email": "user-1@acme.example", "email_status": "VERIFIED", "employee_number": "",
@@ -33,36 +28,43 @@ const TOUCH_PASS = { "bundles": [], "card_id": "AAAA-BBBB-CCCC-0001", "card_name
   "status": "PENDING", "user_avatar": "", "user_email": "", "user_id": "", "user_name": "", "user_status": "ACTIVE" };
 const PAGINATION = { "page_num": 1, "page_size": 3, "total": 3 };
 
+// The page report a listing sends when a single page holds the whole population, which is what makes a walk of it exactly one request.
+const WHOLE_POPULATION = { "page_num": 1, "page_size": 3, "total": 1 };
+
 const rows: readonly DomainRow<OfficialUsers>[] = [
 
   { body: "{\"first_name\":\"Ada\",\"last_name\":\"Lovelace\"}", expected: { "first_name": "Ada", "id": "u-1", "last_name": "Lovelace", "user_email": "" },
     method: "create", path: officialPath("/users"), reply: { "code": "SUCCESS", "data": { "first_name": "Ada", "id": "u-1", "last_name": "Lovelace",
       "user_email": "" }, "msg": "success" }, run: async (domain, call) => domain.create({ "first_name": "Ada", "last_name": "Lovelace" }, call), verb: "POST" },
 
-  { body: "{\"status\":\"DEACTIVATED\"}", method: "update", path: officialPath("/users/" + ENCODED), reply: VOID_OK,
-    run: async (domain, call) => domain.update(ID, { status: "DEACTIVATED" }, call), verb: "PUT" },
+  { body: "{\"status\":\"DEACTIVATED\"}", method: "update", path: officialPath("/users/" + PATH_ID_ENCODED), reply: VOID_OK,
+    run: async (domain, call) => domain.update(PATH_ID, { status: "DEACTIVATED" }, call), verb: "PUT" },
 
-  { expected: USER, method: "fetch", path: officialPath("/users/" + ENCODED) + "?expand%5B%5D=access_policy", reply: { "code": "SUCCESS", "data": USER,
-    "msg": "success" }, run: async (domain, call) => domain.fetch(ID, { expand: ["access_policy"] }, call), verb: "GET" },
+  { expected: USER, method: "fetch", path: officialPath("/users/" + PATH_ID_ENCODED) + "?expand%5B%5D=access_policy", reply: { "code": "SUCCESS", "data": USER,
+    "msg": "success" }, run: async (domain, call) => domain.fetch(PATH_ID, { expand: ["access_policy"] }, call), verb: "GET" },
 
   { expected: { data: [USER], pagination: PAGINATION }, method: "fetchAll", path: officialPath("/users") + "?page_num=1&page_size=3&expand%5B%5D=access_policy",
     reply: { "code": "SUCCESS", "data": [USER], "msg": "success", "pagination": PAGINATION },
     run: async (domain, call) => domain.fetchAll({ expand: ["access_policy"], pageNum: 1, pageSize: 3 }, call), verb: "GET" },
 
-  { body: "{\"access_policy_ids\":[\"p-1\"]}", method: "assignAccessPolicies", path: officialPath("/users/" + ENCODED + "/access_policies"), reply: VOID_OK,
-    run: async (domain, call) => domain.assignAccessPolicies(ID, ["p-1"], call), verb: "PUT" },
+  { expected: [USER], method: "iterateAll", path: officialPath("/users") + "?page_num=1&page_size=3&expand%5B%5D=access_policy",
+    reply: { "code": "SUCCESS", "data": [USER], "msg": "success", "pagination": WHOLE_POPULATION },
+    run: async (domain, call) => Array.fromAsync(domain.iterateAll({ expand: ["access_policy"], pageSize: 3 }, call)), verb: "GET" },
 
-  { body: "{\"force_add\":true,\"token\":\"tok-1\"}", method: "assignNfcCard", path: officialPath("/users/" + ENCODED + "/nfc_cards"), reply: VOID_OK,
-    run: async (domain, call) => domain.assignNfcCard(ID, { "force_add": true, token: "tok-1" }, call), verb: "PUT" },
+  { body: "{\"access_policy_ids\":[\"p-1\"]}", method: "assignAccessPolicies", path: officialPath("/users/" + PATH_ID_ENCODED + "/access_policies"), reply: VOID_OK,
+    run: async (domain, call) => domain.assignAccessPolicies(PATH_ID, ["p-1"], call), verb: "PUT" },
 
-  { body: "{\"token\":\"tok-1\"}", method: "unassignNfcCard", path: officialPath("/users/" + ENCODED + "/nfc_cards/delete"), reply: VOID_OK,
-    run: async (domain, call) => domain.unassignNfcCard(ID, "tok-1", call), verb: "PUT" },
+  { body: "{\"force_add\":true,\"token\":\"tok-1\"}", method: "assignNfcCard", path: officialPath("/users/" + PATH_ID_ENCODED + "/nfc_cards"), reply: VOID_OK,
+    run: async (domain, call) => domain.assignNfcCard(PATH_ID, { "force_add": true, token: "tok-1" }, call), verb: "PUT" },
 
-  { body: "{\"pin_code\":\"67203419\"}", method: "assignPinCode", path: officialPath("/users/" + ENCODED + "/pin_codes"), reply: VOID_OK,
-    run: async (domain, call) => domain.assignPinCode(ID, "67203419", call), verb: "PUT" },
+  { body: "{\"token\":\"tok-1\"}", method: "unassignNfcCard", path: officialPath("/users/" + PATH_ID_ENCODED + "/nfc_cards/delete"), reply: VOID_OK,
+    run: async (domain, call) => domain.unassignNfcCard(PATH_ID, "tok-1", call), verb: "PUT" },
 
-  { method: "unassignPinCode", path: officialPath("/users/" + ENCODED + "/pin_codes"), reply: VOID_OK, run: async (domain, call) => domain.unassignPinCode(ID, call),
-    verb: "DELETE" },
+  { body: "{\"pin_code\":\"67203419\"}", method: "assignPinCode", path: officialPath("/users/" + PATH_ID_ENCODED + "/pin_codes"), reply: VOID_OK,
+    run: async (domain, call) => domain.assignPinCode(PATH_ID, "67203419", call), verb: "PUT" },
+
+  { method: "unassignPinCode", path: officialPath("/users/" + PATH_ID_ENCODED + "/pin_codes"), reply: VOID_OK,
+    run: async (domain, call) => domain.unassignPinCode(PATH_ID, call), verb: "DELETE" },
 
   { body: "{\"name\":\"Staff\"}", method: "createGroup", path: officialPath("/user_groups"), reply: VOID_OK,
     run: async (domain, call) => domain.createGroup({ name: "Staff" }, call), verb: "POST" },
@@ -70,38 +72,40 @@ const rows: readonly DomainRow<OfficialUsers>[] = [
   { expected: [USER_GROUP], method: "fetchAllGroups", path: officialPath("/user_groups"), reply: { "code": "SUCCESS", "data": [USER_GROUP], "msg": "success" },
     run: async (domain, call) => domain.fetchAllGroups(call), verb: "GET" },
 
-  { expected: USER_GROUP, method: "fetchGroup", path: officialPath("/user_groups/" + ENCODED), reply: { "code": "SUCCESS", "data": USER_GROUP,
-    "msg": "success" }, run: async (domain, call) => domain.fetchGroup(ID, call), verb: "GET" },
+  { expected: USER_GROUP, method: "fetchGroup", path: officialPath("/user_groups/" + PATH_ID_ENCODED), reply: { "code": "SUCCESS", "data": USER_GROUP,
+    "msg": "success" }, run: async (domain, call) => domain.fetchGroup(PATH_ID, call), verb: "GET" },
 
-  { body: "{\"name\":\"Contractors\"}", method: "updateGroup", path: officialPath("/user_groups/" + ENCODED), reply: VOID_OK,
-    run: async (domain, call) => domain.updateGroup(ID, { name: "Contractors" }, call), verb: "PUT" },
+  { body: "{\"name\":\"Contractors\"}", method: "updateGroup", path: officialPath("/user_groups/" + PATH_ID_ENCODED), reply: VOID_OK,
+    run: async (domain, call) => domain.updateGroup(PATH_ID, { name: "Contractors" }, call), verb: "PUT" },
 
-  { method: "deleteGroup", path: officialPath("/user_groups/" + ENCODED), reply: VOID_OK, run: async (domain, call) => domain.deleteGroup(ID, call), verb: "DELETE" },
+  { method: "deleteGroup", path: officialPath("/user_groups/" + PATH_ID_ENCODED), reply: VOID_OK, run: async (domain, call) => domain.deleteGroup(PATH_ID, call),
+    verb: "DELETE" },
 
-  // The bare array is the whole body. A wrapper member sneaking in is the documented trap on this endpoint and its three siblings below.
-  { body: "[\"u-1\",\"u-2\"]", method: "assignToGroup", path: officialPath("/user_groups/" + ENCODED + "/users"), reply: VOID_OK,
-    run: async (domain, call) => domain.assignToGroup(ID, [ "u-1", "u-2" ], call), verb: "POST" },
+  // The bare array is the whole body. A wrapper member sneaking in is the same bare-array trap the rows below share.
+  { body: "[\"u-1\",\"u-2\"]", method: "assignToGroup", path: officialPath("/user_groups/" + PATH_ID_ENCODED + "/users"), reply: VOID_OK,
+    run: async (domain, call) => domain.assignToGroup(PATH_ID, [ "u-1", "u-2" ], call), verb: "POST" },
 
-  { body: "[\"u-1\"]", method: "unassignFromGroup", path: officialPath("/user_groups/" + ENCODED + "/users/delete"), reply: VOID_OK,
-    run: async (domain, call) => domain.unassignFromGroup(ID, ["u-1"], call), verb: "POST" },
+  { body: "[\"u-1\"]", method: "unassignFromGroup", path: officialPath("/user_groups/" + PATH_ID_ENCODED + "/users/delete"), reply: VOID_OK,
+    run: async (domain, call) => domain.unassignFromGroup(PATH_ID, ["u-1"], call), verb: "POST" },
 
-  { expected: [GROUP_MEMBER], method: "fetchGroupUsers", path: officialPath("/user_groups/" + ENCODED + "/users"), reply: { "code": "SUCCESS",
-    "data": [GROUP_MEMBER], "msg": "success" }, run: async (domain, call) => domain.fetchGroupUsers(ID, call), verb: "GET" },
+  { expected: [GROUP_MEMBER], method: "fetchGroupUsers", path: officialPath("/user_groups/" + PATH_ID_ENCODED + "/users"), reply: { "code": "SUCCESS",
+    "data": [GROUP_MEMBER], "msg": "success" }, run: async (domain, call) => domain.fetchGroupUsers(PATH_ID, call), verb: "GET" },
 
-  { expected: [GROUP_MEMBER], method: "fetchAllGroupUsers", path: officialPath("/user_groups/" + ENCODED + "/users/all"), reply: { "code": "SUCCESS",
-    "data": [GROUP_MEMBER], "msg": "success" }, run: async (domain, call) => domain.fetchAllGroupUsers(ID, call), verb: "GET" },
+  { expected: [GROUP_MEMBER], method: "fetchAllGroupUsers", path: officialPath("/user_groups/" + PATH_ID_ENCODED + "/users/all"), reply: { "code": "SUCCESS",
+    "data": [GROUP_MEMBER], "msg": "success" }, run: async (domain, call) => domain.fetchAllGroupUsers(PATH_ID, call), verb: "GET" },
 
-  { expected: [POLICY], method: "fetchAccessPolicies", path: officialPath("/users/" + ENCODED + "/access_policies") + "?only_user_policies=true",
-    reply: { "code": "SUCCESS", "data": [POLICY], "msg": "success" }, run: async (domain, call) => domain.fetchAccessPolicies(ID, { "only_user_policies": true }, call),
+  { expected: [POLICY], method: "fetchAccessPolicies", path: officialPath("/users/" + PATH_ID_ENCODED + "/access_policies") + "?only_user_policies=true",
+    reply: { "code": "SUCCESS", "data": [POLICY], "msg": "success" },
+    run: async (domain, call) => domain.fetchAccessPolicies(PATH_ID, { "only_user_policies": true }, call),
     verb: "GET" },
 
-  { body: "{\"access_policy_ids\":[]}", method: "assignAccessPoliciesToGroup", path: officialPath("/user_groups/" + ENCODED + "/access_policies"),
-    reply: VOID_OK, run: async (domain, call) => domain.assignAccessPoliciesToGroup(ID, [], call), verb: "PUT" },
+  { body: "{\"access_policy_ids\":[]}", method: "assignAccessPoliciesToGroup", path: officialPath("/user_groups/" + PATH_ID_ENCODED + "/access_policies"),
+    reply: VOID_OK, run: async (domain, call) => domain.assignAccessPoliciesToGroup(PATH_ID, [], call), verb: "PUT" },
 
-  { expected: [POLICY], method: "fetchGroupAccessPolicies", path: officialPath("/user_groups/" + ENCODED + "/access_policies"), reply: { "code": "SUCCESS",
-    "data": [POLICY], "msg": "success" }, run: async (domain, call) => domain.fetchGroupAccessPolicies(ID, call), verb: "GET" },
+  { expected: [POLICY], method: "fetchGroupAccessPolicies", path: officialPath("/user_groups/" + PATH_ID_ENCODED + "/access_policies"), reply: { "code": "SUCCESS",
+    "data": [POLICY], "msg": "success" }, run: async (domain, call) => domain.fetchGroupAccessPolicies(PATH_ID, call), verb: "GET" },
 
-  { method: "delete", path: officialPath("/users/" + ENCODED), reply: VOID_OK, run: async (domain, call) => domain.delete(ID, call), verb: "DELETE" },
+  { method: "delete", path: officialPath("/users/" + PATH_ID_ENCODED), reply: VOID_OK, run: async (domain, call) => domain.delete(PATH_ID, call), verb: "DELETE" },
 
   { expected: { data: [SEARCH_RESULT], pagination: PAGINATION }, method: "search",
     path: officialPath("/users/search") + "?page_num=1&page_size=3&keyword=ada&only_admin=false&status=ACTIVE&status=PENDING&user_id=u-1&user_id=u-2",
@@ -109,23 +113,29 @@ const rows: readonly DomainRow<OfficialUsers>[] = [
     run: async (domain, call) => domain.search({ keyword: "ada", onlyAdmin: false, pageNum: 1, pageSize: 3, status: [ "ACTIVE", "PENDING" ],
       userId: [ "u-1", "u-2" ] }, call), verb: "GET" },
 
-  { expected: TOUCH_PASS, method: "assignTouchPass", path: officialPath("/users/" + ENCODED + "/touch_passes/" + ENCODED), reply: { "code": "SUCCESS",
-    "data": TOUCH_PASS, "msg": "success" }, run: async (domain, call) => domain.assignTouchPass(ID, ID, call), verb: "PUT" },
+  { expected: [SEARCH_RESULT], method: "iterateSearch",
+    path: officialPath("/users/search") + "?page_num=1&page_size=3&keyword=ada&only_admin=false&status=ACTIVE&status=PENDING&user_id=u-1&user_id=u-2",
+    reply: { "code": "SUCCESS", "data": [SEARCH_RESULT], "msg": "success", "pagination": WHOLE_POPULATION },
+    run: async (domain, call) => Array.fromAsync(domain.iterateSearch({ keyword: "ada", onlyAdmin: false, pageNum: 1, pageSize: 3,
+      status: [ "ACTIVE", "PENDING" ], userId: [ "u-1", "u-2" ] }, call)), verb: "GET" },
 
-  { expected: TOUCH_PASS, method: "unassignTouchPass", path: officialPath("/users/" + ENCODED + "/touch_passes/" + ENCODED), reply: { "code": "SUCCESS",
-    "data": TOUCH_PASS, "msg": "success" }, run: async (domain, call) => domain.unassignTouchPass(ID, ID, call), verb: "DELETE" },
+  { expected: TOUCH_PASS, method: "assignTouchPass", path: officialPath("/users/" + PATH_ID_ENCODED + "/touch_passes/" + PATH_ID_ENCODED), reply: { "code": "SUCCESS",
+    "data": TOUCH_PASS, "msg": "success" }, run: async (domain, call) => domain.assignTouchPass(PATH_ID, PATH_ID, call), verb: "PUT" },
+
+  { expected: TOUCH_PASS, method: "unassignTouchPass", path: officialPath("/users/" + PATH_ID_ENCODED + "/touch_passes/" + PATH_ID_ENCODED), reply: { "code": "SUCCESS",
+    "data": TOUCH_PASS, "msg": "success" }, run: async (domain, call) => domain.unassignTouchPass(PATH_ID, PATH_ID, call), verb: "DELETE" },
 
   { body: "{\"ids\":[\"u-1\"]}", expected: [TOUCH_PASS], method: "batchAssignTouchPasses", path: officialPath("/users/touch_passes/assign"),
     reply: { "code": "SUCCESS", "data": [TOUCH_PASS], "msg": "success" },
     run: async (domain, call) => domain.batchAssignTouchPasses({ ids: ["u-1"] }, call), verb: "PUT" },
 
-  { body: "[\"abcd5\",\"efge36\"]", method: "assignLicensePlates", path: officialPath("/users/" + ENCODED + "/license_plates"), reply: VOID_OK,
-    run: async (domain, call) => domain.assignLicensePlates(ID, [ "abcd5", "efge36" ], call), verb: "PUT" },
+  { body: "[\"abcd5\",\"efge36\"]", method: "assignLicensePlates", path: officialPath("/users/" + PATH_ID_ENCODED + "/license_plates"), reply: VOID_OK,
+    run: async (domain, call) => domain.assignLicensePlates(PATH_ID, [ "abcd5", "efge36" ], call), verb: "PUT" },
 
-  { method: "unassignLicensePlate", path: officialPath("/users/" + ENCODED + "/license_plates/" + ENCODED), reply: VOID_OK,
-    run: async (domain, call) => domain.unassignLicensePlate(ID, ID, call), verb: "DELETE" },
+  { method: "unassignLicensePlate", path: officialPath("/users/" + PATH_ID_ENCODED + "/license_plates/" + PATH_ID_ENCODED), reply: VOID_OK,
+    run: async (domain, call) => domain.unassignLicensePlate(PATH_ID, PATH_ID, call), verb: "DELETE" },
 
-  { expected: { "avatar_url": "/avatar/u-1.png" },
+  { expected: { "url": "/avatar/u-1.png" },
 
     inspect: (request) => {
 
@@ -136,12 +146,25 @@ const rows: readonly DomainRow<OfficialUsers>[] = [
       assert.equal(parts[0]?.filename, "portrait.png");
       assert.deepEqual(parts[0]?.data, Buffer.from([ 137, 80, 78, 71 ]));
     },
-    method: "uploadAvatar", path: officialPath("/users/" + ENCODED + "/avatar"), reply: { "code": "SUCCESS", "data": { "avatar_url": "/avatar/u-1.png" },
-      "msg": "success" }, run: async (domain, call) => domain.uploadAvatar(ID, { data: new Uint8Array([ 137, 80, 78, 71 ]), filename: "portrait.png" }, call),
+    method: "uploadAvatar", path: officialPath("/users/" + PATH_ID_ENCODED + "/avatar"), reply: { "code": "SUCCESS", "data": { "url": "/avatar/u-1.png" },
+      "msg": "success" }, run: async (domain, call) => domain.uploadAvatar(PATH_ID, { data: new Uint8Array([ 137, 80, 78, 71 ]), filename: "portrait.png" }, call),
     verb: "POST" }
 ];
 
 describeDomainTable({ domainClass: OfficialUsers, name: "OfficialUsers", rows });
+
+// A page row above establishes what one request carries; the walk rows below establish that a walk keeps asking.
+const walks: readonly WalkRow<OfficialUsers>[] = [
+
+  { method: "iterateAll", paths: [ officialPath("/users") + "?page_num=1&page_size=1", officialPath("/users") + "?page_num=2&page_size=1" ],
+    records: [ USER, GROUP_MEMBER ], run: async (domain, call) => Array.fromAsync(domain.iterateAll({ pageSize: 1 }, call)) },
+
+  { method: "iterateSearch",
+    paths: [ officialPath("/users/search") + "?page_num=1&page_size=1&keyword=ada", officialPath("/users/search") + "?page_num=2&page_size=1&keyword=ada" ],
+    records: [ SEARCH_RESULT, GROUP_MEMBER ], run: async (domain, call) => Array.fromAsync(domain.iterateSearch({ keyword: "ada", pageSize: 1 }, call)) }
+];
+
+describeWalkTable({ domainClass: OfficialUsers, name: "OfficialUsers walks", rows: walks });
 
 describe("OfficialUsers vocabularies", () => {
 
@@ -169,7 +192,7 @@ describe("OfficialUsers vocabularies", () => {
 
   test("the request vocabularies stay closed", () => {
 
-    // @ts-expect-error - only the two statuses the update endpoint documents may be asked for; PENDING is a state the controller assigns, not one a caller sets.
+    // @ts-expect-error - only the statuses the update endpoint documents may be asked for; PENDING is a state the controller assigns, not one a caller sets.
     const status: AccessOfficialUserUpdate["status"] = "PENDING";
 
     // @ts-expect-error - the expansion is a string vocabulary, and only one value is documented for this endpoint.

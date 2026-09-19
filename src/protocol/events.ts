@@ -53,7 +53,7 @@ const EVENT_TAMPER_ALERT = "access.tamper_resistant";
  * state, which is translated into the door-state event rather than merged here, because it describes doors rather than the device reporting them; `wire_state`
  * carries the wiring terminals, which has nothing to reconcile it against and so reaches consumers on the raw packet rail like every other unlisted field.
  */
-const DEVICE_FIELD_MAP = {
+export const DEVICE_FIELD_MAP = {
 
   "adopting": "adopting",
   "device_type": "device_type",
@@ -68,11 +68,18 @@ const DEVICE_FIELD_MAP = {
   "start_time": "start_time"
 } as const;
 
+/* The fields a v2 device payload carries that the table above deliberately leaves out, declared so the classifier's suite can census the committed corpus against
+ * both lists: every field a captured payload carries is in exactly one of them, and a field the controller starts sending fails that census rather than dropping
+ * in silence. The reasons live in the paragraph above the table.
+ */
+export const DEVICE_FIELD_EXCLUSIONS: ReadonlySet<string> = new Set([ "access_method", "alias", "cap", "category", "connected_hub_id", "direction", "location_states",
+  "mac", "name", "settings", "version", "wire_state" ]);
+
 /* The fields a v2 location payload contributes to canonical state, on the same allowlist discipline as the device table. The excluded fields are the ones with no
  * bootstrap counterpart by value: `device_ids`, `state`, and `last_activity` are v2-only, `thumbnail` is a reshaped projection of the extras thumbnail pair, and
  * `guard` carries resolved user records where the bootstrap's own door guard is a list of identifiers.
  */
-const LOCATION_FIELD_MAP = {
+export const LOCATION_FIELD_MAP = {
 
   "extras": "extras",
   "id": "unique_id",
@@ -80,6 +87,9 @@ const LOCATION_FIELD_MAP = {
   "name": "name",
   "up_id": "up_id"
 } as const;
+
+// The fields a v2 location payload carries that the table above deliberately leaves out, on the same census discipline as the device set.
+export const LOCATION_FIELD_EXCLUSIONS: ReadonlySet<string> = new Set([ "device_ids", "guard", "last_activity", "state", "thumbnail" ]);
 
 /* The canonical field names each table admits, and the payload shapes built from them. Deriving the payload type from the table rather than restating it is what
  * makes the allowlist compile-enforced: reading an excluded field off a translated payload fails to build, so a translator that leaked one could not be consumed
@@ -448,36 +458,7 @@ function isDoorbellCancelPayload(value: unknown): value is AccessEventDoorbellCa
   return isRecord(value) && (typeof value["remote_call_request_id"] === "string");
 }
 
-/* The admission contract for door state, defined here and applied by both carriers. An entry is admitted when every required member is present and of the declared
- * type, and when every optional member it carries is well-formed.
- *
- * A malformed optional rejects the whole entry rather than being dropped from it. That is the safer reading of the two, and the reasoning is about alarms: an entry
- * whose alarm data cannot be parsed says nothing about whether an alarm is in force, so admitting it without its alarms would report "no alarm" on the strength of a
- * payload we did not understand. Rejecting leaves whatever the door last cleanly reported standing until it reports cleanly again, which is a stale reading rather
- * than an invented one.
- */
-function isDoorStateEntry(value: unknown): value is AccessDoorStateEntry {
-
-  if(!isRecord(value)) {
-
-    return false;
-  }
-
-  const required = (typeof value["location_id"] === "string") && (typeof value["lock"] === "string") && (typeof value["dps"] === "string") &&
-    (typeof value["dps_connected"] === "boolean") && (typeof value["is_unavailable"] === "boolean") && isDoorStateEmergency(value["emergency"]);
-
-  if(!required) {
-
-    return false;
-  }
-
-  const alarms = value["alarms"];
-  const suspend = value["unlock_suspend"];
-
-  return ((alarms === undefined) || isDoorStateAlarms(alarms)) && ((suspend === undefined) || isDoorStateSuspend(suspend));
-}
-
-// Whether a value is the emergency pair every entry carries: the physical input and the controller-issued state, each a string.
+// Whether a value is the emergency pair a report may carry: the physical input and the controller-issued state, each a string.
 function isDoorStateEmergency(value: unknown): value is AccessDoorStateEmergency {
 
   return isRecord(value) && (typeof value["hardware"] === "string") && (typeof value["software"] === "string");
@@ -495,6 +476,86 @@ function isDoorStateSuspend(value: unknown): value is AccessDoorStateSuspend {
   return isRecord(value) && (typeof value["status"] === "string") && (typeof value["unlock_type"] === "string");
 }
 
+// The primitive shapes the fact table reads, as predicates so every row of the table reads its member the same way.
+function isString(value: unknown): value is string {
+
+  return typeof value === "string";
+}
+
+function isBoolean(value: unknown): value is boolean {
+
+  return typeof value === "boolean";
+}
+
+/* Each fact a report may state about its door, beside the guard that reads the fact's declared shape. The table is typed over every member of the entry but the
+ * door's own identity, so a member added to the entry type without a row here fails to build, and it serves both halves of admission at once: the shape of every
+ * member an entry carries, and whether it carries any fact at all. The classifier's suite reads its keys as the members an entry may carry.
+ */
+export const DOOR_STATE_FACT_GUARDS = {
+
+  "alarms": isDoorStateAlarms,
+  "dps": isString,
+  "dps_connected": isBoolean,
+  "emergency": isDoorStateEmergency,
+  "is_unavailable": isBoolean,
+  "lock": isString,
+  "unlock_suspend": isDoorStateSuspend
+} as const satisfies Record<Exclude<keyof AccessDoorStateEntry, "location_id">, (value: unknown) => boolean>;
+
+// The table as rows, walked once per entry. Hoisted so admission allocates nothing on the packet path.
+const DOOR_STATE_FACT_ROWS = Object.entries(DOOR_STATE_FACT_GUARDS);
+
+/* The admission contract for door state, defined here and applied by both carriers. An entry is admitted when it names its door, states at least one fact about it,
+ * and carries every fact it does state in the declared shape. Which facts a report states is the hardware's business: a door hub reports the whole record every
+ * time, while hardware this library holds no capture of may report fewer members, so an entry is judged on what it carries rather than on what a hub would have
+ * sent. An entry that names its door and states nothing is not a report: the reducer replaces a door's held entry with the one admitted, so admitting it would
+ * erase what the door last said on the strength of a payload that said nothing.
+ *
+ * A malformed member rejects the whole entry rather than being dropped from it. That is the safer reading of the two, and the reasoning is about alarms: an entry
+ * whose alarm data cannot be parsed says nothing about whether an alarm is in force, so admitting it without its alarms would report "no alarm" on the strength of
+ * a payload we did not understand. Rejecting leaves whatever the door last cleanly reported standing until it reports cleanly again, which is a stale reading
+ * rather than an invented one.
+ */
+function isDoorStateEntry(value: unknown): value is AccessDoorStateEntry {
+
+  if(!isRecord(value) || (typeof value["location_id"] !== "string")) {
+
+    return false;
+  }
+
+  let stated = false;
+
+  for(const [ member, isShaped ] of DOOR_STATE_FACT_ROWS) {
+
+    const fact = value[member];
+
+    // A member the report does not carry is the hardware not reporting it, which is never a malformed report.
+    if(fact === undefined) {
+
+      continue;
+    }
+
+    if(!isShaped(fact)) {
+
+      return false;
+    }
+
+    stated = true;
+  }
+
+  return stated;
+}
+
+/* A record without the members the dialect spells as null. On this wire null means not carried rather than cleared - the device translation copies it through
+ * for the merge to read the same way - so a door-state member sent as null is the hardware not reporting it, and it leaves the entry here rather than landing in
+ * the model as a value the entry type never holds. A record carrying no null member passes through as itself: the copy exists to leave members out, and a
+ * report with nothing to leave out is admitted as delivered, the way every other wire record is stored.
+ */
+function withoutNullMembers(record: Record<string, unknown>): Record<string, unknown> {
+
+  return Object.values(record).includes(null) ? Object.fromEntries(Object.entries(record).filter(([ , member ]) => member !== null)) : record;
+}
+
 /* Admit the entries of a device carrier's door-state array, or null when this packet is not one. Admission is per-entry: a mixed array contributes the entries that
  * pass and drops the rest, because a dropped entry's own door self-corrects on its next clean report while the entries beside it describe different doors entirely
  * and are not implicated. An array that contributes nothing - empty, or wholly unreadable - is reported as null so the caller falls through.
@@ -506,7 +567,23 @@ function admitEntries(value: unknown): Nullable<readonly [AccessDoorStateEntry, 
     return null;
   }
 
-  const admitted = value.filter((entry) => isDoorStateEntry(entry));
+  const admitted: AccessDoorStateEntry[] = [];
+
+  for(const entry of value) {
+
+    // A non-record is not an entry at all; a record is read without the members the wire spelled as null, and admitted on what remains.
+    if(!isRecord(entry)) {
+
+      continue;
+    }
+
+    const candidate = withoutNullMembers(entry);
+
+    if(isDoorStateEntry(candidate)) {
+
+      admitted.push(candidate);
+    }
+  }
 
   return isNonEmpty(admitted) ? admitted : null;
 }
@@ -521,7 +598,7 @@ function admitEntry(value: unknown, locationId: string): Nullable<AccessDoorStat
     return null;
   }
 
-  const candidate = { ...value, "location_id": locationId };
+  const candidate = { ...withoutNullMembers(value), "location_id": locationId };
 
   return isDoorStateEntry(candidate) ? candidate : null;
 }

@@ -239,9 +239,8 @@ setEmergency(state, call?): Promise<void>;
 
 Put a site-wide emergency mode in force. `PUT /doors/settings/emergency`, permission `edit:space`. Requires UniFi Access 1.24.6 or later.
 
-This applies to every door at once, not to one. The three states map onto the wire's two flags, and both flags are always sent: sending only the one that
-changed would leave the other's prior value ambiguous, and taking one state rather than two flags makes the contradictory both-in-force request impossible to
-compose.
+This applies to every door at once, not to one. Every state maps onto the wire's two flags, and both flags are always sent: sending only the one that changed would
+leave the other's prior value ambiguous, and taking one state rather than two flags makes the contradictory both-in-force request impossible to compose.
 
 Documentation-derived.
 

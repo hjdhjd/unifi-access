@@ -3,17 +3,17 @@
  * hub.ts: The hub projection - the door commands a hub-capable device drives, and the door state it reports.
  */
 import type { AccessOfficialDoorEntryMethod, AccessOfficialDoorUnlockActor, AccessOfficialLockRuleSet } from "../official/spaces.ts";
+import type { AccessTerminalInput, AccessTerminalInputFacts } from "../protocol/terminal-inputs.ts";
 import { locationUnlockEndpoint, lockRuleEndpoint } from "./endpoints.ts";
+import { portBindings as readPortBindings, terminalInput as readTerminalInput, selectDoorStates } from "../state/selectors.ts";
 import { AccessDevice } from "./device.ts";
 import type { AccessDoorStateEntry } from "../types/index.ts";
+import type { AccessPortBinding } from "../protocol/port-bindings.ts";
 import type { AccessStateDoor } from "../protocol/reducer.ts";
-import { selectDoorStates } from "../state/selectors.ts";
+import { firstPortBinding } from "../protocol/port-bindings.ts";
 
-// The extension that binds a hub port to the door it drives. A hub records which door each of its ports serves under this name, and the door identity is the
-// extension's target.
-const PORT_EXTENSION = "port_setting";
-
-// What a refused door command says. The three commands share it because they share the check that raises it, and a refusal reads the same whichever of them drew it.
+// The sentence a refused door command falls back to when the controller sent no message of its own. The door commands share it because they share the reading that
+// raises it, so a refusal without the controller's own words reads the same whichever one drew it.
 const DOOR_COMMAND_REFUSED = "The UniFi Access controller refused the door command.";
 
 // The lock rules the Access application's own endpoint can express. The rest of the vocabulary is reachable only through the official API, so a rule outside this
@@ -23,10 +23,10 @@ const DIRECT_LOCK_RULES = new Set([ "custom", "keep_unlock", "reset" ]);
 /**
  * The rule that governs how a door's lock behaves until something changes it.
  *
- * There is one lock-rule vocabulary on this controller and both of the library's channels speak it, so this names the official surface's own union rather than
- * restating it - two hand-maintained spellings of one wire vocabulary would drift the first time the controller gained a verb. Which verbs each path can carry
- * differs even though the vocabulary does not: `reset`, `keep_unlock`, and `custom` are expressible on the direct path, while `keep_lock`, `lock_early`, and
- * `lock_now` are reachable only through the official API.
+ * There is one lock-rule vocabulary on this controller and both of the library's channels speak it, so this names the official surface's
+ * own union rather than restating it - two hand-maintained spellings of one wire vocabulary would drift the first time the controller
+ * gained a verb. Which verbs each path can carry differs even though the vocabulary does not: `reset`, `keep_unlock`, and `custom` are
+ * expressible on the direct path, and every verb outside `DIRECT_LOCK_RULES` is reachable only through the official API.
  *
  * A `custom` rule's interval is in whole MINUTES, which is what both the wire and the reference speak - a value of 2 holds the door unlocked for two minutes. As a
  * union rather than one shape with a nullable duration, the combinations that have no meaning cannot be written at all: there is no way to ask for a `reset` with
@@ -80,6 +80,43 @@ export class AccessHub extends AccessDevice {
   }
 
   /**
+   * What this hub reports about one of the terminals on its back, read through the state tier's own `terminalInput` selector: whether the hardware has something in
+   * service on that terminal, and what it currently reads. That selector's own documentation is the full statement of the contract.
+   *
+   * It is mirrored here rather than on {@link AccessDevice} because terminals are hub hardware and the hub is the projection a consumer holds for it, exactly as
+   * the door reads are. A per-port handle of a multi-port hub answers for its own port, where the whole hub answers no evidence for the terminals its ports share.
+   *
+   * @param input - Which terminal to read.
+   *
+   * @returns What the hardware established about it.
+   *
+   * @throws {ReferenceError} If the device is no longer present in the controller state.
+   */
+  terminalInput(input: AccessTerminalInput): AccessTerminalInputFacts {
+
+    return readTerminalInput(this.config, input);
+  }
+
+  /**
+   * The doors this hub's ports are bound to, read through the state tier's own `portBindings` selector: one binding per port that names a door, in the order the
+   * controller delivered them. That selector's own documentation is the full statement of the contract.
+   *
+   * It is mirrored here for the reason {@link AccessHub.terminalInput} is: the port bindings are hub hardware and the hub is the projection a consumer holds for
+   * it. A per-port handle of a multi-port hub answers an empty list, because it already is one port and the door it serves is {@link AccessHub.doorId}.
+   *
+   * What each binding means is the consumer's to decide - which of a gate's doors is the main one is policy this library holds no opinion about - so this answers
+   * the list the controller delivered and ranks nothing.
+   *
+   * @returns Every door this hub's ports are bound to, in delivered order.
+   *
+   * @throws {ReferenceError} If the device is no longer present in the controller state.
+   */
+  get portBindings(): readonly AccessPortBinding[] {
+
+    return readPortBindings(this.config);
+  }
+
+  /**
    * Unlock the door this hub drives.
    *
    * **Which API carries this depends on the client and on what is asked.** A plain unlock takes the official path where one is available and the direct path otherwise,
@@ -99,8 +136,8 @@ export class AccessHub extends AccessDevice {
    *
    * @param opts - Who to attribute the unlock to, which door to unlock, which approach of a driveway gate it is for, and an optional abort signal.
    *
-   * @throws {@link AccessCapabilityError} when no available path can carry the unlock as asked, {@link AccessRequestError} when the controller accepts the request
-   *   but reports the unlock unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
+   * @throws {@link AccessCapabilityError} when no available path can carry the unlock as asked, {@link AccessApiError} when the controller accepts the request but
+   *   reports the unlock unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
    */
   async unlock(opts: { actor?: AccessOfficialDoorUnlockActor; doorId?: string; entryMethod?: AccessOfficialDoorEntryMethod; signal?: AbortSignal } = {}): Promise<void> {
 
@@ -145,7 +182,7 @@ export class AccessHub extends AccessDevice {
    * @param opts - Which door to close, and an optional abort signal.
    *
    * @throws {@link AccessCapabilityError} when the client holds no direct path and its official rail is absent, revoked, or refused for this device,
-   *   {@link AccessRequestError} when the controller accepts the request but reports the close unsuccessful, the classified `FatalError` on a non-2xx, or a
+   *   {@link AccessApiError} when the controller accepts the request but reports the close unsuccessful, the classified `FatalError` on a non-2xx, or a
    *   transport-level `AccessError` on failure.
    */
   async close(opts: { doorId?: string; signal?: AbortSignal } = {}): Promise<void> {
@@ -179,7 +216,7 @@ export class AccessHub extends AccessDevice {
    *
    * @param opts - Which door to halt, and an optional abort signal.
    *
-   * @throws {@link AccessCapabilityError} when no available path can carry the stop, {@link AccessOfficialApiError} when the controller refuses it in its own
+   * @throws {@link AccessCapabilityError} when no available path can carry the stop, {@link AccessApiError} when the controller refuses it in its own
    *   vocabulary, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
    */
   async stop(opts: { doorId?: string; signal?: AbortSignal } = {}): Promise<void> {
@@ -206,8 +243,8 @@ export class AccessHub extends AccessDevice {
    * @param opts - Which door the rule governs, and an optional abort signal.
    *
    * @throws {TypeError} If a custom rule's interval is not a positive whole number - caller misuse, raised before anything is sent.
-   * @throws {@link AccessCapabilityError} when no available path can carry the rule, {@link AccessRequestError} when the controller accepts the request but reports
-   *   the rule unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
+   * @throws {@link AccessCapabilityError} when no available path can carry the rule, {@link AccessApiError} when the controller accepts the request but reports the
+   *   rule unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
    */
   async setLockRule(rule: AccessLockRule, opts: { doorId?: string; signal?: AbortSignal } = {}): Promise<void> {
 
@@ -257,9 +294,9 @@ export class AccessHub extends AccessDevice {
    * its door. Publishing the resolution keeps it single-sourced: a consumer matching a topology door to the handle that drives it reads this rather than restating
    * the port-extension rule.
    *
-   * Where a record carries several port bindings, the first of them as the controller delivered them is what this answers with. That ordering is the controller's
-   * own and nothing here promises it will hold, so commanding a particular door of hardware that drives more than one is what the door commands' `doorId` target
-   * is for.
+   * Where a record carries several port bindings, the first of them as the controller delivered them is what this answers with, which is the contract
+   * {@link AccessHub.portBindings} states and where every one of them is reachable. Commanding a particular door of hardware that drives more than one is what the
+   * door commands' `doorId` target is for.
    *
    * @throws {ReferenceError} If the device is no longer present in the controller state.
    */
@@ -267,7 +304,7 @@ export class AccessHub extends AccessDevice {
 
     const config = this.config;
 
-    return config.extensions?.find((extension) => extension.extension_name === PORT_EXTENSION)?.target_value ?? config.location_id;
+    return firstPortBinding(config)?.doorId ?? config.location_id;
   }
 
   // The unlock as the Access application's own endpoint expresses it, handed to the routing decision as the fallback it may or may not take. It lives here rather

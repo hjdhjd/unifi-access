@@ -1,11 +1,16 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * topology.fixtures.ts: The real documents a UniFi Access controller serves about itself and its topology, captured from live controllers and embedded verbatim.
+ *
+ * The controller document below, `accessControllerInfoFixture`, was captured on 2026-08-13 and reported UniFi Access v4.3.3+12030, and every 2026 capture in this
+ * file comes from that controller; the 2024 capture has no recorded version. A topology document carries no schema version of its own on the wire, so that
+ * application version is what a recapture is compared against.
  */
 import type { AccessBootstrapConfig, AccessControllerConfig } from "../types/index.ts";
 
-/* Real controller documents, each embedded exactly as its controller sent it. They are declared against the wire types rather than cast to them, so the compiler
- * checks the type model against real controller output every time the suite type-checks.
+/* Real controller documents, each carrying the shape its controller sent - key order, casing, and nesting are the controller's own, while names, addresses, and
+ * credentials are stand-ins. They are declared against the wire types rather than cast to them, so the compiler checks the type model against real controller
+ * output every time the suite type-checks.
  *
  * The two bootstrap documents differ in the ways that matter to the reducer's flattening. The 2026 document attaches all of its hardware to doors and carries no
  * root-level device_groups at all; the 2024 document hosts one device directly on the building, so its root carries the doubly-nested device_groups the door level

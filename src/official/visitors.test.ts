@@ -4,15 +4,11 @@
  * spellings the reference uses for a visit's weekly pattern on the way in and on the way out.
  */
 import type { AccessOfficialVisitor, AccessOfficialVisitorCreate, AccessOfficialVisitorResource, AccessOfficialVisitorSchedule } from "./visitors.ts";
+import type { DomainRow, WalkRow } from "./domain.helpers.ts";
+import { PATH_ID, PATH_ID_ENCODED, VOID_OK, describeDomainTable, describeWalkTable, officialPath } from "./domain.helpers.ts";
 import { describe, test } from "node:test";
-import { describeDomainTable, officialPath } from "./domain.helpers.ts";
-import type { DomainRow } from "./domain.helpers.ts";
 import { OfficialVisitors } from "./visitors.ts";
 import assert from "node:assert/strict";
-
-const ID = "a b/c";
-const ENCODED = "a%20b%2Fc";
-const VOID_OK = { "code": "SUCCESS", "msg": "success" };
 
 // Transcribed from the reference's own visitor sample, whose one-time visit carries a null weekly pattern.
 const VISITOR = { "email": "guest@example.test", "end_time": 1689157339, "first_name": "Grace", "id": "v-1", "inviter_id": "u-1", "inviter_name": "Acme Name 1",
@@ -29,47 +25,60 @@ const rows: readonly DomainRow<OfficialVisitors>[] = [
     run: async (domain, call) => domain.create({ "end_time": 1689157339, "first_name": "Grace", "last_name": "Hopper", "start_time": 1689150139,
       "visit_reason": "Interview" }, call), verb: "POST" },
 
-  { expected: VISITOR, method: "fetch", path: officialPath("/visitors/" + ENCODED), reply: { "code": "SUCCESS", "data": VISITOR, "msg": "success" },
-    run: async (domain, call) => domain.fetch(ID, call), verb: "GET" },
+  { expected: VISITOR, method: "fetch", path: officialPath("/visitors/" + PATH_ID_ENCODED), reply: { "code": "SUCCESS", "data": VISITOR, "msg": "success" },
+    run: async (domain, call) => domain.fetch(PATH_ID, call), verb: "GET" },
 
   { expected: { data: [], pagination: PAGINATION }, method: "fetchAll",
     path: officialPath("/visitors") + "?page_num=1&page_size=25&expand%5B%5D=nfc_card&keyword=gr&status=1",
     reply: { "code": "SUCCESS", "data": [], "msg": "succ", "pagination": PAGINATION },
     run: async (domain, call) => domain.fetchAll({ expand: ["nfc_card"], keyword: "gr", pageNum: 1, pageSize: 25, status: 1 }, call), verb: "GET" },
 
-  { body: "{\"remarks\":\"Rescheduled\"}", expected: VISITOR, method: "update", path: officialPath("/visitors/" + ENCODED),
-    reply: { "code": "SUCCESS", "data": VISITOR, "msg": "success" }, run: async (domain, call) => domain.update(ID, { remarks: "Rescheduled" }, call), verb: "PUT" },
+  { expected: [], method: "iterateAll", path: officialPath("/visitors") + "?page_num=1&page_size=25&expand%5B%5D=nfc_card&keyword=gr&status=1",
+    reply: { "code": "SUCCESS", "data": [], "msg": "succ", "pagination": PAGINATION },
+    run: async (domain, call) => Array.fromAsync(domain.iterateAll({ expand: ["nfc_card"], keyword: "gr", pageSize: 25, status: 1 }, call)), verb: "GET" },
 
-  { method: "delete", path: officialPath("/visitors/" + ENCODED) + "?is_force=true", reply: VOID_OK,
-    run: async (domain, call) => domain.delete(ID, { "is_force": true }, call), verb: "DELETE" },
+  { body: "{\"remarks\":\"Rescheduled\"}", expected: VISITOR, method: "update", path: officialPath("/visitors/" + PATH_ID_ENCODED),
+    reply: { "code": "SUCCESS", "data": VISITOR, "msg": "success" }, run: async (domain, call) => domain.update(PATH_ID, { remarks: "Rescheduled" }, call), verb: "PUT" },
 
-  { body: "{\"token\":\"tok-1\"}", method: "assignNfcCard", path: officialPath("/visitors/" + ENCODED + "/nfc_cards"), reply: VOID_OK,
-    run: async (domain, call) => domain.assignNfcCard(ID, { token: "tok-1" }, call), verb: "PUT" },
+  { method: "delete", path: officialPath("/visitors/" + PATH_ID_ENCODED) + "?is_force=true", reply: VOID_OK,
+    run: async (domain, call) => domain.delete(PATH_ID, { "is_force": true }, call), verb: "DELETE" },
 
-  { body: "{\"token\":\"tok-1\"}", method: "unassignNfcCard", path: officialPath("/visitors/" + ENCODED + "/nfc_cards/delete"), reply: VOID_OK,
-    run: async (domain, call) => domain.unassignNfcCard(ID, "tok-1", call), verb: "PUT" },
+  { body: "{\"token\":\"tok-1\"}", method: "assignNfcCard", path: officialPath("/visitors/" + PATH_ID_ENCODED + "/nfc_cards"), reply: VOID_OK,
+    run: async (domain, call) => domain.assignNfcCard(PATH_ID, { token: "tok-1" }, call), verb: "PUT" },
 
-  { body: "{\"pin_code\":\"67203419\"}", method: "assignPinCode", path: officialPath("/visitors/" + ENCODED + "/pin_codes"), reply: VOID_OK,
-    run: async (domain, call) => domain.assignPinCode(ID, "67203419", call), verb: "PUT" },
+  { body: "{\"token\":\"tok-1\"}", method: "unassignNfcCard", path: officialPath("/visitors/" + PATH_ID_ENCODED + "/nfc_cards/delete"), reply: VOID_OK,
+    run: async (domain, call) => domain.unassignNfcCard(PATH_ID, "tok-1", call), verb: "PUT" },
 
-  { method: "unassignPinCode", path: officialPath("/visitors/" + ENCODED + "/pin_codes"), reply: VOID_OK, run: async (domain, call) => domain.unassignPinCode(ID, call),
-    verb: "DELETE" },
+  { body: "{\"pin_code\":\"67203419\"}", method: "assignPinCode", path: officialPath("/visitors/" + PATH_ID_ENCODED + "/pin_codes"), reply: VOID_OK,
+    run: async (domain, call) => domain.assignPinCode(PATH_ID, "67203419", call), verb: "PUT" },
+
+  { method: "unassignPinCode", path: officialPath("/visitors/" + PATH_ID_ENCODED + "/pin_codes"), reply: VOID_OK,
+    run: async (domain, call) => domain.unassignPinCode(PATH_ID, call), verb: "DELETE" },
 
   // The endpoint takes no body at all - the visitor named in the path is the whole request.
-  { method: "assignQrCode", path: officialPath("/visitors/" + ENCODED + "/qr_codes"), reply: VOID_OK, run: async (domain, call) => domain.assignQrCode(ID, call),
-    verb: "PUT" },
+  { method: "assignQrCode", path: officialPath("/visitors/" + PATH_ID_ENCODED + "/qr_codes"), reply: VOID_OK,
+    run: async (domain, call) => domain.assignQrCode(PATH_ID, call), verb: "PUT" },
 
-  { method: "unassignQrCode", path: officialPath("/visitors/" + ENCODED + "/qr_codes"), reply: VOID_OK, run: async (domain, call) => domain.unassignQrCode(ID, call),
-    verb: "DELETE" },
+  { method: "unassignQrCode", path: officialPath("/visitors/" + PATH_ID_ENCODED + "/qr_codes"), reply: VOID_OK,
+    run: async (domain, call) => domain.unassignQrCode(PATH_ID, call), verb: "DELETE" },
 
-  { body: "[\"abcd\",\"efge3\"]", method: "assignLicensePlates", path: officialPath("/visitors/" + ENCODED + "/license_plates"), reply: VOID_OK,
-    run: async (domain, call) => domain.assignLicensePlates(ID, [ "abcd", "efge3" ], call), verb: "PUT" },
+  { body: "[\"abcd\",\"efge3\"]", method: "assignLicensePlates", path: officialPath("/visitors/" + PATH_ID_ENCODED + "/license_plates"), reply: VOID_OK,
+    run: async (domain, call) => domain.assignLicensePlates(PATH_ID, [ "abcd", "efge3" ], call), verb: "PUT" },
 
-  { method: "unassignLicensePlate", path: officialPath("/visitors/" + ENCODED + "/license_plates/" + ENCODED), reply: VOID_OK,
-    run: async (domain, call) => domain.unassignLicensePlate(ID, ID, call), verb: "DELETE" }
+  { method: "unassignLicensePlate", path: officialPath("/visitors/" + PATH_ID_ENCODED + "/license_plates/" + PATH_ID_ENCODED), reply: VOID_OK,
+    run: async (domain, call) => domain.unassignLicensePlate(PATH_ID, PATH_ID, call), verb: "DELETE" }
 ];
 
 describeDomainTable({ domainClass: OfficialVisitors, name: "OfficialVisitors", rows });
+
+// The two-page walk. The page row above establishes what one request carries; this establishes that a walk keeps asking.
+const walks: readonly WalkRow<OfficialVisitors>[] = [
+
+  { method: "iterateAll", paths: [ officialPath("/visitors") + "?page_num=1&page_size=1", officialPath("/visitors") + "?page_num=2&page_size=1" ],
+    records: [ VISITOR, { ...VISITOR, "id": "v-2" } ], run: async (domain, call) => Array.fromAsync(domain.iterateAll({ pageSize: 1 }, call)) }
+];
+
+describeWalkTable({ domainClass: OfficialVisitors, name: "OfficialVisitors walks", rows: walks });
 
 describe("OfficialVisitors vocabularies", () => {
 

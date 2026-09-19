@@ -1,6 +1,10 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * webhooks.fixtures.ts: Real webhook deliveries, captured from a live controller and embedded verbatim.
+ *
+ * The controller document the topology fixtures carry was captured on 2026-08-13 and reported UniFi Access v4.3.3+12030, and every capture in this file comes from
+ * that controller. Beyond the v1 in the developer API's path, the payloads carry no schema version of their own, so that application version is what a recapture
+ * is compared against.
  */
 import type { AccessWebhookEvent } from "./webhooks.ts";
 
@@ -8,17 +12,18 @@ import type { AccessWebhookEvent } from "./webhooks.ts";
  * suite type-checks the payload model against real wire material rather than against a restatement of itself. Nothing here is tidied: key order and casing are the
  * controller's own.
  *
- * The set is chosen for what each one settles rather than for coverage. The two unlocks are the same event under different circumstances - one performed through
- * the official API with attribution supplied, carrying the actor identity and the caller's own passthrough object, and one performed by a person answering a
- * doorbell call, carrying none of them and naming a human actor instead. Between them they establish which members of an unlock are optional and that the
- * actor really does distinguish an automation from an operator. The ring and the completed call are the two ends of one doorbell lifecycle, joined by the call
- * identifier they share, and the completed one carries the reason code whose documented meaning the wire contradicts. The two door-position deliveries are one
- * door opening and closing, which is what shows the status member carries both values rather than one.
+ * The set is chosen for what each one settles rather than for coverage. The unlocks are the same event under different circumstances - one performed through the
+ * official API with attribution supplied, carrying the actor identity and the caller's own passthrough object, and one performed by a person answering a doorbell call,
+ * carrying none of them and naming a human actor instead. Between them they establish which members of an unlock are optional and that the actor really does distinguish
+ * an automation from an operator. The ring and the completed call are the two ends of one doorbell lifecycle, joined by the call identifier they share, and the
+ * completed one carries the reason code whose documented meaning the wire contradicts. The door-position deliveries are one door opening and closing, which is what
+ * shows the status member carries both values rather than one.
  *
  * Captured from a live controller, 2026.
  */
 export const accessWebhookDeliveriesFixture: AccessWebhookEvent[] = [
 
+  // Attributed through the official API: the actor identity and the caller's own passthrough object are present.
   {
 
     "event": "access.door.unlock",
@@ -86,6 +91,7 @@ export const accessWebhookDeliveriesFixture: AccessWebhookEvent[] = [
       }
     }
   },
+  // Answered by a person: no attribution is present, and a human actor is named instead.
   {
 
     "event": "access.door.unlock",
@@ -147,6 +153,7 @@ export const accessWebhookDeliveriesFixture: AccessWebhookEvent[] = [
       }
     }
   },
+  // The ring that starts the doorbell lifecycle.
   {
 
     "event": "access.doorbell.incoming",
@@ -197,6 +204,7 @@ export const accessWebhookDeliveriesFixture: AccessWebhookEvent[] = [
       }
     }
   },
+  // The same call's completion, carrying the reason code whose documented meaning the wire contradicts.
   {
 
     "event": "access.doorbell.completed",
@@ -249,6 +257,7 @@ export const accessWebhookDeliveriesFixture: AccessWebhookEvent[] = [
       }
     }
   },
+  // One door-position direction: closing.
   {
 
     "event": "access.device.dps_status",
@@ -293,6 +302,7 @@ export const accessWebhookDeliveriesFixture: AccessWebhookEvent[] = [
       }
     }
   },
+  // The other door-position direction: opening.
   {
 
     "event": "access.device.dps_status",

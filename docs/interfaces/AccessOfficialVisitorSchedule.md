@@ -8,8 +8,8 @@
 
 The recurring visit schedule attached to a visitor.
 
-`weekly` is null on a one-time visit, which is the wire's way of saying the visit has no recurring pattern rather than that it has an empty one. The member is
-spelled `weekly` on every response sample, where the request that sets it is spelled `week_schedule` - the two spellings are the reference's own, transcribed
+`weekly` is null on a one-time visit, which is the wire's way of saying the visit has no recurring pattern rather than that it has an empty one. The member is spelled
+`weekly` on every response sample, where the request that sets it is spelled `week_schedule` - the request and response spellings are the reference's own, transcribed
 rather than reconciled.
 
 Documentation-derived.

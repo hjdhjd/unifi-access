@@ -13,9 +13,9 @@ shape, so the generic device is itself something a consumer can hold. The hub-sp
 rather than the device.
 
 Commands are **write-through**: they tell the controller to do something and return, without folding the response into the store. State advances only through
-the reducer's two inputs - the realtime notification stream and the refresh failsafe - so the issuer learns of its own change the way every other subscriber
-does. The consequence is that a projection reflects a command's effect once the stream (or the next refresh) delivers it, not synchronously after the `await`, so
-a consumer observes rather than reads back.
+the reducer's other inputs - the realtime notification stream and the refresh failsafe - and never through a command's own response, so the issuer learns of
+its own change the way every other subscriber does. The consequence is that a projection reflects a command's effect once the stream (or the next refresh)
+delivers it, not synchronously after the `await`, so a consumer observes rather than reads back.
 
 ## Extends
 
@@ -71,7 +71,7 @@ get isOnline(): boolean;
 
 Whether the controller currently reports this device as online.
 
-This reads the controller's own `is_online` and nothing else. The record carries neighbouring flags - adopted, managed, connected - that describe how the
+This reads the controller's own `is_online` and nothing else. The record carries neighboring flags - adopted, managed, connected - that describe how the
 device is enrolled rather than whether it is reachable now, and a consumer wanting a stricter definition composes them itself off `config`. Folding them in
 here would make this getter one consumer's policy rather than the controller's report.
 
@@ -117,9 +117,9 @@ If the device is no longer present in the controller state.
 get name(): string;
 ```
 
-The device's display name: the alias an administrator gave it when there is one, and the controller's own name for the hardware otherwise. The precedence is
-the controller interface's own - an alias is what a person chose to call this device, so it wins wherever one is set - and an alias set to the empty string
-counts as unset, which is how clearing an alias in the interface reads on the wire.
+The device's display name, as [deviceDisplayName](../functions/deviceDisplayName.md) answers it: the alias an administrator gave it when there is one, and the controller's own name
+for the hardware otherwise. The rule and its rationale live with that selector, so a consumer labelling a device from its record and a handle reading its
+own name cannot drift apart.
 
 ##### Throws
 
@@ -266,7 +266,7 @@ non-2xx classifies and throws, and a 2xx whose envelope reports anything other t
 #### Throws
 
 [AccessCapabilityError](../classes/AccessCapabilityError.md) when this client has no path that can carry the restart - one held to the official API, which cannot express it, or one
-  holding only a token, whose credentials the Access application's own endpoints require. [AccessRequestError](../classes/AccessRequestError.md) when the controller accepts the request but
+  holding only a token, whose credentials the Access application's own endpoints require. [AccessApiError](../classes/AccessApiError.md) when the controller accepts the request but
   reports the restart unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
 
 ***

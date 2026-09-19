@@ -1,17 +1,18 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * dispatch.ts: The official API's single request path - the result envelope unwrapped, its code vocabulary classified, and its pagination carried through.
+ * dispatch.ts: The official API's single request path - the result envelope read through the protocol tier, the outbound encoding, and the page report carried through.
  */
-import { AccessOfficialApiError, AccessProtocolError } from "../errors.ts";
 import type { RequestOptions, Transport } from "../transport/http.ts";
+import { AccessProtocolError } from "../errors.ts";
 import { isRecord } from "../json.ts";
-
-// The one result code that means the request succeeded. Every other code is the controller declining in its own vocabulary rather than through an HTTP status.
-const OFFICIAL_SUCCESS_CODE = "SUCCESS";
+import { readResultEnvelope } from "../protocol/envelope.ts";
 
 // The content type a JSON answer carries. A binary endpoint answering in it is answering with an envelope rather than with bytes, which is what the download arm
 // tests for before it hands a caller anything.
 const JSON_CONTENT_TYPE = "application/json";
+
+// What a refusal on this surface says when the controller sent no message of its own. It names the API so that an unhandled refusal still says which one declined.
+const OFFICIAL_REFUSAL_FALLBACK = "The UniFi Access controller refused an official API request without explaining why.";
 
 /**
  * The pagination a list endpoint reports beside its results. It sits at the top level of the envelope rather than inside the results, on every paginated endpoint
@@ -115,35 +116,27 @@ export interface OfficialDomainOptions {
   host: string;
 }
 
-// The envelope every official response carries, as far as this module reads it. Only `code` is required, because that is the one member the API guarantees on both
-// its success and its failure responses; everything else is read defensively, since a response that refuses a request has no obligation to carry a result.
-interface OfficialEnvelope {
-
-  code: string;
-  data?: unknown;
-  msg?: unknown;
-  pagination?: unknown;
-}
-
 /**
  * The one path every official request takes.
  *
  * The official API answers in a uniform envelope - a result code, the payload, a message, and pagination on the endpoints that page - and it reports its refusals
  * *inside* that envelope with a 2xx status. So a caller that read the status alone would treat a refused request as a successful one carrying a payload it never
- * got. Unwrapping in one place is what makes that impossible: every official request resolves to a payload the endpoint really returned, or throws.
+ * got. The protocol tier's envelope reader is what makes that impossible, and it is the reader the Access application's own endpoints go through as well: every
+ * official request resolves to a payload the endpoint really returned, or throws. What this module owns is the three arms, the outbound encoding, and the page
+ * report an arm reads beside its results.
  *
  * The outcomes, and where each is decided:
  *
  * - A non-2xx never reaches the envelope at all. It classifies through the transport's own status mapping, so an official 401 or 403 raises the same typed error
  *   an Access-application request would, and there is one HTTP-status vocabulary in the library rather than two.
- * - A 2xx whose code is not success throws {@link AccessOfficialApiError}, carrying the controller's own code as a typed field and its message as the error's.
+ * - A 2xx whose code is not success throws {@link AccessApiError}, carrying the controller's own code as a typed field and its message as the error's.
  * - A 2xx whose code is success returns the payload, with pagination beside it when the endpoint sent some.
  *
  * The envelope tolerances are the wire's, not guesses: `msg` arrives truncated on several endpoints, `data` is variously an object, an array, a bare string, or
  * null depending on what the endpoint does, and pagination sits at the top level even where the reference documents it inside the results. Reading one uniform
  * envelope is what lets every endpoint share this path.
  *
- * Three arms hang off the class because the API answers in three shapes: {@link OfficialDispatch.request} for an endpoint that returns a typed payload,
+ * The class exposes one arm per response shape the API answers in: {@link OfficialDispatch.request} for an endpoint that returns a typed payload,
  * {@link OfficialDispatch.command} for a mutation whose success carries nothing worth reading, and {@link OfficialDispatch.download} for the endpoints that answer
  * raw bytes. Outbound encoding is owned here too, so a caller hands typed values and parts rather than a serialized body.
  */
@@ -168,14 +161,14 @@ export class OfficialDispatch {
    *
    * @returns The endpoint's payload, and its pagination when it paginates.
    *
-   * @throws {@link AccessOfficialApiError} when the controller refuses the request in its own vocabulary, {@link AccessProtocolError} when the response is not the
+   * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, {@link AccessProtocolError} when the response is not the
    *   envelope every official endpoint answers in, or the transport's own typed errors for a non-2xx and for every transport-level failure.
    */
   async request<T>(url: string, opts: AccessOfficialRequestOptions = {}, call: AccessOfficialCallOptions = {}): Promise<AccessOfficialResult<T>> {
 
     // A non-2xx throws here, through the transport's existing status classification, so this method only ever goes on to read an envelope the controller meant as
     // an answer. The JSON decode throws its own protocol error, which is why nothing below re-wraps a parse failure.
-    const body = this.#requireSuccess((await this.#transport.send(url, await this.#encode(opts, call))).ensureOk().json<unknown>());
+    const body = readResultEnvelope((await this.#transport.send(url, await this.#encode(opts, call))).ensureOk().json<unknown>(), OFFICIAL_REFUSAL_FALLBACK);
 
     /* This arm's contract is a payload of type `T`, so an envelope carrying no `data` member cannot satisfy it: resolving would hand the caller `undefined` under
      * whatever type it asked for, which is the assertion-into-a-lie the typed return exists to prevent. A mutation whose success genuinely carries nothing goes
@@ -194,21 +187,21 @@ export class OfficialDispatch {
   /**
    * Send an official mutation whose success carries no payload worth reading.
    *
-   * The API is not consistent about what a successful mutation answers with: many documented samples omit `data` entirely, others send `null`, an empty object, or
-   * the literal string `"success"`. All four say the same thing - the controller accepted the request - so this arm establishes that the envelope reported success
-   * and deliberately never reads the member. Refusals classify exactly as they do on the typed read, because a refusal is the same event whatever the caller
-   * expected back.
+   * A successful mutation answers in whatever shape the endpoint happens to send - no `data` member, `null`, an empty object, or the literal string `"success"`
+   * among the shapes observed - and all of them mean the same thing: the controller accepted the request. So this arm establishes that the envelope reported
+   * success and deliberately never reads the member. Refusals classify exactly as they do on the typed read, because a refusal is the same event whatever the
+   * caller expected back.
    *
    * @param url  - The fully-qualified official endpoint URL.
    * @param opts - Per-request options, encoded here and threaded to the transport.
    * @param call - The per-call options every domain method forwards, merged into the request options here.
    *
-   * @throws {@link AccessOfficialApiError} when the controller refuses the request in its own vocabulary, {@link AccessProtocolError} when the response is not the
+   * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, {@link AccessProtocolError} when the response is not the
    *   envelope every official endpoint answers in, or the transport's own typed errors for a non-2xx and for every transport-level failure.
    */
   async command(url: string, opts: AccessOfficialRequestOptions = {}, call: AccessOfficialCallOptions = {}): Promise<void> {
 
-    this.#requireSuccess((await this.#transport.send(url, await this.#encode(opts, call))).ensureOk().json<unknown>());
+    readResultEnvelope((await this.#transport.send(url, await this.#encode(opts, call))).ensureOk().json<unknown>(), OFFICIAL_REFUSAL_FALLBACK);
   }
 
   /**
@@ -227,7 +220,7 @@ export class OfficialDispatch {
    *
    * @returns The response body as raw bytes.
    *
-   * @throws {@link AccessOfficialApiError} when the controller refuses the request in its own vocabulary, {@link AccessProtocolError} when a JSON answer arrives
+   * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, {@link AccessProtocolError} when a JSON answer arrives
    *   where bytes were expected, or the transport's own typed errors for a non-2xx and for every transport-level failure.
    */
   async download(url: string, opts: AccessOfficialRequestOptions = {}, call: AccessOfficialCallOptions = {}): Promise<Buffer> {
@@ -239,7 +232,7 @@ export class OfficialDispatch {
 
       // A refusal throws from here with the controller's own code, and an unparseable or code-less document throws the decode's own protocol error - so the only
       // way past this call is a success envelope, which is itself wrong on an endpoint that owes the caller bytes.
-      this.#requireSuccess(response.json<unknown>());
+      readResultEnvelope(response.json<unknown>(), OFFICIAL_REFUSAL_FALLBACK);
 
       throw new AccessProtocolError("The UniFi Access controller answered an official API request for binary content with a result envelope.");
     }
@@ -247,37 +240,12 @@ export class OfficialDispatch {
     return response.body;
   }
 
-  /* Establish that a decoded response is the envelope every official endpoint answers in, and that the controller did not refuse the request. Shared by all three
-   * arms so that a refusal is classified identically whatever the caller expected back, and so the message fallback exists in one place.
-   */
-  #requireSuccess(body: unknown): OfficialEnvelope {
-
-    if(!isOfficialEnvelope(body)) {
-
-      throw new AccessProtocolError("The UniFi Access controller answered an official API request with a document that is not a result envelope.");
-    }
-
-    if(body.code !== OFFICIAL_SUCCESS_CODE) {
-
-      /* The controller's own message is the error's message. It says what went wrong in the controller's words, which is more use to a caller than anything this
-       * layer could compose, and carrying it as the message rather than as a second field is what makes an unhandled official error read properly in a log. The
-       * fallback covers a refusal that arrived without one, so the error still says something.
-       */
-      const message = ((typeof body.msg === "string") && (body.msg.length > 0)) ? body.msg :
-        "The UniFi Access controller refused an official API request without explaining why.";
-
-      throw new AccessOfficialApiError(message, { code: body.code });
-    }
-
-    return body;
-  }
-
   /* Turn the official options into the transport's own, which is where outbound encoding, the retry default, and the per-call merge all live.
    *
    * The retry default is a policy this layer owns rather than the transport: retry-safety is a question about what repeating a request *does*, and only the layer
-   * that knows the API knows that. Every POST on this surface mints, purchases, imports, invites, uploads, enrolls, or triggers, so a transparently re-sent one
-   * applies its effect twice; every other verb either reads or re-asserts a state it is already asserting. So POST defaults to no-retry and the rest inherit the
-   * pool's profile, with an explicit `retry` from the caller always winning - which is how the two endpoints that break the verb correlation say so.
+   * that knows the API knows that. Every POST on this surface applies an effect rather than reading state, so a transparently re-sent one applies it twice; every
+   * other verb either reads or re-asserts a state it is already asserting. So POST defaults to no-retry and the rest inherit the pool's profile, with an explicit
+   * `retry` from the caller always winning - which is how an endpoint that breaks the verb correlation says so.
    *
    * The per-call options join the transport's options here and nowhere else. Every domain method forwards its own bag verbatim rather than composing a signal into
    * the request options itself, so the mechanism that carries a cancellation from a caller to the transport exists once for the whole surface rather than once per
@@ -357,6 +325,12 @@ async function encodeMultipart(parts: readonly AccessOfficialFormPart[]): Promis
     /* The bytes are re-wrapped rather than handed over as they arrived. A caller's own buffer may be backed by any kind of memory - a file read hands back one
      * whose type admits shared memory - while the file constructor accepts a view over ordinary memory alone. Re-wrapping states which of the two this is, and it
      * costs a copy the hand-assembled body was already paying when it concatenated every part into one buffer.
+     *
+     * Every part announces itself as generic binary rather than as the type its content actually is - a CSV of NFC pairs, a PEM key or certificate, an avatar
+     * image. The user-avatar endpoint answers that question for itself: a live upload on 2026-09-18 of a valid PNG announced this way was stored, and the
+     * controller answered with the path it filed the image under, so the generic announcement is what that endpoint accepts and the caller's own type is not
+     * needed. The residual is per endpoint rather than general...another endpoint could parse its parts differently, and the certificate upload has never been
+     * exercised against a controller, so if one refuses a part on its type the fix is to carry the caller's own type here rather than to state one for it.
      */
     form.append(part.field, new File([(typeof part.data === "string") ? part.data : new Uint8Array(part.data)], part.filename,
       { type: "application/octet-stream" }));
@@ -373,13 +347,6 @@ async function encodeMultipart(parts: readonly AccessOfficialFormPart[]): Promis
   }
 
   return { body: await response.bytes(), contentType };
-}
-
-// Whether a decoded response is the envelope every official endpoint answers in. Only the result code is required: it is the member the API carries on success and
-// refusal alike, and it is what decides which of the two this is. Everything else is read from the envelope defensively once that question is settled.
-function isOfficialEnvelope(value: unknown): value is OfficialEnvelope {
-
-  return isRecord(value) && (typeof value["code"] === "string");
 }
 
 // Read the pagination member, or undefined when the response carried none - or carried something that is not a page report. Every member is required because a

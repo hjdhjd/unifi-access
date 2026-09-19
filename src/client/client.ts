@@ -25,16 +25,16 @@
  *
  * @module AccessClient
  */
+import { AccessAbortedError, AccessApiError, AccessBootstrapError, AccessCapabilityError, isPrivilegeRefusal } from "../errors.ts";
 import type { AccessApiMode, AccessApiOverride, AccessCapabilities } from "./routing.ts";
-import type { AccessApiResponse, AccessBootstrapConfig, AccessControllerConfig, AccessDoorStateEntry, AccessEventPacket, Nullable } from "../types/index.ts";
-import { AccessAuthorizationError, AccessCapabilityError, AccessOfficialApiError } from "../errors.ts";
+import type { AccessBootstrapConfig, AccessControllerConfig, AccessDoorStateEntry, AccessEventPacket, Nullable } from "../types/index.ts";
 import type { AccessConnectionTransitionPayload, AccessStoreDispatchPayload } from "../diagnostics.ts";
 import type { AccessTypedEvent, AccessWireEvent } from "../protocol/events.ts";
+import type { ConnectionTransition, ThrottleSource } from "./connection.ts";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "./census.ts";
 import { officialEndpoint, officialHost, officialNotificationUrl } from "../official/endpoints.ts";
 import { selectController, selectControllerName, selectDoorStates } from "../state/selectors.ts";
 import { ACCESS_API_PATH_PREFIX } from "../settings.ts";
-import { AccessBootstrapError } from "../errors.ts";
 import type { AccessDevice } from "../devices/device.ts";
 import type { AccessDeviceContext } from "../devices/context.ts";
 import { AccessDeviceRegistry } from "../devices/registry.ts";
@@ -47,19 +47,18 @@ import type { AccessWebSocket } from "../transport/ws.ts";
 import { AuthSession } from "../transport/auth.ts";
 import type { Clock } from "../clock.ts";
 import { ConnectionMonitor } from "./connection.ts";
-import type { ConnectionTransition } from "./connection.ts";
 import type { Dispatcher } from "undici";
 import { EventBus } from "../event-bus.ts";
 import { EventStream } from "../transport/events-stream.ts";
 import { OfficialApi } from "../official/api.ts";
 import { StateStore } from "../state/store.ts";
 import type { StreamOptions } from "../event-bus.ts";
-import type { ThrottleSource } from "./connection.ts";
 import { TokenSession } from "../official/session.ts";
 import { Transport } from "../transport/http.ts";
 import { channels } from "../diagnostics.ts";
 import { classifyPacket } from "../protocol/events.ts";
 import { noopLog } from "../logging.ts";
+import { readResultEnvelope } from "../protocol/envelope.ts";
 import { singleFlight } from "../single-flight.ts";
 import { wallClock } from "../clock.ts";
 
@@ -167,13 +166,39 @@ function controllerUrl(host: string): string {
   return "https://" + host + ACCESS_API_PATH_PREFIX + "/access/info";
 }
 
+/* The sentences a bootstrap read speaks, each held once. The two subjects are the tail every message reporting a failure to read a document ends in, whichever
+ * stage it failed at; the refusal sentences are what a refused read falls back to when the controller sent no message of its own, each naming the read that drew
+ * it; and the absent-document sentences say the controller reported success and then sent nothing to read.
+ */
+const CONFIGURATION_SUBJECT = "the UniFi Access controller configuration.";
+const CONTROLLER_DOCUMENT_ABSENT = "The controller information endpoint answered with no document.";
+const CONTROLLER_READ_REFUSED = "The UniFi Access controller refused the controller information read.";
+const TOPOLOGY_DOCUMENT_ABSENT = "The topology endpoint answered with no document.";
+const TOPOLOGY_READ_REFUSED = "The UniFi Access controller refused the topology read.";
+const TOPOLOGY_SUBJECT = "the UniFi Access controller topology.";
+
+/* How a failure raised while reading one of the controller's bootstrap documents classifies, stated once for every read of one. A refusal in the result envelope is
+ * the controller declining to hand the document over - the same event as the non-2xx the fetch tries already wrap - so it is a fetch-stage failure. Everything else
+ * the read can raise is the document arriving and not being the document: a body that will not decode, a body that is not an envelope at all, or a success envelope
+ * carrying no document. Those are the parse stage.
+ */
+function bootstrapFailure(error: unknown, subject: string): AccessBootstrapError {
+
+  if(error instanceof AccessApiError) {
+
+    return new AccessBootstrapError("Unable to fetch " + subject, { cause: error, stage: "fetch" });
+  }
+
+  return new AccessBootstrapError("Unable to parse " + subject, { cause: error, stage: "parse" });
+}
+
 /* Fetch both of the controller's documents concurrently and unwrap them. They are independent requests describing independent things, so fetching them in sequence
  * would double the latency of every refresh for no benefit.
  *
- * Failures are classified by where they happened. Transport-level failures propagate as the typed errors they already are; a non-2xx becomes a fetch-stage
- * bootstrap error, and a body that will not parse - or an envelope whose payload is not the shape the endpoint documents - becomes a parse-stage one. The topology
- * endpoint answers with a single-element collection rather than a bare document, so a missing element is a parse-stage failure rather than something to paper over
- * with an empty topology.
+ * Failures are classified by what they mean rather than by where they were caught. The controller not handing over a document is the fetch stage, whether it
+ * declined by status or inside the envelope it answered a 2xx with; the document arriving and not being the document is the parse stage. Transport-level failures
+ * propagate as the typed errors they already are. The topology endpoint answers with a single-element collection rather than a bare document, so a missing element
+ * is a parse-stage failure rather than something to paper over with an empty topology.
  */
 async function fetchBootstrapPair(transport: Transport, host: string, opts: { probe?: boolean; signal?: AbortSignal } = {}): Promise<AccessRefreshDocuments> {
 
@@ -188,23 +213,41 @@ async function fetchBootstrapPair(transport: Transport, host: string, opts: { pr
     topologyResponse.ensureOk();
   } catch(error) {
 
-    throw new AccessBootstrapError("Unable to fetch the UniFi Access controller configuration.", { cause: error, stage: "fetch" });
+    throw new AccessBootstrapError("Unable to fetch " + CONFIGURATION_SUBJECT, { cause: error, stage: "fetch" });
   }
 
   try {
 
-    const controller = controllerResponse.json<AccessApiResponse>().data as unknown as AccessControllerConfig;
-    const topology = (topologyResponse.json<AccessApiResponse>().data as unknown as AccessBootstrapConfig[])[0];
+    /* What this reads is the envelope's verdict and the document's presence. Below those, the shape is trusted, down into every nested field those interfaces
+     * declare: nothing here validates deeper than the topology collection's first element existing, and a controller that answered with a differently shaped
+     * payload would surface as a downstream type mismatch rather than as a parse-stage failure caught at this boundary.
+     */
+    const controllerEnvelope = readResultEnvelope(controllerResponse.json<unknown>(), CONTROLLER_READ_REFUSED);
+
+    if(!("data" in controllerEnvelope)) {
+
+      throw new TypeError(CONTROLLER_DOCUMENT_ABSENT);
+    }
+
+    const topologyEnvelope = readResultEnvelope(topologyResponse.json<unknown>(), TOPOLOGY_READ_REFUSED);
+
+    if(!("data" in topologyEnvelope)) {
+
+      throw new TypeError(TOPOLOGY_DOCUMENT_ABSENT);
+    }
+
+    const controller = controllerEnvelope.data as AccessControllerConfig;
+    const topology = (topologyEnvelope.data as AccessBootstrapConfig[])[0];
 
     if(topology === undefined) {
 
-      throw new TypeError("The topology endpoint answered with no document.");
+      throw new TypeError(TOPOLOGY_DOCUMENT_ABSENT);
     }
 
     return { controller, topology };
   } catch(error) {
 
-    throw new AccessBootstrapError("Unable to parse the UniFi Access controller configuration.", { cause: error, stage: "parse" });
+    throw bootstrapFailure(error, CONFIGURATION_SUBJECT);
   }
 }
 
@@ -346,6 +389,15 @@ export class AccessClient implements AsyncDisposable {
       throw new TypeError("A credential-only UniFi Access client cannot be held to the official API, which requires a token.");
     }
 
+    /* A signal already aborted is the caller's own decision, taken before the connect began, so the refusal is immediate. It raises the library's typed abort
+     * rather than the platform's own DOMException, which is what lets a consumer branch on one class for every abort the library reports. The refusal lands
+     * ahead of any transport, so neither a request nor a socket follows a connect the caller has already given up on.
+     */
+    if(opts.signal?.aborted === true) {
+
+      throw new AccessAbortedError("The connect was aborted by the caller's signal before any request was sent.");
+    }
+
     /* The direct half: the credential session and the transport that carries it, built together or not at all so that neither can exist without the other. The
      * authentication hooks are closures that run only when a request is dispatched, which is strictly after the session exists - which is what lets the transport
      * stamp credentials and trigger a relogin without importing upward.
@@ -402,9 +454,9 @@ export class AccessClient implements AsyncDisposable {
     };
 
 
-    /* The document pair's own coalescing gate. Three callers reach for the pair - the initial connect, the refresh failsafe, and a recovery re-bootstrap - and two
-     * of them can overlap freely, so sharing one fetch is what keeps a stale controller document from landing on top of a fresher one and letting a recovering
-     * client read a restart that had already been accounted for.
+    /* The document pair's own coalescing gate. Every caller that reaches for the pair - the initial connect, the refresh failsafe, and a recovery re-bootstrap -
+     * shares it, and some of them can overlap freely, so sharing one fetch is what keeps a stale controller document from landing on top of a fresher one and
+     * letting a recovering client read a restart that had already been accounted for.
      *
      * A caller that wanted a recovery trial and joins a fetch already in flight as an ordinary request accepts that request's fate. If the breaker refuses it, that
      * recovery attempt fails and the loop retries on its own schedule with a fresh trial, so the case is self-correcting rather than a stall. A joiner re-applying
@@ -451,10 +503,9 @@ export class AccessClient implements AsyncDisposable {
      */
     let inventoryRefused = false;
 
-    /* Read the device listing, or learn that this token may not. A token is scoped per endpoint, so one that reads doors may still be refused devices; that is not
-     * a failure of the connection, it is a smaller client, and it is reported once and then remembered rather than re-discovered on every re-seed. The two
-     * spellings folded here are the two this library produces for a privilege refusal - the transport's classification of a refused status, and the envelope's own
-     * code - and anything else is the fault it is.
+    /* Read the device listing, or learn that this token may not. A token is scoped per endpoint, so one that reads doors may still be refused devices; that is not a
+     * failure of the connection, it is a smaller client, and it is reported once and then remembered rather than re-discovered on every re-seed. The refusal is read
+     * through this library's one published reading of a privilege refusal, and anything else is the fault it is.
      */
     const readOfficialDevices = async (facade: OfficialApi, signal?: AbortSignal): Promise<AccessStateDevice[]> => {
 
@@ -465,10 +516,7 @@ export class AccessClient implements AsyncDisposable {
         return (await facade.devices.fetchAll({}, { ...((signal !== undefined) && { signal }) })).flat().map(officialDeviceRecord);
       } catch(error) {
 
-        const refused = (error instanceof AccessAuthorizationError) ||
-          ((error instanceof AccessOfficialApiError) && (error.code === "CODE_OPERATION_FORBIDDEN"));
-
-        if(!refused) {
+        if(!isPrivilegeRefusal(error)) {
 
           throw error;
         }
@@ -484,8 +532,9 @@ export class AccessClient implements AsyncDisposable {
      * is none they are the census, and the devices, the doors, and their state land together. Declared before the store because the store's options read this
      * binding for the refresh failsafe; its body reads the store lazily, which is what makes the order work.
      *
-     * It is single-flighted because three callers reach for it - the connect seed, the refresh failsafe, and a recovery re-seed - on the same terms the document
-     * pair is single-flighted: overlapping callers share one reading, so two passes cannot settle out of order and restate a stale listing over a fresh one.
+     * It is single-flighted because every caller that reaches for it - the connect seed, the refresh failsafe, and a recovery re-seed - shares it on the same
+     * terms the document pair is single-flighted: overlapping callers share one reading, so two passes cannot settle out of order and restate a stale listing
+     * over a fresh one.
      *
      * The signal is the initiating caller's, and a joiner shares its fate - which is right here because every signal that can reach this read fires only when the
      * client as a whole is going away, so no joiner is ever cancelled by a lifecycle that was not also ending its own.
@@ -548,11 +597,11 @@ export class AccessClient implements AsyncDisposable {
       await seedFromOfficial(opts.signal);
     } catch(error) {
 
-      /* Two ways this is fatal and one way it is not. Anything but the Identity Enterprise code is a genuine failure about this request; that code on a client with
-       * no other identity leaves nothing to fall back to; and that code on a client that also holds credentials is simply the news that this controller has no
-       * official API, which the map records and the client carries on without.
+      /* This is fatal in some cases and not in others. Anything but the Identity Enterprise code is a genuine failure about this request; that code on a client
+       * with no other identity leaves nothing to fall back to; and that code on a client that also holds credentials is simply the news that this controller has
+       * no official API, which the map records and the client carries on without.
        */
-      const folded = (error instanceof AccessOfficialApiError) && (error.code === "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED") && hasCredentials;
+      const folded = (error instanceof AccessApiError) && (error.code === "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED") && hasCredentials;
 
       if(!folded) {
 
@@ -949,8 +998,8 @@ export class AccessClient implements AsyncDisposable {
    *
    * @param opts - Optional abort signal.
    *
-   * @throws {@link AccessCapabilityError} on a client with no credentials, {@link AccessBootstrapError} when the document cannot be fetched or parsed, or a
-   *   transport-level `AccessError`.
+   * @throws {@link AccessCapabilityError} on a client with no credentials, {@link AccessBootstrapError} when the document cannot be fetched, is refused, or cannot
+   *   be parsed, or a transport-level `AccessError`.
    */
   async fetchBootstrap(opts: { signal?: AbortSignal } = {}): Promise<unknown> {
 
@@ -967,15 +1016,15 @@ export class AccessClient implements AsyncDisposable {
       response.ensureOk();
     } catch(error) {
 
-      throw new AccessBootstrapError("Unable to fetch the UniFi Access controller topology.", { cause: error, stage: "fetch" });
+      throw new AccessBootstrapError("Unable to fetch " + TOPOLOGY_SUBJECT, { cause: error, stage: "fetch" });
     }
 
     try {
 
-      return response.json<unknown>();
+      return readResultEnvelope(response.json<unknown>(), TOPOLOGY_READ_REFUSED);
     } catch(error) {
 
-      throw new AccessBootstrapError("Unable to parse the UniFi Access controller topology.", { cause: error, stage: "parse" });
+      throw bootstrapFailure(error, TOPOLOGY_SUBJECT);
     }
   }
 

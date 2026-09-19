@@ -2,27 +2,29 @@
  *
  * user.ts: `ufa user <list|show|avatar>` - the operator-scoped user commands over the official API's user domain.
  */
+import type { AccessOfficialUser, AccessOfficialUserSearchResult, OfficialUsers } from "../../../index.ts";
 import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand } from "../shared.ts";
 import type { CommandContext, CommandSpec } from "../shared.ts";
+import { alignedList, renderDocument } from "../output/format.ts";
 import { openOfficialClient, requireOfficial } from "../client.ts";
-import type { AccessOfficialUser } from "../../../index.ts";
-import type { OfficialUsers } from "../../../index.ts";
-import { alignedList } from "../output/format.ts";
-import { findOfficialRecord } from "../lookup.ts";
 import { parseArgs } from "node:util";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { renderDocument } from "../output/format.ts";
+import { resolveOfficialRecord } from "../lookup.ts";
 
 // What the refusal wording names this group's operations.
 const OPERATION = "user commands";
 
-// Resolve a user by id or canonical full name against the fetched listing. The record's own `full_name` is the name of record - re-deriving a first-plus-last join
-// here would fork the controller's own spelling.
+// Resolve a user by id or canonical full name. The record's own `full_name` is the name of record on a fetched record and on a search hit alike - re-deriving a
+// first-plus-last join here would fork the controller's own spelling. Which requests that resolution costs is the lookup module's rule, stated there once for every
+// kind of official record.
 async function resolveUser(users: OfficialUsers, token: string, signal?: AbortSignal): Promise<AccessOfficialUser> {
 
-  return findOfficialRecord((await users.fetchAll({}, { ...((signal !== undefined) && { signal }) })).data, token,
-    { kind: "user", name: (record) => record.full_name });
+  const call = { ...((signal !== undefined) && { signal }) };
+
+  return resolveOfficialRecord(token, { fetch: (id) => users.fetch(id, {}, call), kind: "user", name: (record) => record.full_name,
+    search: { name: (hit: AccessOfficialUserSearchResult) => hit.full_name, run: (keyword) => users.iterateSearch({ keyword }, call) },
+    walk: () => users.iterateAll({}, call) });
 }
 
 const LIST_USAGE = [
@@ -55,7 +57,7 @@ const listHandler = async (ctx: CommandContext): Promise<void> => {
 
   // The records are scrubbed where they arrive rather than where they render, so the aligned listing below and the JSON view carry exactly the same stand-ins.
   const scrubDocument = createDocumentScrubber(values.scrub === true);
-  const records = scrubDocument((await requireOfficial(client, OPERATION).users.fetchAll({}, { signal: ctx.signal })).data);
+  const records = scrubDocument(await Array.fromAsync(requireOfficial(client, OPERATION).users.iterateAll({}, { signal: ctx.signal })));
 
   if(values.json === true) {
 
@@ -109,7 +111,7 @@ const showHandler = async (ctx: CommandContext): Promise<void> => {
   const record = await resolveUser(users, target, ctx.signal);
   const scrubDocument = createDocumentScrubber(values.scrub === true);
 
-  renderDocument(ctx.output, scrubDocument(await users.fetch(record.id, {}, { signal: ctx.signal })), (values.json === true) ? "json" : "default");
+  renderDocument(ctx.output, scrubDocument(record), (values.json === true) ? "json" : "default");
 };
 
 const AVATAR_USAGE = [

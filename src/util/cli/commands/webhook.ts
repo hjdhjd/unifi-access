@@ -158,6 +158,9 @@ const removeHandler = async (ctx: CommandContext): Promise<void> => {
   await using client = await openOfficialClient(ctx, OPERATION, { debug: values.debug === true });
 
   const webhooks = requireOfficial(client, OPERATION).webhooks;
+
+  // The webhook domain exposes no by-id fetch, only fetchAllEndpoints, createEndpoint, updateEndpoint, and deleteEndpoint, so resolution here always costs the
+  // full listing rather than following the id-first lookup pattern user.ts and visitor.ts use for their own record resolution.
   const record = findOfficialRecord(await webhooks.fetchAllEndpoints({ signal: ctx.signal }), target, { kind: "webhook endpoint", name: (endpoint) => endpoint.name });
 
   await webhooks.deleteEndpoint(record.id, { signal: ctx.signal });

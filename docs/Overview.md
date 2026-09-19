@@ -20,6 +20,8 @@ A client connects with credentials, a token, or both. Credentials reach the nati
 
 The package also installs `ufa`, a command-line client that is the library's reference consumer by construction: every command reaches the controller through the public API surface and nothing else.
 
+A consumer's own test suite has an entry of its own, `unifi-access/testing`: the webhook signing helper that mints a `Signature` header exactly as the controller does, so a suite can hand its receiver a delivery that verifies without restating the scheme. Nothing on the main surface reaches it, and nothing in production should.
+
 ## Why use this library for UniFi Access support?
 
 In short, because I use it every day to support a [Homebridge](https://homebridge.io) plugin named [homebridge-unifi-access](https://www.npmjs.com/package/homebridge-unifi-access) that I maintain. I package the core API library separately from the plugin so that other open source projects can take advantage of the work that has been done here to understand and decode the UniFi Access API.

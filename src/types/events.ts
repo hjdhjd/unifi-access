@@ -136,12 +136,12 @@ export interface AccessEventTamperAlertInterface {
  * The alarm and suspension members reflect per-hub-class presence rather than a sparse payload: a door reporting no alarm and no suspension omits them entirely, and
  * the same door carries them on a later report when the condition arises. A consumer therefore reads their absence as "no alarm" and "not suspended".
  *
- * Every member but the door's own identity is optional, which describes where an entry can come from rather than what the wire sends. A carrier reporting door state
- * sends a complete record every time, so an entry born from a notification carries them all. An entry can also be seeded at connect from what a controller's other
- * surfaces answer about a door, and those surfaces answer less: hardware flags establish position only where a sensor is wired, and the official API knows nothing
- * about wiring at all. Requiring a member would force such an entry to invent a value for something nothing asked, so a seeded entry states what its source
- * established and stays silent on the rest. A consumer therefore reads an absent member as "not established", distinct from a `dps` of `none` or an
- * `is_unavailable` of `false`, which are the controller positively reporting a condition.
+ * Every member but the door's own identity is optional, which describes what an entry's source established rather than a sparse wire. A door hub reports the whole
+ * record on every notification, so an entry born from one of its reports carries them all, while hardware this library holds no capture of may report fewer members and
+ * its entries carry what it sent. An entry can also be seeded at connect from what a controller's other surfaces answer about a door, and those surfaces answer less:
+ * hardware flags establish position only where a sensor is wired, and the official API knows nothing about wiring at all. Requiring a member would force such an entry
+ * to invent a value for something nothing asked, so an entry states what its source established and stays silent on the rest. A consumer therefore reads an absent
+ * member as "not established", distinct from a `dps` of `none` or an `is_unavailable` of `false`, which are the controller positively reporting a condition.
  */
 export interface AccessDoorStateEntryInterface {
 
@@ -185,19 +185,27 @@ export interface AccessDoorStateSuspendInterface {
 }
 
 /**
- * A description of the UniFi Access API response JSON, the envelope wrapping the result of a REST call.
+ * The one result envelope the controller's application writes on both of its surfaces, in the native dialect: a numeric `code` carrying the `CODE_*` vocabulary
+ * string beside it in `codeS`.
  *
- * `data` carries an object for single-record endpoints and an array for collection endpoints; both are confirmed against the wire. The string form is declared from the
- * native interface and has not been observed. Note that the authenticated user endpoint does not use this envelope at all - it returns
- * {@link AccessUserConfigInterface} as the entire response body.
+ * Those two members are the only ones anything verifies, because together they are what identifies the envelope. Every other member is declared as the controller
+ * leaves it, unverified and typed as `unknown`, and is read defensively by whoever consumes it. `code`, `codeS`, `msg` and `error` arrive on every capture in hand;
+ * `data` only on the ones that reported success, a refusal carrying none at all; `cloud_code` on the direct refusal captured on 2026-09-16, and `source` on the
+ * official refusal captured on 2026-09-15, each an empty string there and read by nothing. `pagination` is declared because either dialect can answer either
+ * outcome and the official listing endpoints report a page beside their results, no native page report having been observed.
+ *
+ * Note that the authenticated user endpoint does not use this envelope at all - it returns {@link AccessUserConfigInterface} as the entire response body.
  */
 export interface AccessApiResponseInterface {
 
+  cloud_code?: unknown;
   code: number;
   codeS: string;
-  data: Record<string, unknown> | Record<string, unknown>[] | string;
-  error: string;
-  msg: string;
+  data?: unknown;
+  error?: unknown;
+  msg?: unknown;
+  pagination?: unknown;
+  source?: unknown;
 }
 
 /** @see {@link AccessApiResponseInterface} */

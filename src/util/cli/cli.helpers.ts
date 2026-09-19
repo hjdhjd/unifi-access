@@ -1,36 +1,22 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * cli.helpers.ts: The offline test rig for the ufa CLI - the structural fake client, the capturing command context, and the capture-corpus specimens.
+ * cli.helpers.ts: The offline test rig for the ufa CLI - the structural fake client, the capturing command context, and the identity files the surface gates are
+ * driven with.
  *
- * Everything here serves the suite's one discipline: commands reach the controller only through the injected hooks, so a structural fake stands in for a connected
- * client and the assertions are about what each command reads, writes, and commands - never about a live controller. The fake implements only what the command
- * modules actually consume, which is what keeps it honest: a command that starts reading something new fails here rather than silently passing against a mock that
- * answered everything. The single cast to the client type is at the fake's return, marked, and is the one place in the suite where the structural stand-in is
- * asserted to be a client.
+ * Everything here serves the suite's one discipline: commands reach the controller only through the injected hooks, so a structural fake stands in for a
+ * connected client and the assertions are about what each command reads, writes, and commands - never about a live controller. The fake implements only
+ * what the command modules actually consume, which is what keeps it honest: a command that starts reading something new fails here rather than silently
+ * passing against a mock that answered everything. The rig's one cast to the client type lives in `asAccessClient`, shared by the context's opener and the
+ * tests that hand the fake straight to a library function typed for a real client.
  */
-import type { AccessApiOverride, AccessCapabilities, AccessDoorStateEntry, AccessEventPacket, AccessLockRule, AccessOfficialDoorUnlockActor,
-  AccessStateDevice } from "../../index.ts";
+import { AccessApiError, portBindings as readPortBindings, isTamperCapable as readTamperCapability, tamperState as readTamperState,
+  terminalInput as readTerminalInput } from "../../index.ts";
+import type { AccessApiOverride, AccessCapabilities, AccessClient, AccessDoorStateEntry, AccessEventPacket, AccessLockRule, AccessOfficialDoorUnlockActor,
+  AccessPortBinding, AccessStateDevice, AccessTerminalInput, AccessTerminalInputFacts } from "../../index.ts";
 import type { CommandContext, LoadCredentials, OpenClient } from "./shared.ts";
-import { isTamperCapable as readTamperCapability, tamperState as readTamperState } from "../../index.ts";
 import { Output } from "./output/format.ts";
 import type { UfaCredentials } from "./credentials.ts";
-import { setTimeout as delay } from "node:timers/promises";
-
-/**
- * Pull one specimen out of a capture corpus by the notification name it arrived under, so a test names the packet it means rather than an index that a corpus edit
- * could quietly repoint at a different packet.
- */
-export function specimen(corpus: AccessEventPacket[], event: string): AccessEventPacket {
-
-  const packet = corpus.find((candidate) => candidate.event === event);
-
-  if(packet === undefined) {
-
-    throw new Error("The capture corpus carries no \"" + event + "\" specimen.");
-  }
-
-  return packet;
-}
+import assert from "node:assert/strict";
 
 /** The identities every test can connect with: a dual file passes both surface gates, and the narrower two exercise the refusals. */
 export const CREDENTIALS_DUAL: UfaCredentials = { host: "Test Name 1", identity: { password: "p", token: "t", username: "u" } };
@@ -46,17 +32,20 @@ export const CREDENTIALS_TOKEN: UfaCredentials = { host: "Test Name 1", identity
  * method the facade does not have, or misspelling one it does, fails to compile instead of quietly asserting against a filter that matches nothing.
  */
 export type FakeOfficialMethod = "command" | "devices.fetchAll" | "devices.fetchSettings" | "devices.updateSettings" | "download" | "logs.export" | "logs.fetch" |
-  "request" | "spaces.fetchAll" | "spaces.fetchEmergency" | "spaces.fetchLockRule" | "spaces.setEmergency" | "spaces.setLockRule" | "spaces.unlock" |
-  "users.fetch" | "users.fetchAll" | "users.uploadAvatar" | "visitors.fetch" | "visitors.fetchAll" | "webhooks.createEndpoint" | "webhooks.deleteEndpoint" |
-  "webhooks.fetchAllEndpoints";
+  "logs.iterate" | "request" | "spaces.fetchAll" | "spaces.fetchEmergency" | "spaces.fetchLockRule" | "spaces.setEmergency" | "spaces.setLockRule" | "spaces.unlock" |
+  "users.fetch" | "users.fetchAll" | "users.iterateAll" | "users.iterateSearch" | "users.uploadAvatar" | "visitors.fetch" | "visitors.fetchAll" |
+  "visitors.iterateAll" | "webhooks.createEndpoint" | "webhooks.deleteEndpoint" | "webhooks.fetchAllEndpoints";
 
 /**
  * What a fake's commands recorded, by verb. Asserting on these is what establishes the wire shape a command chose, rather than on whatever it printed afterwards.
+ * The record also counts how many times the context's credential loader was called, so a refusal test proves whether the identity file was read - zero, or exactly
+ * once for a refusal thrown from the loaded identity - beside proving nothing connected.
  */
 export interface FakeCalls {
 
   closes: string[];
   consumed: string[];
+  credentialLoads: number;
   disposals: number;
   lockRules: { id: string; rule: AccessLockRule }[];
   official: { args: unknown[]; method: FakeOfficialMethod }[];
@@ -108,10 +97,17 @@ export interface FakeOfficialSpec {
   downloadBytes?: Buffer;
   emergency?: Record<string, unknown>;
   exportBytes?: Buffer;
+
+  /** What the `users.fetch` and `visitors.fetch` arms throw in place of answering, so a test can prove a failure that is not a refusal surfaces. */
+  fetchError?: Error;
   hits?: Record<string, unknown>[];
+
+  /** What the `logs.iterate` arm throws once every hit has been yielded, so a test proves a bounded read stopped before the walk was asked for more. */
+  iterateError?: Error;
   lockRule?: Record<string, unknown>;
   requestResult?: { data: unknown; pagination?: Record<string, unknown> };
   settings?: Record<string, unknown>;
+  settingsError?: Error;
   updateError?: Error;
   users?: Record<string, unknown>[];
   visitors?: Record<string, unknown>[];
@@ -131,12 +127,13 @@ export interface FakeClientSpec {
   doorStates?: Map<string, AccessDoorStateEntry>;
   doorStatesError?: Error;
   fetchError?: Error;
+  /** The stream yields nothing until the signal it was handed aborts, which is how a test proves a bound ended the stream without depending on when it fires. */
+  holdUntilAborted?: boolean;
   hubIds?: string[];
   isAdmin?: boolean | null;
   observations?: ReadonlyMap<string, AccessDoorStateEntry>[];
   official?: FakeOfficialSpec;
   onStream?: (signal: AbortSignal | undefined) => void;
-  packetDelayMs?: number;
   packets?: AccessEventPacket[];
   snapshot?: { controller?: unknown; doors?: Map<string, FakeDoorSpec>; floors?: Map<string, unknown>; root?: unknown };
   streamError?: Error;
@@ -144,12 +141,13 @@ export interface FakeClientSpec {
 
 function makeCalls(): FakeCalls {
 
-  return { closes: [], consumed: [], disposals: 0, lockRules: [], official: [], opens: [], restarts: [], unlocks: [], updates: [] };
+  return { closes: [], consumed: [], credentialLoads: 0, disposals: 0, lockRules: [], official: [], opens: [], restarts: [], unlocks: [], updates: [] };
 }
 
 // Build one fake device handle: a record, an identity, a name, the door it drives and that door's own record, and the commands a command module can issue against
-// it. The doors map is the same one the fake's state snapshot answers with, so a handle and the snapshot cannot disagree about the door behind it.
-function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyMap<string, FakeDoorSpec>): Record<string, unknown> {
+// it. The doors map is the same one the fake's state snapshot answers with, so a handle and the snapshot cannot disagree about the door behind it. The control
+// that marks the record absent comes back beside the handle rather than on it, so a test reaches it through the fake client and no command can.
+function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyMap<string, FakeDoorSpec>): { handle: Record<string, unknown>; markAbsent: () => void } {
 
   const state = { present: spec.present ?? true };
   /* The base record carries the capability set and the configuration rows the real record type requires, because the library's own predicates read them: a fake
@@ -173,7 +171,7 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
    */
   const stateRecord = (): AccessStateDevice => record() as unknown as AccessStateDevice;
 
-  return {
+  const handle: Record<string, unknown> = {
 
     close: async (): Promise<void> => {
 
@@ -202,12 +200,15 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
 
       return readTamperCapability(stateRecord());
     },
-    markAbsent: (): void => { state.present = false; },
     get name(): string {
 
       const current = record();
 
       return ((current["alias"] as string) || (current["name"] as string));
+    },
+    get portBindings(): readonly AccessPortBinding[] {
+
+      return readPortBindings(stateRecord());
     },
     restart: async (): Promise<void> => {
 
@@ -240,6 +241,7 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
 
       return readTamperState(stateRecord());
     },
+    terminalInput: (input: AccessTerminalInput): AccessTerminalInputFacts => readTerminalInput(stateRecord(), input),
     unlock: async (opts: { actor?: AccessOfficialDoorUnlockActor } = {}): Promise<void> => {
 
       spec.beforeUnlock?.();
@@ -262,6 +264,13 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
     // care about topology should therefore report.
     uplinkId: spec.uplinkId ?? null
   };
+
+  const markAbsent = (): void => {
+
+    state.present = false;
+  };
+
+  return { handle, markAbsent };
 }
 
 // Build the fake official facade: exactly the domain methods the commands consume, each recording its invocation - method name and arguments, in call order - into
@@ -290,6 +299,11 @@ function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<stri
       fetchSettings: async (...args: unknown[]): Promise<unknown> => {
 
         record("devices.fetchSettings", ...args);
+
+        if(spec.settingsError !== undefined) {
+
+          return Promise.reject(spec.settingsError);
+        }
 
         // The facade puts the device identifier first, so the default answer echoes that position back the way a real settings document carries it.
         return Promise.resolve(spec.settings ?? { "access_methods": {}, "device_id": args[0] });
@@ -325,6 +339,20 @@ function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<stri
         record("logs.fetch", ...args);
 
         return Promise.resolve({ data: { hits: spec.hits ?? [] } });
+      },
+      iterate: async function *(...args: unknown[]): AsyncGenerator {
+
+        record("logs.iterate", ...args);
+
+        yield* spec.hits ?? [];
+
+        /* The hits are one page, which is how a walk over this fake reaches its end. A consumer that stopped at its own bound never resumes the generator past
+         * the hit it stopped on, so this throw is reached only by a read that asked for more once the whole walk had been handed over.
+         */
+        if(spec.iterateError !== undefined) {
+
+          throw spec.iterateError;
+        }
       }
     },
     request: async (...args: unknown[]): Promise<unknown> => {
@@ -383,8 +411,21 @@ function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<stri
 
         record("users.fetch", ...args);
 
-        // The facade puts the user identifier first, so that position is what the spec's roster is searched by.
-        return Promise.resolve((spec.users ?? []).find((user) => user["id"] === args[0]) ?? { "id": args[0] });
+        if(spec.fetchError !== undefined) {
+
+          throw spec.fetchError;
+        }
+
+        // The facade puts the user identifier first, so that position is what the spec's roster is searched by. An identifier the roster does not hold draws the
+        // message and code the controller answered on 2026-09-07, for a uuid-shaped and a garbage identifier alike.
+        const found = (spec.users ?? []).find((user) => user["id"] === args[0]);
+
+        if(found === undefined) {
+
+          throw new AccessApiError("Account not found.", { code: "CODE_USER_ACCOUNT_NOT_EXIST" });
+        }
+
+        return Promise.resolve(found);
       },
       fetchAll: async (...args: unknown[]): Promise<unknown> => {
 
@@ -392,12 +433,38 @@ function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<stri
 
         return Promise.resolve({ data: spec.users ?? [] });
       },
+      iterateAll: async function *(...args: unknown[]): AsyncGenerator {
+
+        record("users.iterateAll", ...args);
+
+        yield* spec.users ?? [];
+      },
+      iterateSearch: async function *(...args: unknown[]): AsyncGenerator {
+
+        record("users.iterateSearch", ...args);
+
+        // The keyword matches case-insensitively as a substring of the first name, the last name, and the full name, which is the rule the controller answered to
+        // on 2026-09-07. No resolution rests on it: a keyword that misses here falls through to the walk, which sees every record.
+        const options = args[0];
+        const keyword = (((typeof options === "object") && (options !== null) && ("keyword" in options) && (typeof options.keyword === "string")) ?
+          options.keyword : "").toLowerCase();
+
+        for(const user of spec.users ?? []) {
+
+          const spellings = [ user["first_name"], user["full_name"], user["last_name"] ];
+
+          if(spellings.some((spelling) => (typeof spelling === "string") && spelling.toLowerCase().includes(keyword))) {
+
+            yield user;
+          }
+        }
+      },
       uploadAvatar: async (...args: unknown[]): Promise<unknown> => {
 
         record("users.uploadAvatar", ...args);
 
         // The facade puts the user identifier first, so the minted avatar path is built from that position.
-        return Promise.resolve(spec.avatar ?? { "avatar_url": "/avatar/" + String(args[0]) });
+        return Promise.resolve(spec.avatar ?? { "url": "/avatar/" + String(args[0]) });
       }
     },
     visitors: {
@@ -406,14 +473,33 @@ function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<stri
 
         record("visitors.fetch", ...args);
 
-        // The facade puts the visitor identifier first, so that position is what the spec's roster is searched by.
-        return Promise.resolve((spec.visitors ?? []).find((visitor) => visitor["id"] === args[0]) ?? { "id": args[0] });
+        if(spec.fetchError !== undefined) {
+
+          throw spec.fetchError;
+        }
+
+        // The facade puts the visitor identifier first, so that position is what the spec's roster is searched by. An identifier the roster does not hold draws the
+        // message and code the controller answered on 2026-09-07, for a uuid-shaped and a garbage identifier alike.
+        const found = (spec.visitors ?? []).find((visitor) => visitor["id"] === args[0]);
+
+        if(found === undefined) {
+
+          throw new AccessApiError("User not found.", { code: "CODE_USER_WORKER_NOT_EXISTS" });
+        }
+
+        return Promise.resolve(found);
       },
       fetchAll: async (...args: unknown[]): Promise<unknown> => {
 
         record("visitors.fetchAll", ...args);
 
         return Promise.resolve({ data: spec.visitors ?? [] });
+      },
+      iterateAll: async function *(...args: unknown[]): AsyncGenerator {
+
+        record("visitors.iterateAll", ...args);
+
+        yield* spec.visitors ?? [];
       }
     },
     webhooks: {
@@ -449,15 +535,17 @@ function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<stri
  * whatever the mode, mirroring the library's own contract: a token client's inventory is seeded from the official listings and answers through the same projections
  * a topology-seeded one does.
  */
-export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; client: Record<string, unknown> } {
+export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; client: Record<string, unknown>; markAbsent: (id: string) => void } {
 
   const calls = makeCalls();
   const capabilities: AccessCapabilities = spec.capabilities ??
     ((spec.official !== undefined) ? { mode: "dual", official: true, override: "auto" } : { mode: "credential", official: false, override: "auto" });
   const doors = spec.snapshot?.doors ?? new Map<string, FakeDoorSpec>();
   const tokenMode = capabilities.mode === "token";
-  const deviceHandles = (spec.devices ?? []).map((device) => makeFakeDevice(calls, device, doors));
-  const accessPointHandles = (spec.accessPoints ?? []).map((device) => makeFakeDevice(calls, device, doors));
+  const deviceFakes = (spec.devices ?? []).map((device) => makeFakeDevice(calls, device, doors));
+  const accessPointFakes = (spec.accessPoints ?? []).map((device) => makeFakeDevice(calls, device, doors));
+  const deviceHandles = deviceFakes.map((fake) => fake.handle);
+  const accessPointHandles = accessPointFakes.map((fake) => fake.handle);
   const hubIds = new Set(spec.hubIds ?? []);
   const doorStates = spec.doorStates ?? new Map<string, AccessDoorStateEntry>();
   const snapshot = { controller: spec.snapshot?.controller ?? null, doorStates, doors, floors: spec.snapshot?.floors ?? new Map(),
@@ -471,9 +559,10 @@ export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; c
     capabilities,
     connection: { isHealthy: spec.connection?.isHealthy ?? true, isThrottled: spec.connection?.isThrottled ?? false, state: spec.connection?.state ?? "connected" },
     controllerInfo: spec.controllerInfo ?? null,
-    /* The two verdicts a token-only client genuinely has none of: no controller document, so no name, and no account, so no privilege verdict. The fake answers
-     * null for both in that mode because the library does, and an explicit null a test states on purpose (a controller whose name has not been established) must
-     * survive rather than fall to the default.
+    /* The two verdicts a token-only client genuinely has none of: no controller document, so no name, and no account, so no privilege verdict. The fake
+     * enforces null for controllerName and isAdmin in that mode because the library does, and an explicit null a test states on purpose (a controller whose
+     * name has not been established) must survive rather than fall to the default. controllerInfo above defaults from the spec regardless of mode, so a
+     * token-mode spec must not also pass a non-null controllerInfo - the fake does not enforce that null the way it enforces the other two.
      */
     controllerName: (spec.controllerName === undefined) ? (tokenMode ? null : "Test Name 1") : spec.controllerName,
     devices: deviceHandles,
@@ -509,14 +598,22 @@ export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; c
         throw spec.streamError;
       }
 
-      for(const packet of spec.packets ?? []) {
+      /* A stream held until its bound fires. The fake yields nothing while it waits, so a test establishes that a bound ended the stream without depending on
+       * when the bound's own timer fires. The loop's abort check below is what then ends the stream with nothing yielded.
+       */
+      if(spec.holdUntilAborted === true) {
 
-        if(spec.packetDelayMs !== undefined) {
+        const signal = opts.signal;
 
-          // Sequential by intent: the delay is per packet, which is what lets a test place a bound between two of them.
-          // eslint-disable-next-line no-await-in-loop
-          await delay(spec.packetDelayMs);
+        if(signal === undefined) {
+
+          throw new Error("A held stream needs the signal the command runs under, but the caller passed none.");
         }
+
+        await (signal.aborted ? Promise.resolve() : new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true })));
+      }
+
+      for(const packet of spec.packets ?? []) {
 
         // A real stream ends when its signal fires rather than yielding into an aborted consumer, so the fake stops here too - which is what lets a test tell an
         // armed bound from an unarmed one by counting what arrived.
@@ -554,13 +651,37 @@ export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; c
     }
   };
 
-  return { calls, client };
+  // A record leaves controller state by the identity of the handle built for it, among the devices and the access points alike. An identity the spec built no
+  // handle for is a mistake in the test rather than a record that vanished, so it is refused by name instead of marking nothing.
+  const markAbsent = (id: string): void => {
+
+    const fake = [ ...deviceFakes, ...accessPointFakes ].find((candidate) => candidate.handle["id"] === id);
+
+    if(fake === undefined) {
+
+      throw new Error("The fake client built no handle for " + id + ".");
+    }
+
+    fake.markAbsent();
+  };
+
+  return { calls, client, markAbsent };
+}
+
+/**
+ * The rig's one cast to the client type: the structural fake stands in for a connected client, which is what makes every command offline-testable. Every site that hands
+ * the fake to code typed for a real client goes through here - the context's opener, and the tests that pass the fake straight to a library function - so the cast is
+ * stated once rather than at each of them.
+ */
+export function asAccessClient(client: Record<string, unknown>): AccessClient {
+
+  return client as unknown as AccessClient;
 }
 
 /**
  * A command context wired to a capturing output, an injected credential loader, and a fake client. `lines` holds what the command wrote, one entry per write. The
  * loader answers the dual identity unless a test narrows it, so both surface gates pass by default and each refusal is a deliberate act of the test that asserts
- * it.
+ * it. The loader counts every call into the record, which is what lets a refusal test read whether the identity file was touched.
  */
 export function makeCommandContext(opts: { args?: string[]; client?: Record<string, unknown>; calls?: FakeCalls; credentials?: UfaCredentials;
   loadCredentials?: LoadCredentials; openClient?: OpenClient; signal?: AbortSignal; } = {}): { ctx: CommandContext; lines: string[] } {
@@ -577,19 +698,67 @@ export function makeCommandContext(opts: { args?: string[]; client?: Record<stri
 
     opts.calls?.opens.push(openOpts);
 
-    // The one cast: the structural fake stands in for a connected client, which is what makes every command offline-testable.
-    return Promise.resolve(opts.client as unknown as Awaited<ReturnType<OpenClient>>);
+    // The real opener answers a client or rejects, so a context built without one refuses to open rather than resolving a stand-in a command would then misread.
+    if(opts.client === undefined) {
+
+      throw new Error("The command context was built without a client to open.");
+    }
+
+    return Promise.resolve(asAccessClient(opts.client));
   });
 
-  const loadCredentials: LoadCredentials = opts.loadCredentials ?? (async (): Promise<UfaCredentials> => Promise.resolve(opts.credentials ?? CREDENTIALS_DUAL));
+  const underlyingLoader: LoadCredentials = opts.loadCredentials ?? (async (): Promise<UfaCredentials> => Promise.resolve(opts.credentials ?? CREDENTIALS_DUAL));
+
+  // The count lands before the underlying loader runs, so a loader that throws is recorded as a read all the same...what a refusal test reads is whether the
+  // identity file was reached for, not whether it answered.
+  const loadCredentials: LoadCredentials = async (): Promise<UfaCredentials> => {
+
+    if(opts.calls !== undefined) {
+
+      opts.calls.credentialLoads += 1;
+    }
+
+    const credentials = await underlyingLoader();
+
+    return credentials;
+  };
 
   return { ctx: { args: opts.args ?? [], env: {}, loadCredentials, openClient, output, signal: opts.signal ?? new AbortController().signal }, lines };
 }
 
-/** The text a command wrote, as trimmed lines. */
+/** The text a command wrote, as non-blank lines. */
 export function rendered(lines: string[]): string[] {
 
   return lines.join("").split("\n").filter((line) => line.length > 0);
+}
+
+/**
+ * The one JSON document a command wrote, parsed whole. Joining the written lines reads either rendering alike: the single line a document read writes, and the
+ * indented document a report writes.
+ */
+// The type parameter carries the caller's own assertion of the document's shape to the call site, so its appearing only in the return position is the intent, not
+// an oversight (the same idiom the transport's own `json()` decode point uses).
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
+export function parsedJson<T>(lines: string[]): T {
+
+  return JSON.parse(rendered(lines).join("")) as T;
+}
+
+/** The signal an official facade call carried. The facade's third argument is the call options, which is where a command threads its own lifetime signal. */
+export function officialCallSignal(call: FakeCalls["official"][number] | undefined): AbortSignal | undefined {
+
+  return (call?.args[2] as { signal?: AbortSignal } | undefined)?.signal;
+}
+
+/** Assert that no value a fixture planted survives in what a command wrote, each failure naming the run and the value that leaked through it. */
+export function assertNothingPlantedSurvives(lines: string[], planted: readonly string[], label: string): void {
+
+  const text = lines.join("");
+
+  for(const value of planted) {
+
+    assert.ok(!text.includes(value), label + " carries no \"" + value + "\"");
+  }
 }
 
 /** Save and restore the process exit code around a test that sets it, so a command's exit code never becomes the test run's. */

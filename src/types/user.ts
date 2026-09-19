@@ -55,6 +55,7 @@ export interface AccessUserRoleConfigInterface {
  */
 export interface AccessUserConfigInterface {
 
+  // A bitmask; the wire has never been captured with a bit set, so what each bit encodes is undocumented.
   accessMask: number;
   alias: string;
   // Sent as `null` for a user with no picture, and the populated shape has not been observed, so the open JSON type admits whatever the controller sends.
@@ -90,6 +91,7 @@ export interface AccessUserConfigInterface {
   org_role: string;
   org_user_id: string;
   password_revision: number;
+  // A bitmask; the wire has never been captured with a bit set, so what each bit encodes is undocumented.
   permissionMask: number;
   // Keyed by dotted UniFi application domain, with the granted role names as the value.
   permissions: Record<string, string[]>;
@@ -104,6 +106,9 @@ export interface AccessUserConfigInterface {
   sso_username: string;
   sso_uuid: string;
   status: string;
+  /* 'ucore' names the UniFi OS console's own base system, distinct from Access itself, matching the UniFi OS identity layer these trailing camelCase members
+   * arrive from. hasUpdateAndInstallPermission gates whether this identity may update and install software on that underlying console.
+   */
   ucorePermission: {
 
     hasUpdateAndInstallPermission: boolean;

@@ -8,8 +8,11 @@
 
 A schedule: the weekly access pattern a policy grants on, plus the holiday handling that overrides it.
 
-Only the six members the live list endpoint returns are unconditional. `weekly`, `holiday_group`, and `holiday_schedule` are optional because the list view is a
-summary projection that omits all three - a caller reading them off a list entry gets `undefined` rather than a value the endpoint never sent.
+Only the members the live list endpoint always returns are unconditional here. `weekly`, `holiday_group`, and `holiday_schedule` are optional because the list view is
+a summary projection that omits all three - a caller reading them off a list entry gets `undefined` rather than a value the endpoint never sent.
+
+`type` carries the documented value widened with the open arm, for the same reason the door resource's `type` does: the reference's published vocabularies have
+repeatedly understated the wire, so a value this library has not seen reaches the caller intact rather than becoming unrepresentable.
 
 Live-verified. `status` is on the wire and in no documented schema.
 

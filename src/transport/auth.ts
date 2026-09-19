@@ -151,11 +151,17 @@ export class AuthSession {
    */
   async login(credentials: AccessCredentials, opts: { signal?: AbortSignal } = {}): Promise<void> {
 
-    // Retain a copy rather than the caller's own object. The relogin hook re-reads these long after login returns, and a caller that clears its password string
-    // once it believes login is done - a reasonable thing to do with a secret - would otherwise hollow out the state relogin depends on.
-    this.#credentials = { ...credentials };
+    /* Retain a copy rather than the caller's own object. The relogin hook re-reads these long after login returns, and a caller that clears its password string
+     * once it believes login is done - a reasonable thing to do with a secret - would otherwise hollow out the state relogin depends on.
+     *
+     * The handshake is handed that same copy rather than reaching back for the field, so the identity comparison it makes on the way back compares against the
+     * object this session stored.
+     */
+    const session = { ...credentials };
 
-    if(!(await this.#handshake(opts.signal))) {
+    this.#credentials = session;
+
+    if(!(await this.#handshake(session, opts.signal))) {
 
       throw new AccessAuthError("Unable to authenticate with the UniFi Access controller. Please check the configured address, username, and password.",
         { identity: "credentials" });
@@ -232,7 +238,7 @@ export class AuthSession {
 
       try {
 
-        success = await this.#handshake();
+        success = await this.#handshake(credentials);
       } catch(error) {
 
         this.#log.debug("The attempt to re-authenticate with the UniFi Access controller could not be completed.", error);
@@ -382,14 +388,7 @@ export class AuthSession {
   // On success, capture the rotated CSRF token (the controller returns it as X-Updated-CSRF-Token, falling back to X-CSRF-Token) and the bare session cookie.
   // Returns whether a complete session was established. Self-sufficient in its auth headers - it stamps the CSRF token explicitly rather than relying on the
   // transport's getAuthHeaders hook being wired back to this same session.
-  async #handshake(signal?: AbortSignal): Promise<boolean> {
-
-    const credentials = this.#credentials;
-
-    if(credentials === null) {
-
-      return false;
-    }
+  async #handshake(credentials: AccessCredentials, signal?: AbortSignal): Promise<boolean> {
 
     const loginUrl = "https://" + credentials.host + "/api/auth/login";
     const loginBody = JSON.stringify({ password: credentials.password, rememberMe: true, token: "", username: credentials.username });

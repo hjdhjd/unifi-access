@@ -3,7 +3,7 @@
  * events-stream.helpers.ts: The two peers EventStream tests drive it against - a deterministic in-memory fake WebSocket for everything above the socket, and a
  * loopback TLS server that speaks the upgrade by hand for the things only a real socket can show.
  */
-import { listenOnLoopback, stopListening } from "./loopback.helpers.ts";
+import { createConnectionLedger, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
 import type { AccessWebSocket } from "./ws.ts";
 import type { TLSSocket } from "node:tls";
@@ -18,7 +18,6 @@ const HEADER_TERMINATOR = "\r\n\r\n";
 interface ListenerOptions {
 
   once?: boolean;
-  signal?: AbortSignal;
 }
 
 // A registered listener and whether it should fire only once. Stored type-erased; the public addEventListener overloads keep the call sites fully typed.
@@ -33,17 +32,20 @@ interface ListenerEntry {
  *
  * - `autoOpen` (default `true`) schedules an `open` event on the next microtask, so a consumer that simply `await`s the stream's open handshake connects without
  *   the test having to drive `emitOpen()` by hand. Tests that scrutinize the handshake itself pass `false` and open explicitly.
+ * - `failsOnClose` (default `false`) fires a `close` event from inside `close()` itself, which is what undici does to a socket that has not finished its
+ *   upgrade: a close request fails the connection from underneath rather than sending a close frame, and the failure is reported synchronously. A test asks for
+ *   it to drive a close that lands while the caller is still inside the teardown that requested it.
  */
 export interface FakeWebSocketOptions {
 
   autoOpen?: boolean;
+  failsOnClose?: boolean;
 }
 
 /**
  * A deterministic in-memory WebSocket that satisfies the {@link AccessWebSocket} surface {@link EventStream} consumes. Tests inject it through the `webSocket`
- * factory and drive the connection with the `emit*` methods - no network, no real server, no timing nondeterminism. It honors `once` and `signal` on
- * `addEventListener` exactly as the real socket does, so the stream's single-AbortController teardown (which detaches every listener at once) is exercised
- * faithfully.
+ * factory and drive the connection with the `emit*` methods - no network, no real server, no timing nondeterminism. It honors `once` on `addEventListener` and
+ * detaches on `removeEventListener` exactly as the real socket does, so the stream's teardown is exercised through the same surface production runs against.
  */
 export class FakeWebSocket implements AccessWebSocket {
 
@@ -52,9 +54,12 @@ export class FakeWebSocket implements AccessWebSocket {
   // Whether close() has been requested on the socket, for tests that assert the EventStream asked the underlying socket to close.
   closeRequested = false;
 
+  readonly #failsOnClose: boolean;
   readonly #listeners = new Map<string, Set<ListenerEntry>>();
 
   constructor(options: FakeWebSocketOptions = {}) {
+
+    this.#failsOnClose = options.failsOnClose ?? false;
 
     // Open on the next microtask by default, after the EventStream constructor has synchronously attached its listeners.
     if(options.autoOpen ?? true) {
@@ -73,15 +78,20 @@ export class FakeWebSocket implements AccessWebSocket {
     const entry: ListenerEntry = { listener: listener as (event: unknown) => void, once: options.once ?? false };
 
     set.add(entry);
-
-    // The signal detaches the listener on abort - the mechanism the EventStream's one AbortController uses to tear every listener down together.
-    options.signal?.addEventListener("abort", () => set.delete(entry), { once: true });
   }
 
-  /** Request the socket close. Records the request; teardown in EventStream flows through its own close path rather than waiting on a close event here. */
+  /**
+   * Request the socket close. Records the request, and with `failsOnClose` fires the `close` a socket that never finished connecting reports from inside this
+   * call. Without it the close event is left for the test to emit, which is what every row that drives a settled connection wants.
+   */
   close(): void {
 
     this.closeRequested = true;
+
+    if(this.#failsOnClose) {
+
+      this.emitClose(1006, "connection failed");
+    }
   }
 
   /** Fire the `open` event. */
@@ -106,6 +116,33 @@ export class FakeWebSocket implements AccessWebSocket {
   emitError(error?: unknown): void {
 
     this.#dispatch("error", { error });
+  }
+
+  removeEventListener(type: "open", listener: () => void): void;
+  removeEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
+  removeEventListener(type: "close", listener: (event: { code: number; reason: string }) => void): void;
+  removeEventListener(type: "error", listener: (event: { error?: unknown; message?: string }) => void): void;
+  /** Detach a listener by the identity of the function that was registered, which is the only handle the caller is given and the only one it hands back. */
+  removeEventListener(type: string, listener: (event: never) => void): void {
+
+    const set = this.#listeners.get(type);
+
+    if(set === undefined) {
+
+      return;
+    }
+
+    const registered = listener as (event: unknown) => void;
+
+    for(const entry of set) {
+
+      if(entry.listener === registered) {
+
+        set.delete(entry);
+
+        return;
+      }
+    }
   }
 
   // Dispatch an event to every listener registered for the type, removing any that asked to fire only once. We snapshot the set first so a listener that detaches
@@ -158,8 +195,8 @@ export type LoopbackPeerBehavior = "answersClose" | "ignoresClose" | "neverUpgra
 /**
  * One connection the loopback server accepted, as a test observes it.
  *
- * `closed` is armed at accept rather than on demand: severance lands within milliseconds of a client's teardown, so a listener attached after the fact would miss
- * the very event it exists to observe. `alpnProtocol` is read at the same moment, and is what the negotiated-protocol assertion reads.
+ * `closed` is armed at accept rather than on demand, which is what the shared accept-order ledger this peer records into exists for. `alpnProtocol` is read at the
+ * same moment, and is what the negotiated-protocol assertion reads.
  */
 export interface LoopbackConnection {
 
@@ -195,28 +232,23 @@ export interface LoopbackServer extends AsyncDisposable {
  */
 export async function createLoopbackServer(behavior: LoopbackPeerBehavior): Promise<LoopbackServer> {
 
-  const connections: LoopbackConnection[] = [];
+  const ledger = createConnectionLedger<LoopbackConnection>();
   const server = createServer({ ALPNProtocols: [ "h2", "http/1.1" ], cert: loopbackCertificateFixture, key: loopbackPrivateKeyFixture });
   const sockets: TLSSocket[] = [];
-  const waiting = new Map<number, (connection: LoopbackConnection) => void>();
 
   server.on("secureConnection", (socket) => {
 
     const closed = Promise.withResolvers<undefined>();
-    const connection: LoopbackConnection = { alpnProtocol: socket.alpnProtocol, closed: closed.promise };
-    const index = connections.length;
     let buffered = Buffer.alloc(0);
     let upgraded = false;
 
-    connections.push(connection);
     sockets.push(socket);
     socket.once("close", () => closed.resolve(undefined));
 
     // A client severing its end of the connection is the very thing these tests arrange, so the reset it raises here is expected rather than a fault.
     socket.on("error", () => undefined);
 
-    waiting.get(index)?.(connection);
-    waiting.delete(index);
+    ledger.record({ alpnProtocol: socket.alpnProtocol, closed: closed.promise });
 
     socket.on("data", (chunk: Buffer) => {
 
@@ -250,6 +282,7 @@ export async function createLoopbackServer(behavior: LoopbackPeerBehavior): Prom
       // release is the only thing that can end it.
       if((behavior === "answersClose") && hasCloseFrame(buffered)) {
 
+        // A zero-length RFC 6455 close frame: the FIN-set close opcode followed by a zero-length payload.
         socket.end(Buffer.from([ 0x88, 0x00 ]));
       }
     });
@@ -272,21 +305,7 @@ export async function createLoopbackServer(behavior: LoopbackPeerBehavior): Prom
   return {
 
     close,
-    connection: async (index: number): Promise<LoopbackConnection> => {
-
-      const arrived = connections[index];
-
-      if(arrived !== undefined) {
-
-        return arrived;
-      }
-
-      const { promise, resolve } = Promise.withResolvers<LoopbackConnection>();
-
-      waiting.set(index, resolve);
-
-      return promise;
-    },
+    connection: async (index: number): Promise<LoopbackConnection> => ledger.connection(index),
     port,
     [Symbol.asyncDispose]: close
   };

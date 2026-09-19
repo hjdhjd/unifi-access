@@ -2,17 +2,16 @@
  *
  * device.ts: The projection base - a live read-through view over the state store - and the device layer that adds identity and the write-through command surface.
  */
-import type { AccessApiResponse, AccessDeviceConfig, AccessDeviceConfigPayload, Nullable } from "../types/index.ts";
+import type { AccessDeviceConfig, AccessDeviceConfigPayload, Nullable } from "../types/index.ts";
+import type { AccessResponse, HttpMethod } from "../transport/http.ts";
 import type { AccessState, AccessStateDevice } from "../protocol/reducer.ts";
+import { deviceDisplayName, isHub, isTamperCapable as readTamperCapability, tamperState as readTamperState, selectAccessPoints } from "../state/selectors.ts";
 import { deviceRestartEndpoint, deviceSettingsEndpoint } from "./endpoints.ts";
-import { isHub, isTamperCapable as readTamperCapability, tamperState as readTamperState, selectAccessPoints } from "../state/selectors.ts";
 import type { AccessDeviceContext } from "./context.ts";
-import { AccessRequestError } from "../errors.ts";
-import type { AccessResponse } from "../transport/http.ts";
-import type { HttpMethod } from "../transport/http.ts";
+import { readResultEnvelope } from "../protocol/envelope.ts";
 
-// What a refused restart says. The endpoint answers the same result envelope the door commands do, so it reports a refusal the same way and this names the command
-// that drew it.
+// The sentence a refused restart falls back to when the controller sent no message of its own. The endpoint answers the same result envelope the door commands do,
+// so it reports a refusal the same way, and this names the command that drew it.
 const DEVICE_RESTART_REFUSED = "The UniFi Access controller refused the device restart.";
 
 /**
@@ -120,9 +119,9 @@ export abstract class Projection<TConfig> {
  * rather than the device.
  *
  * Commands are **write-through**: they tell the controller to do something and return, without folding the response into the store. State advances only through
- * the reducer's two inputs - the realtime notification stream and the refresh failsafe - so the issuer learns of its own change the way every other subscriber
- * does. The consequence is that a projection reflects a command's effect once the stream (or the next refresh) delivers it, not synchronously after the `await`, so
- * a consumer observes rather than reads back.
+ * the reducer's other inputs - the realtime notification stream and the refresh failsafe - and never through a command's own response, so the issuer learns of
+ * its own change the way every other subscriber does. The consequence is that a projection reflects a command's effect once the stream (or the next refresh)
+ * delivers it, not synchronously after the `await`, so a consumer observes rather than reads back.
  *
  * @category Devices
  */
@@ -138,23 +137,21 @@ export class AccessDevice extends Projection<AccessStateDevice> {
   }
 
   /**
-   * The device's display name: the alias an administrator gave it when there is one, and the controller's own name for the hardware otherwise. The precedence is
-   * the controller interface's own - an alias is what a person chose to call this device, so it wins wherever one is set - and an alias set to the empty string
-   * counts as unset, which is how clearing an alias in the interface reads on the wire.
+   * The device's display name, as {@link deviceDisplayName} answers it: the alias an administrator gave it when there is one, and the controller's own name
+   * for the hardware otherwise. The rule and its rationale live with that selector, so a consumer labelling a device from its record and a handle reading its
+   * own name cannot drift apart.
    *
    * @throws {ReferenceError} If the device is no longer present in the controller state.
    */
   get name(): string {
 
-    const config = this.config;
-
-    return config.alias || config.name;
+    return deviceDisplayName(this.config);
   }
 
   /**
    * Whether the controller currently reports this device as online.
    *
-   * This reads the controller's own `is_online` and nothing else. The record carries neighbouring flags - adopted, managed, connected - that describe how the
+   * This reads the controller's own `is_online` and nothing else. The record carries neighboring flags - adopted, managed, connected - that describe how the
    * device is enrolled rather than whether it is reachable now, and a consumer wanting a stricter definition composes them itself off `config`. Folding them in
    * here would make this getter one consumer's policy rather than the controller's report.
    *
@@ -268,7 +265,7 @@ export class AccessDevice extends Projection<AccessStateDevice> {
 
         echo.record = response.json<AccessDeviceConfig>();
       },
-      operation: "a device configuration write",
+      operation: "a configuration write",
       ...((opts.signal !== undefined) && { signal: opts.signal })
     });
 
@@ -292,7 +289,7 @@ export class AccessDevice extends Projection<AccessStateDevice> {
    * @param opts - Optional abort signal.
    *
    * @throws {@link AccessCapabilityError} when this client has no path that can carry the restart - one held to the official API, which cannot express it, or one
-   *   holding only a token, whose credentials the Access application's own endpoints require. {@link AccessRequestError} when the controller accepts the request but
+   *   holding only a token, whose credentials the Access application's own endpoints require. {@link AccessApiError} when the controller accepts the request but
    *   reports the restart unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
    */
   async restart(opts: { signal?: AbortSignal } = {}): Promise<void> {
@@ -307,7 +304,7 @@ export class AccessDevice extends Projection<AccessStateDevice> {
 
         this.requireDomainSuccess(response, DEVICE_RESTART_REFUSED);
       },
-      operation: "a device restart",
+      operation: "a restart",
       ...((opts.signal !== undefined) && { signal: opts.signal })
     });
   }
@@ -357,26 +354,19 @@ export class AccessDevice extends Projection<AccessStateDevice> {
   /**
    * Read a command's result envelope and throw when the controller reports the operation unsuccessful.
    *
-   * A 2xx means the controller accepted the request and answered; what it answered can still report that the operation did not succeed, and that verdict is in the
-   * envelope rather than in the status. This lives beside the dispatch helper so that every command reading an envelope reads it the same way, rather than each one
-   * spelling out its own idea of what success looks like.
-   *
-   * The thrown error carries the response's real status code, which is what the library's request error is for: this is the controller's own report of a refusal,
-   * not a caller's mistake.
+   * A 2xx means the controller accepted the request and answered; what it answered can still refuse the operation, and that verdict is in the envelope rather than
+   * in the status. The reading belongs to the protocol tier, which is what has every command on either of the controller's APIs judge one envelope the same way
+   * rather than each spelling out its own idea of what success looks like.
    *
    * @param response - The 2xx-classified response to read.
-   * @param message  - The message the thrown error carries, naming the operation that was refused.
+   * @param message  - The sentence the thrown refusal falls back to when the controller sent no message of its own, naming the command that drew it.
    *
-   * @throws {@link AccessRequestError} when the envelope reports anything other than success.
+   * @throws {@link AccessApiError} when the envelope refuses, carrying the controller's own code, its message and its diagnostic, or {@link AccessProtocolError}
+   *   when the body is not a result envelope at all.
    */
   protected requireDomainSuccess(response: AccessResponse, message: string): void {
 
-    const body = response.json<AccessApiResponse>();
-
-    if(body.codeS !== "SUCCESS") {
-
-      throw new AccessRequestError(message, { body: body.msg, headers: {}, statusCode: response.statusCode });
-    }
+    readResultEnvelope(response.json<unknown>(), message);
   }
 
   // The absent-device guard message, naming the device by the identity the caller holds it under.

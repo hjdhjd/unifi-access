@@ -5,8 +5,9 @@
  * realtime channel is declared dead. Asserting them prevents an accidental edit (a misplaced zero, a unit confusion) from silently changing behavior on every
  * consumer.
  */
-import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT, ACCESS_BOOTSTRAP_REFRESH_INTERVAL, ACCESS_EVENTS_HEARTBEAT_TIMEOUT,
-  ACCESS_OFFICIAL_API_PATH_PREFIX, ACCESS_OFFICIAL_API_PORT } from "./settings.ts";
+import { ACCESS_API_ERROR_LIMIT, ACCESS_API_PATH_PREFIX, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT, ACCESS_BOOTSTRAP_REFRESH_INTERVAL,
+  ACCESS_EVENTS_HEARTBEAT_TIMEOUT, ACCESS_OFFICIAL_API_PATH_PREFIX, ACCESS_OFFICIAL_API_PORT, ACCESS_REBOOT_UPTIME_DROP_MINIMUM,
+  ACCESS_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -55,6 +56,15 @@ describe("settings", () => {
     assert.equal(ACCESS_OFFICIAL_API_PATH_PREFIX.endsWith("/"), false, "an endpoint path carries the slash that separates it from the prefix");
   });
 
+  // The direct API's own address below the UniFi OS proxy, which is where every Access application endpoint hangs from. A wrong value here does not degrade
+  // behavior either - it makes the whole direct surface unreachable.
+  test("ACCESS_API_PATH_PREFIX is the application path below the UniFi OS proxy", () => {
+
+    assert.equal(ACCESS_API_PATH_PREFIX, "/proxy/access/api/v2");
+    assert.equal(ACCESS_API_PATH_PREFIX.startsWith("/"), true, "the prefix joins a host, so it carries its own leading slash");
+    assert.equal(ACCESS_API_PATH_PREFIX.endsWith("/"), false, "an endpoint path carries the slash that separates it from the prefix");
+  });
+
   // Coherence of the timing set, not just the individual values. The watchdog window is derived from the controller's own ~5-second heartbeat cadence, so it must
   // leave room for at least one missed beat; and a request deadline that outlived the channel watchdog would let a single wedged request survive the teardown that
   // is supposed to clear it. These relationships are the contract a future retuning has to preserve, so they are asserted rather than left to the comments.
@@ -69,9 +79,9 @@ describe("settings", () => {
     assert.ok((ACCESS_API_RETRY_INTERVAL * 1000) > ACCESS_API_TIMEOUT, "the backoff cooldown must be far longer than the request deadline that feeds it");
   });
 
-  // Sanity: every exported constant must be a finite positive integer. A negative or NaN value would indicate a typo and would corrupt the timing logic in subtle
-  // ways the per-value tests might miss - a unit slip that still satisfies an equality assertion elsewhere, for instance.
-  test("every exported constant is a finite positive integer", () => {
+  // Sanity: each of the timing constants listed below must be a finite positive integer. A negative or NaN value would indicate a typo and would corrupt the
+  // timing logic in subtle ways the per-value tests might miss - a unit slip that still satisfies an equality assertion elsewhere, for instance.
+  test("every timing constant is a finite positive integer", () => {
 
     const values = [
 
@@ -79,7 +89,9 @@ describe("settings", () => {
       [ "ACCESS_API_RETRY_INTERVAL", ACCESS_API_RETRY_INTERVAL ],
       [ "ACCESS_API_TIMEOUT", ACCESS_API_TIMEOUT ],
       [ "ACCESS_BOOTSTRAP_REFRESH_INTERVAL", ACCESS_BOOTSTRAP_REFRESH_INTERVAL ],
-      [ "ACCESS_EVENTS_HEARTBEAT_TIMEOUT", ACCESS_EVENTS_HEARTBEAT_TIMEOUT ]
+      [ "ACCESS_EVENTS_HEARTBEAT_TIMEOUT", ACCESS_EVENTS_HEARTBEAT_TIMEOUT ],
+      [ "ACCESS_REBOOT_UPTIME_DROP_MINIMUM", ACCESS_REBOOT_UPTIME_DROP_MINIMUM ],
+      [ "ACCESS_RECOVERY_STEADY_INTERVAL_MS", ACCESS_RECOVERY_STEADY_INTERVAL_MS ]
     ] as const;
 
     for(const [ name, value ] of values) {

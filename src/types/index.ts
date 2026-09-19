@@ -10,9 +10,10 @@
  * captures taken from live controllers. Access is always evolving and I will attempt to keep up with the changes over time.
  *
  * Each wire record has an **Interface** (the full definition with all properties) and a **Config** type alias. For update payloads, consumers use one of the published
- * `...Payload` aliases, each of which makes every member optional and null-admitting to match what a notification actually carries. The wire-record interfaces include
+ * `...Payload` aliases, each of which makes every member optional and null-admitting to match what a notification actually carries. Most wire-record interfaces include
  * `[key: string]: AccessKnownJsonValue` index signatures so that untyped API fields are accessible without casting, while the fully enumerated value shapes they
- * compose stay closed.
+ * compose stay closed. The event payload interfaces are the exception: each one is deliberately closed and verified complete against captures, rather than carrying
+ * that escape-valve signature.
  *
  * @module AccessTypes
  */

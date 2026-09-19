@@ -18,12 +18,13 @@
  *
  * @module AccessRouting
  */
-import { AccessCapabilityError, AccessOfficialApiError } from "../errors.ts";
+import { AccessApiError, AccessCapabilityError } from "../errors.ts";
 import type { AccessOfficialDoorEntryMethod, AccessOfficialDoorUnlockActor, AccessOfficialDoorUnlockOptions,
   AccessOfficialLockRuleSet } from "../official/spaces.ts";
 import type { AccessOfficialCallOptions } from "../official/dispatch.ts";
 import type { Nullable } from "../types/index.ts";
 import type { StateReader } from "../devices/context.ts";
+import { deviceDisplayName } from "../state/selectors.ts";
 
 /* The official result codes that are capability verdicts rather than faults. Both arrive as ordinary refusals on the request path, and what makes them different is
  * that they describe what this controller or this device can do rather than what went wrong with the call - so they are caught here and folded into the routing
@@ -160,8 +161,8 @@ export interface AccessRoutedUnlockRequest {
 /**
  * One routed lock rule: the rule to put in force, the door it governs, the device that drives that door, and the direct-path expression when the rule has one.
  *
- * `direct` is optional because the rule vocabulary is wider than the direct path can express. The three verbs the direct endpoint accepts supply a callback; the
- * three that only the official API carries supply none, which is what makes "there is no direct fallback for this rule" a fact the type states rather than one the
+ * `direct` is optional because the rule vocabulary is wider than the direct path can express. The verbs the direct endpoint accepts supply a callback; the rest,
+ * which only the official API carries, supply none, which is what makes "there is no direct fallback for this rule" a fact the type states rather than one the
  * service has to be told.
  *
  * @category Client
@@ -206,23 +207,29 @@ export interface AccessRoutingServiceOptions {
  */
 type RoutedCommandKind = "close" | "lockRule" | "stop" | "unlock";
 
-/* A command with no official half: it carries its direct expression and neither an official one nor a kind to file a refusal under. */
+/* A command with no official half: it carries its direct expression and neither an official one nor a kind to file a refusal under. The door is the one a door
+ * command addressed and is absent for a device command, which is how a refusal knows whether to name a door or the device.
+ */
 interface RoutedDirectOperation {
 
   deviceId: string;
   direct: () => Promise<void>;
+  doorId?: string;
   kind?: undefined;
   official?: undefined;
   operation: string;
 }
 
 /* A command with an official half: it carries that half and, required beside it, the kind a refusal is remembered against. Pairing the two in one shape is what
- * makes an official half supplied without its kind fail to compile rather than reach the memo as a blank key.
+ * makes an official half supplied without its kind fail to compile rather than reach the memo as a blank key. The door is required on the same terms: every
+ * command with an official half is a door command, and a refusal names the door it was aimed at, so a half supplied without its door fails to compile rather
+ * than refuse without naming a target.
  */
 interface RoutedOfficialOperation {
 
   deviceId: string;
   direct?: () => Promise<void>;
+  doorId: string;
   kind: RoutedCommandKind;
   official: (official: AccessOfficialDoorSurface) => Promise<void>;
   operation: string;
@@ -299,6 +306,7 @@ export class AccessRoutingService implements AccessRoutingView {
 
       deviceId: request.deviceId,
       direct: officialOnly ? undefined : request.direct,
+      doorId: request.doorId,
       kind: "unlock",
       official: async (official: AccessOfficialDoorSurface): Promise<void> => official.spaces.unlock(request.doorId, officialExtras,
         { ...((request.signal !== undefined) && { signal: request.signal }) }),
@@ -327,7 +335,7 @@ export class AccessRoutingService implements AccessRoutingView {
 
     if(directServes) {
 
-      await this.#route({ deviceId: request.deviceId, direct: request.direct, operation: "a door close" });
+      await this.#route({ deviceId: request.deviceId, direct: request.direct, doorId: request.doorId, operation: "a close" });
 
       return;
     }
@@ -336,10 +344,11 @@ export class AccessRoutingService implements AccessRoutingView {
 
       deviceId: request.deviceId,
       direct: request.direct,
+      doorId: request.doorId,
       kind: "close",
       official: async (official: AccessOfficialDoorSurface): Promise<void> => official.spaces.unlock(request.doorId, { controlCmd: "close" },
         { ...((request.signal !== undefined) && { signal: request.signal }) }),
-      operation: "a door close"
+      operation: "a close"
     });
   }
 
@@ -358,10 +367,11 @@ export class AccessRoutingService implements AccessRoutingView {
     await this.#route({
 
       deviceId: request.deviceId,
+      doorId: request.doorId,
       kind: "stop",
       official: async (official: AccessOfficialDoorSurface): Promise<void> => official.spaces.unlock(request.doorId, { controlCmd: "stop" },
         { ...((request.signal !== undefined) && { signal: request.signal }) }),
-      operation: "a gate stop"
+      operation: "a stop"
     });
   }
 
@@ -378,6 +388,7 @@ export class AccessRoutingService implements AccessRoutingView {
 
       deviceId: request.deviceId,
       ...((request.direct !== undefined) && { direct: request.direct }),
+      doorId: request.doorId,
       kind: "lockRule",
       official: async (official: AccessOfficialDoorSurface): Promise<void> => official.spaces.setLockRule(request.doorId, request.rule,
         { ...((request.signal !== undefined) && { signal: request.signal }) }),
@@ -408,7 +419,6 @@ export class AccessRoutingService implements AccessRoutingView {
    * one and the client is not held away from it; and the capability error where neither is left. The two capability refusals are caught here and nowhere else, which
    * is what keeps a raw result code from ever reaching a consumer as the answer to a routed call - any other official failure is a genuine fault about this request
    * and propagates as itself.
-   * this request and propagates as itself.
    *
    * An operation reaching here with no official half is not a special case, merely one whose official half is absent for this client: it reaches the direct path
    * or the capability error by the same two steps everything else does.
@@ -445,11 +455,12 @@ export class AccessRoutingService implements AccessRoutingView {
       return;
     }
 
-    /* The message names all three things the error's contract promises: the operation, the capability that was missing, and the mode. The mode is appended here
-     * rather than woven into each reason, so every arm carries it and no arm can be written without it.
+    /* The message composes the operation, the target it addressed, the capability that was missing, and the mode, so every arm carries all of them. The target and
+     * the mode are composed here rather than woven into each arm's wording, so every arm carries both and no arm can be written without them - which is also what
+     * lets each operation name itself once, without restating the kind of thing it acts on.
      */
-    throw new AccessCapabilityError("This UniFi Access client cannot carry " + operation.operation + ", because " + this.#absenceReason() +
-      " (connected in " + this.#capabilities.mode + " mode).");
+    throw new AccessCapabilityError("This UniFi Access client cannot carry " + operation.operation + " for " + this.#targetOf(operation) + ", because " +
+      this.#absenceReason() + " (connected in " + this.#capabilities.mode + " mode).");
   }
 
   /* The facade to use for this command on this device, or null when the official path is not available to it. Every gate that can close the official path is read
@@ -471,7 +482,7 @@ export class AccessRoutingService implements AccessRoutingView {
    */
   #foldCapabilitySignal(error: unknown, deviceId: string, kind: RoutedCommandKind): boolean {
 
-    if(!(error instanceof AccessOfficialApiError)) {
+    if(!(error instanceof AccessApiError)) {
 
       return false;
     }
@@ -502,6 +513,25 @@ export class AccessRoutingService implements AccessRoutingView {
   #firmwareOf(deviceId: string): string {
 
     return this.#store.snapshot().devices.get(deviceId)?.firmware ?? "";
+  }
+
+  /* What the refused command addressed, in the words the capability error reports: the door a door command was aimed at, or the device a device command was
+   * aimed at. Each is named as the state names it - a door by its full name, a device by the display name its projection answers with - which is the name the
+   * caller resolved it by, and by its identifier where the state holds no record, the one spelling the caller and the controller still agree on. Reading the
+   * name here rather than taking it from each caller is what keeps every arm naming its target the same way.
+   */
+  #targetOf(operation: RoutedOperation): string {
+
+    const state = this.#store.snapshot();
+
+    if(operation.doorId !== undefined) {
+
+      return "door \"" + (state.doors.get(operation.doorId)?.full_name ?? operation.doorId) + "\"";
+    }
+
+    const device = state.devices.get(operation.deviceId);
+
+    return "device \"" + ((device === undefined) ? operation.deviceId : deviceDisplayName(device)) + "\"";
   }
 
   /* Why no path was left, in the words the capability error reports. The overrides are named ahead of everything else because a client held to one channel is refusing

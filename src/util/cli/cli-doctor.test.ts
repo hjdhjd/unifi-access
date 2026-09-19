@@ -4,14 +4,15 @@
  * Every test runs offline against the structural fake.
  */
 import { describe, test } from "node:test";
-import { makeCommandContext, makeFakeClient, rendered, specimen, withExitCode } from "./cli.helpers.ts";
+import { makeCommandContext, makeFakeClient, parsedJson, rendered, withExitCode } from "./cli.helpers.ts";
 import type { FakeClientSpec } from "./cli.helpers.ts";
 import { accessEventPacketsInteractiveFixture } from "../../protocol/events.fixtures.ts";
 import assert from "node:assert/strict";
 import { doctor } from "./commands/doctor.ts";
+import { findPacket } from "../../protocol/capture.helpers.ts";
 
-const RING = specimen(accessEventPacketsInteractiveFixture, "access.remote_view");
-const LOG_ADD = specimen(accessEventPacketsInteractiveFixture, "access.logs.add");
+const RING = findPacket((packet) => packet.event === "access.remote_view", "an interactive ring", { corpus: accessEventPacketsInteractiveFixture });
+const LOG_ADD = findPacket((packet) => packet.event === "access.logs.add", "an interactive log entry", { corpus: accessEventPacketsInteractiveFixture });
 
 // A healthy credential-mode fixture.
 const healthy: FakeClientSpec = { devices: [{ id: "02ffee000000", name: "Acme Name 6" }], hubIds: ["02ffee000000"],
@@ -31,7 +32,7 @@ async function runDoctor(spec: FakeClientSpec): Promise<{ code: typeof process.e
   const { ctx, lines } = makeCommandContext({ args: ["--json"], calls, client });
   const code = await withExitCode(async () => doctor.run(ctx));
 
-  return { code, report: JSON.parse(lines.join("")) as DoctorReport };
+  return { code, report: parsedJson<DoctorReport>(lines) };
 }
 
 describe("the mode-aware check sets", () => {
@@ -212,6 +213,43 @@ describe("the doctor's carried posture", () => {
     assert.match(row?.detail ?? "", /socket is closed/);
   });
 
+  test("a failing check's detail carries the diagnosis its cause held", async () => {
+
+    // The shared catch every check funnels through. A probe that wraps what it caught keeps the underlying words in the row an operator reads.
+    const { report } = await runDoctor({ ...healthy, doorStatesError: new Error("The door-state rail is unreadable.",
+      { cause: new Error("the hub answered with no ports") }), packets: [RING] });
+    const row = report.results.find((result) => result.name === "Door states");
+
+    assert.equal(row?.status, "fail");
+    assert.equal(row?.detail, "The door-state rail is unreadable: the hub answered with no ports",
+      "the row carries the wrapper's sentence and the cause's words below it");
+  });
+
+  test("a failed connect's detail carries the diagnosis its cause held", async () => {
+
+    const { ctx, lines } = makeCommandContext({ args: ["--json"], openClient: (): never => {
+
+      throw new Error("Unable to authenticate against the UniFi Access controller.", { cause: new Error("the controller refused the credentials") });
+    } });
+
+    await withExitCode(async () => doctor.run(ctx));
+
+    const report = parsedJson<DoctorReport>(lines);
+
+    assert.equal(report.results[0]?.detail, "Unable to authenticate against the UniFi Access controller: the controller refused the credentials",
+      "the connect row carries what the controller actually said");
+  });
+
+  test("the stream window's detail carries the diagnosis its cause held", async () => {
+
+    const { report } = await runDoctor({ ...healthy, streamError: new Error("The notification socket is closed.",
+      { cause: new Error("connect ECONNREFUSED") }) });
+    const row = report.results.find((result) => result.name === "Realtime event firehose");
+
+    assert.equal(row?.status, "fail");
+    assert.equal(row?.detail, "The notification socket is closed: connect ECONNREFUSED", "the firehose row carries the errno the cause held");
+  });
+
   test("a stop during connect ends the run through the cascade", async () => {
 
     const { AccessAbortedError } = await import("../../index.ts");
@@ -244,7 +282,7 @@ describe("the doctor's carried posture", () => {
     } });
 
     const code = await withExitCode(async () => doctor.run(ctx));
-    const report = JSON.parse(lines.join("")) as DoctorReport;
+    const report = parsedJson<DoctorReport>(lines);
 
     assert.equal(report.ok, false);
     assert.equal(code, 1);
@@ -278,6 +316,22 @@ describe("the doctor's carried posture", () => {
 
     await withExitCode(async () => assert.rejects(async () => doctor.run(ctx), AccessAbortedError));
 
+    assert.deepEqual(lines, []);
+    assert.equal(calls.disposals, 1);
+  });
+
+  test("a check that is itself stopped ends through the cascade", async () => {
+
+    const { AccessAbortedError } = await import("../../index.ts");
+    const { calls, client } = makeFakeClient({ ...healthy,
+      doorStatesError: new AccessAbortedError("The door state read was stopped by the caller's signal.") });
+    const { ctx, lines } = makeCommandContext({ args: ["--json"], calls, client });
+
+    await withExitCode(async () => assert.rejects(async () => doctor.run(ctx), AccessAbortedError));
+
+    /* The abort surfaces from inside a check's own body, where the door-state read happens, rather than from the pre-check guard the caller's signal trips or
+     * from the stream window, which swallows its own. The door-state check runs ahead of that window, so the window is never entered at all.
+     */
     assert.deepEqual(lines, []);
     assert.equal(calls.disposals, 1);
   });

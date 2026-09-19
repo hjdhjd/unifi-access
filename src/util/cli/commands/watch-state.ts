@@ -7,6 +7,7 @@ import { COMMON_OPTIONS, boundedSignal, parseDuration, parseNonNegativeInt, take
 import type { CommandHandler, CommandSpec } from "../shared.ts";
 import type { Output } from "../output/format.ts";
 import { alignedList } from "../output/format.ts";
+import { doorName } from "../lookup.ts";
 import { parseArgs } from "node:util";
 import { selectDoorStates } from "../../../index.ts";
 
@@ -73,7 +74,12 @@ function renderStates(output: Output, client: AccessClient, states: ReadonlyMap<
   }
 
   const doors = client.state.snapshot().doors;
-  const rows = [...states.entries()].map(([ id, entry ]) => [ doors.get(id)?.full_name ?? id, describeEntry(entry) ] as const);
+  const rows = [...states.entries()].map(([ id, entry ]) => {
+
+    const door = doors.get(id);
+
+    return [ (door !== undefined) ? doorName(door) : id, describeEntry(entry) ] as const;
+  });
 
   for(const line of alignedList(rows)) {
 

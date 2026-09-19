@@ -3,7 +3,7 @@
  *
  * index.ts: The ufa CLI entry point - argv dispatch, the single Ctrl-C abort controller, and uniform error rendering. The reference consumer of the library.
  */
-import { AccessAbortedError, AccessError } from "../../index.ts";
+import { AccessAbortedError, AccessError, formatErrorChain } from "../../index.ts";
 import { CliError, commandList, isHelpToken, wireAbortSignal } from "./shared.ts";
 import { Output, alignedList } from "./output/format.ts";
 import { loadUfaIdentity, openClient } from "./client.ts";
@@ -79,17 +79,20 @@ function usage(): string {
 }
 
 /**
- * Read the package version for `--version`, relative to this module so it resolves identically whether the CLI runs from source or from the built output.
+ * Read the package version for `--version`, relative to this module so it resolves identically whether the CLI runs from source or from the built output. The
+ * location is a parameter so that a caller can point the read somewhere else.
+ *
+ * @param packageUrl - The package file to read, defaulting to the one beside this module's own output.
  *
  * @returns The package version, or "unknown" when it cannot be read.
  *
  * @category CLI
  */
-export function readVersion(): string {
+export function readVersion(packageUrl: URL = new URL("../../../package.json", import.meta.url)): string {
 
   try {
 
-    const pkg = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: string };
+    const pkg = JSON.parse(readFileSync(packageUrl, "utf8")) as { version?: string };
 
     return pkg.version ?? "unknown";
   } catch {
@@ -118,7 +121,7 @@ export function renderError(error: unknown): void {
 
   if(error instanceof CliError) {
 
-    process.stderr.write("ufa: " + error.message + "\n");
+    process.stderr.write("ufa: " + formatErrorChain(error) + ".\n");
     process.exitCode = error.exitCode;
 
     return;
@@ -126,7 +129,7 @@ export function renderError(error: unknown): void {
 
   if(error instanceof AccessError) {
 
-    process.stderr.write("ufa: " + error.message + "\n");
+    process.stderr.write("ufa: " + formatErrorChain(error) + ".\n");
     process.exitCode = 1;
 
     return;

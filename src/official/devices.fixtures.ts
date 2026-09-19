@@ -1,6 +1,10 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * devices.fixtures.ts: The official API's device and door listings, captured from a live controller and embedded verbatim.
+ *
+ * The controller document the topology fixtures carry was captured on 2026-08-13 and reported UniFi Access v4.3.3+12030, and every capture in this file comes from
+ * that controller. Beyond the v1 in the developer API's path, the payloads carry no schema version of their own, so that application version is what a recapture
+ * is compared against.
  */
 import type { AccessOfficialDevice } from "./devices.ts";
 import type { AccessOfficialDoor } from "./spaces.ts";
@@ -9,8 +13,8 @@ import type { AccessOfficialDoor } from "./spaces.ts";
  * material rather than against a restatement of itself. Nothing here is tidied: key order, casing, and the full capability vocabulary are the controller's own.
  *
  * The nesting is the payload's own. The endpoint groups devices by the door they serve, and every device in a group carries that group's door in `location_id`, so
- * the grouping is recoverable from the records themselves and flattening loses nothing. The three groups are the three doors of the same controller the topology
- * fixtures describe, which is what lets the identity assertions run across both censuses of one site.
+ * the grouping is recoverable from the records themselves and flattening loses nothing. The groups are keyed by the same doors of the same controller the topology
+ * fixtures describe for this capture, which is what lets the identity assertions run across both censuses of one site.
  *
  * The set covers what the projection has to get right: a hub describing itself with an empty `connected_uah_id`, a hub naming its own identifier there, readers
  * naming their hub, an offline device, an unadopted one, and an empty `alias` beside a populated one.

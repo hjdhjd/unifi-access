@@ -4,7 +4,9 @@
  */
 
 /**
- * Pre-built selectors over {@link AccessState}. Every selector is a **pure function returning configuration records**, and every one of them is memoized.
+ * Pre-built selectors over {@link AccessState}. Every selector is a **pure function returning configuration records**, and every selector's result is
+ * reference-stable across a dispatch that did not touch what it reads, whether through this module's memo helper or, where the reducer already guarantees it,
+ * by construction.
  *
  * Memoization is a correctness requirement here, not a performance flourish. An observer detects change with `Object.is`: the reducer keeps a record's reference
  * stable across dispatches that did not touch it, and these selectors keep a *derived* collection's reference stable across dispatches that did not touch the state
@@ -23,6 +25,10 @@
  */
 import type { AccessControllerConfig, AccessDoorStateEntry, Nullable } from "../types/index.ts";
 import type { AccessState, AccessStateDevice, AccessStateRoot } from "../protocol/reducer.ts";
+import type { AccessTerminalInput, AccessTerminalInputFacts } from "../protocol/terminal-inputs.ts";
+import { portExtensionsOf, readPortBindings } from "../protocol/port-bindings.ts";
+import type { AccessPortBinding } from "../protocol/port-bindings.ts";
+import { readTerminalInput } from "../protocol/terminal-inputs.ts";
 
 // The capability string a device carries when it acts as a hub - the controller's own marker for hardware that drives door locks rather than merely reading
 // credentials. It is a capability rather than a device type because the hub role cuts across models: a reader-shaped device can be a hub too.
@@ -261,7 +267,7 @@ export function isTamperCapable(device: AccessStateDevice): boolean {
  * device's own row and revises it there, so a consumer asking what is true right now reads this, while the typed `tamperAlert` activity event announces the incident
  * as it happens. Each answers a different question, and a consumer announcing an alert reads the state separately rather than inferring it from the alert's arrival.
  *
- * The neighbouring `tampering` row is the device's tampering-alert setting, and a live capture on a UA Ultra established what that setting does to the reading
+ * The neighboring `tampering` row is the device's tampering-alert setting, and a live capture on a UA Ultra established what that setting does to the reading
  * beside it: the hardware reports no tamper input while it is off. An enclosure trip made with the setting off moved no row and raised no notification, while the
  * same trip made with it on moved the input row and raised the notification. So a record whose setting row is present and reads anything but `true` answers
  * `undefined` here, its input row being a stale reading rather than a quiet one, while a record carrying no setting row gates nothing, because an absent setting
@@ -312,6 +318,99 @@ export function tamperState(device: AccessStateDevice): boolean | undefined {
   }
 }
 
+/**
+ * What a device reports about one of the terminals on its back: whether the hardware has something in service on it, and what that terminal currently reads.
+ *
+ * The answer is one of three, and the union's own shape is what keeps them apart. A terminal reporting `wired: true` is in service and carries its reading as
+ * `state` wherever one is readable; a terminal reporting `wired: false` is one the hardware says nothing is attached to, and it carries no reading at all, because
+ * a floating input's row is a value nothing has qualified; and an empty object is no evidence either way, which is a different statement from reporting nothing
+ * wired. **Wired means in service**, which the hardware establishes in one of two ways: a live circuit detected on the terminal's own wiring pair, which is what
+ * every model but one reports, or, on a UA Ultra, which detects no circuits at all, the port setting that assigns its one input terminal to a duty.
+ *
+ * Which terminals a device carries is what the captures establish rather than what a model name implies, so this answers per record. A UA Hub carries all four -
+ * its door position sensor, its remote release, its request to enter, and its request to exit. A UA Hub Door Mini and a UA Ultra carry the position sensor and the
+ * request to exit of their one door port. A port of an Enterprise Access Hub carries its own two, and the whole hub carries none that can be named without
+ * ambiguity: eight ports speak the same terminals, so the hub itself answers with no evidence and its per-port access points answer instead. A reader carries
+ * none, and answers nothing for every terminal.
+ *
+ * The absent answer covers the situations a caller wants to tell apart from a terminal with nothing wired to it, and they are deliberately not collapsed together.
+ * The record may carry none of the terminal's keys; it may carry no configuration rows at all, which is every record a token-only census produced, so a token
+ * client reads `{}` here by construction for every terminal; the wiring pair may be only half readable, which is no pair; or the hardware may report neither a
+ * pair nor a duty, which is a UA Ultra whose port setting has never been established.
+ *
+ * This is read live on every call, where the door-state entry a door carries is seeded once from the same hardware and then left to the notification stream. So a
+ * consumer asking what a terminal reports right now reads this, and one asking what the controller last said about a door reads that.
+ *
+ * The reading is refreshed by the topology census and by the controller's original device-update dialect, whose every captured delivery is a full record carrying
+ * the whole row array and the extensions beside it. The newer dialect carries its terminals under a member the canonical merge excludes, so a controller emitting
+ * only that one refreshes this at the periodic topology re-read alone.
+ *
+ * There is no capability predicate beside this the way {@link isTamperCapable} sits beside {@link tamperState}, because no single capability string marks
+ * terminal-bearing hardware across the families - a UA Ultra and a UA Hub carry different ones - so the presence of the keys is the evidence, and it is what this
+ * answers on.
+ *
+ * `on` and `off` are the controller's own vocabulary for what a terminal reads, and the physical sense of a reading is the consumer's to apply: whether a closed
+ * contact reads `on` depends on how an installer wired and mounted it, exactly as the door position polarity does.
+ *
+ * @param device - Any device configuration record (only its configuration rows, its extensions, and its port identity are read).
+ * @param input  - Which terminal to read, from {@link ACCESS_TERMINAL_INPUTS}.
+ *
+ * @returns What the hardware established, with every member whose evidence is absent left out entirely.
+ *
+ * @category State
+ */
+export function terminalInput(device: AccessStateDevice, input: AccessTerminalInput): AccessTerminalInputFacts {
+
+  return readTerminalInput(device, input);
+}
+
+/**
+ * The doors a hub's ports are bound to: one binding per port that names a door, in the order the controller delivered them.
+ *
+ * A hub records which door each of its ports serves as an extension of its own record, and the protocol tier's `readPortBindings` is where which extensions are port
+ * bindings and what one of them says both live. This is that read over the stored record, so a consumer asking which doors a hub drives, the hub handle's own door
+ * resolution, and the access-point expansion all answer from one rule rather than parsing the list separately in each place.
+ *
+ * There are three quite different ways to get an empty list back, and all three are honest. A synthesized per-port access point carries no extensions - the
+ * expansion strips them on the way through - so it answers empty, which is what it should: it already is one port, and its door is that record's own location. A
+ * record a token-only census produced carries no extensions either, so every record answers empty on that client by construction. And single-door hardware that
+ * binds its port through no extension answers empty because there is nothing to answer with, its door likewise being its own location.
+ *
+ * It is re-evaluated on every call rather than memoized, joining {@link tamperState} and {@link terminalInput} in the per-record group the memo discipline does not
+ * cover: the answer is derived from one record a caller already holds rather than being a collection an observer dedups against.
+ *
+ * What a binding means is the consumer's to decide. Which of a multi-door hub's doors is the one it cares about is policy this library holds no opinion about, and
+ * commanding a particular door of such hardware stays the door commands' `doorId` target rather than anything the order of this list implies.
+ *
+ * @param device - Any device configuration record (only its extensions are read).
+ *
+ * @returns The bindings in delivered order, one per port that names a door.
+ *
+ * @category State
+ */
+export function portBindings(device: AccessStateDevice): readonly AccessPortBinding[] {
+
+  return readPortBindings(device);
+}
+
+/**
+ * A device's display name: the alias an administrator gave it when there is one, and the controller's own name for the hardware otherwise.
+ *
+ * The precedence is the controller interface's own - an alias is what a person chose to call this device, so it wins wherever one is set - and an alias set to
+ * the empty string counts as unset, which is how clearing an alias in the interface reads on the wire. The rule lives here, at the record, so the projection's
+ * own name and a routing refusal naming the device it could not serve read one answer rather than each deriving it.
+ *
+ * @param device - Any device configuration record (only its alias and name are read).
+ *
+ * @returns The alias where one is set, and the hardware name otherwise.
+ *
+ * @category State
+ */
+export function deviceDisplayName(device: Pick<AccessStateDevice, "alias" | "name">): string {
+
+  return device.alias || device.name;
+}
+
 // Devices grouped by their device type, memoized on the devices map.
 const devicesByType = memoize<AccessState, ReadonlyMap<string, readonly AccessStateDevice[]>>((state) => [state.devices],
   (state) => groupDevices({ devices: state.devices.values(), keyOf: (device) => device.device_type }));
@@ -337,9 +436,9 @@ const doorDevices = memoize<AccessState, ReadonlyMap<string, readonly AccessStat
  * its siblings nor the raw targeting fields the mapping already consumed. And `name` takes the hub's alias while `alias` takes the door's name, which is the swap
  * that makes each port read as "this door, served by that hub".
  *
- * Every extension of a qualifying hub expands, with no filter on what kind of extension it is. The device-type gate is what scopes the expansion, and it is
- * sufficient: the other extension kind the controller emits belongs to reader hardware, which is never an Enterprise Access Hub. An Enterprise Access Hub carrying
- * something other than a port extension appears in no capture in hand, so the no-filter behavior is what the evidence supports rather than a filter guessed at.
+ * Every port binding of a qualifying hub expands, selected through the same rule the door-identity getter and the published bindings read use, so which extensions are
+ * port bindings is stated once rather than restated at each call site. A port extension naming no door still expands, with the fallbacks below, because the port is
+ * there whether or not a door is bound to it, and an extension of any other kind is not a port and expands into nothing.
  *
  * The scan is scoped to hubs the building hosts directly, matching the root's own identity, which is where every observed Enterprise Access Hub lives. The source
  * records are never touched: this is a read that builds new objects, so the devices map still holds exactly what the controller sent.
@@ -379,14 +478,14 @@ const accessPoints = memoize<RootedAccessState, readonly AccessStateDevice[]>((s
   return expanded;
 });
 
-// Synthesize one access point per extension of a qualifying hub. Both spreads and both destructures carry the weight described above; this is the per-hub half of
-// the expansion, split out so its result can be cached against the record it was built from.
+// Synthesize one access point per port binding of a qualifying hub. Both spreads and both destructures carry the weight described above; this is the per-hub half
+// of the expansion, split out so its result can be cached against the record it was built from.
 function expandPorts(device: AccessStateDevice): readonly AccessStateDevice[] {
 
-  const { extensions = [], alias, display_model: displayModel, location_id: locationId, ...hub } = device;
+  const { extensions: _extensions, alias, display_model: displayModel, location_id: locationId, ...hub } = device;
   const ports: AccessStateDevice[] = [];
 
-  for(const extension of extensions) {
+  for(const extension of portExtensionsOf(device)) {
 
     const { target_name: targetName, target_value: targetValue, ...port } = extension;
 

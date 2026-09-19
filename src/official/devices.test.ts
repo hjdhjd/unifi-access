@@ -1,20 +1,16 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * devices.test.ts: Unit tests for the official API's device domain. The two shapes this domain exists to get right are both asserted here: the grouped device payload
- * the reference's own schema table describes flat, and the access-method map that is sparse rather than complete.
+ * devices.test.ts: Unit tests for the official API's device domain. This domain's non-obvious wire shapes are asserted here: the grouped device payload the
+ * reference's own schema table describes flat, and the access-method map that is sparse rather than complete.
  */
 import type { AccessOfficialAccessMethodFace, AccessOfficialAccessMethodFaceUpdate, AccessOfficialAccessMethodValue } from "./devices.ts";
+import { PATH_ID, PATH_ID_ENCODED, VOID_OK, describeDomainTable, domainRig, officialPath } from "./domain.helpers.ts";
 import { describe, test } from "node:test";
-import { describeDomainTable, domainRig, officialPath } from "./domain.helpers.ts";
 import type { DomainRow } from "./domain.helpers.ts";
 import { OfficialDevices } from "./devices.ts";
 import assert from "node:assert/strict";
 
-const ID = "a b/c";
-const ENCODED = "a%20b%2Fc";
-const VOID_OK = { "code": "SUCCESS", "msg": "success" };
-
-// Transcribed from a live controller: five devices across three per-door groups, trimmed to one device per group.
+// Transcribed from the same live capture as devices.fixtures.ts, trimmed to one representative device per door group.
 const HUB = { "alias": "Acme Name 6", "capabilities": [ "is_hub", "pin_code" ], "connected_uah_id": "", "id": "02ffee000000", "is_adopted": true,
   "is_connected": true, "is_managed": true, "is_online": true, "location_id": "0ace0000-0000-4000-8000-000000000002", "name": "Acme Name 4", "type": "UAH" };
 const ULTRA = { "alias": "Acme Name 3", "capabilities": [ "is_hub", "is_reader" ], "connected_uah_id": "02ffee000001", "id": "02ffee000001",
@@ -34,19 +30,32 @@ const rows: readonly DomainRow<OfficialDevices>[] = [
   { expected: [ [HUB], [ULTRA] ], method: "fetchAll", path: officialPath("/devices") + "?refresh=true", reply: { "code": "SUCCESS",
     "data": [ [HUB], [ULTRA] ], "msg": "success" }, run: async (domain, call) => domain.fetchAll({ refresh: true }, call), verb: "GET" },
 
-  { expected: G2PRO_SETTINGS, method: "fetchSettings", path: officialPath("/devices/" + ENCODED + "/settings"), reply: { "code": "SUCCESS",
-    "data": G2PRO_SETTINGS, "msg": "success" }, run: async (domain, call) => domain.fetchSettings(ID, call), verb: "GET" },
+  // The other side of the cache boundary. A supplied `false` is a caller's answer rather than an absent member, so it serializes rather than dropping, and the
+  // row states the query it produces.
+  { expected: [ [HUB], [ULTRA] ], method: "fetchAll", path: officialPath("/devices") + "?refresh=false", reply: { "code": "SUCCESS",
+    "data": [ [HUB], [ULTRA] ], "msg": "success" }, run: async (domain, call) => domain.fetchAll({ refresh: false }, call), verb: "GET" },
+
+  { expected: G2PRO_SETTINGS, method: "fetchSettings", path: officialPath("/devices/" + PATH_ID_ENCODED + "/settings"), reply: { "code": "SUCCESS",
+    "data": G2PRO_SETTINGS, "msg": "success" }, run: async (domain, call) => domain.fetchSettings(PATH_ID, call), verb: "GET" },
 
   /* The nested body, verbatim. The reference's field table names dotted top-level parameters and string boolean values; its own request sample sends this
    * `access_methods`-wrapped shape with yes and no, and on the read counterpart the live wire sided with the sample.
    */
   { body: "{\"access_methods\":{\"face\":{\"anti_spoofing_level\":\"medium\",\"detect_distance\":\"near\",\"enabled\":\"yes\"},\"nfc\":{\"enabled\":\"no\"}}}",
-    method: "updateSettings", path: officialPath("/devices/" + ENCODED + "/settings"), reply: VOID_OK,
-    run: async (domain, call) => domain.updateSettings(ID, { "access_methods": { face: { "anti_spoofing_level": "medium", "detect_distance": "near", enabled: "yes" },
-      nfc: { enabled: "no" } } }, call), verb: "PUT" },
+    method: "updateSettings", path: officialPath("/devices/" + PATH_ID_ENCODED + "/settings"), reply: VOID_OK,
+    run: async (domain, call) => domain.updateSettings(PATH_ID, { "access_methods": { face: { "anti_spoofing_level": "medium", "detect_distance": "near",
+      enabled: "yes" }, nfc: { enabled: "no" } } }, call), verb: "PUT" },
 
-  { body: "{\"cancel\":false,\"room_name\":\"Lobby\"}", method: "triggerDoorbell", path: officialPath("/devices/" + ENCODED + "/doorbell"), reply: VOID_OK,
-    run: async (domain, call) => domain.triggerDoorbell(ID, { cancel: false, "room_name": "Lobby" }, call), verb: "POST" }
+  { body: "{\"cancel\":false,\"room_name\":\"Lobby\"}", method: "triggerDoorbell", path: officialPath("/devices/" + PATH_ID_ENCODED + "/doorbell"), reply: VOID_OK,
+    run: async (domain, call) => domain.triggerDoorbell(PATH_ID, { cancel: false, "room_name": "Lobby" }, call), verb: "POST" },
+
+  // The cancel that stops a call already ringing, which is the one option whose value changes what the request means rather than which directory it names.
+  { body: "{\"cancel\":true}", method: "triggerDoorbell", path: officialPath("/devices/" + PATH_ID_ENCODED + "/doorbell"), reply: VOID_OK,
+    run: async (domain, call) => domain.triggerDoorbell(PATH_ID, { cancel: true }, call), verb: "POST" },
+
+  // The default options, which serialize to an empty object rather than being omitted: a caller that names neither a directory nor a cancel still sends a body.
+  { body: "{}", method: "triggerDoorbell", path: officialPath("/devices/" + PATH_ID_ENCODED + "/doorbell"), reply: VOID_OK,
+    run: async (domain, call) => domain.triggerDoorbell(PATH_ID, undefined, call), verb: "POST" }
 ];
 
 describeDomainTable({ domainClass: OfficialDevices, name: "OfficialDevices", rows });

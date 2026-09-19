@@ -47,10 +47,11 @@ export interface ScrubContext {
   readonly replacements: Map<ScrubCategory, Map<string, string>>;
 }
 
-/* Several catalog entries below name keys the modeled wire does not carry today - `credentials`, `country_code`, `hashed_password`, `password`, `pin`,
- * `private_key`, `psk`, `public_key`, `serial`, `serial_number`, `session_token`, `url`, `fingerprint`, `latitude`, and `longitude` among them. They are deliberate:
- * the scrub reads the keys a controller actually sends, and a capture exists precisely to carry traffic the model has never seen. Naming them costs nothing and
- * covers the firmware that starts sending one.
+/* Several catalog entries below name keys the modeled wire does not carry today - `avatar_url`, `credentials`, `country_code`, `hashed_password`, `password`,
+ * `pin`, `private_key`, `psk`, `public_key`, `serial`, `serial_number`, `session_token`, `fingerprint`, `latitude`, and `longitude` among them. They are
+ * deliberate: the scrub reads the keys a controller actually sends, and a capture exists precisely to carry traffic the model has never seen. Naming them costs
+ * nothing and covers the firmware that starts sending one. `avatar_url` is such a key by way of the vendor reference rather than a future firmware: the reference
+ * documents an avatar upload answering under it where the controller answers under `url`, so a capture is covered whichever spelling arrives.
  *
  * The catalogs are disjoint, so the order they are consulted in below is presentation rather than precedence.
  */
@@ -81,8 +82,8 @@ const SHARED_NAME_KEYS: ReadonlySet<string> = new Set([
 // keeps one stand-in across them.
 const USERNAME_KEYS: ReadonlySet<string> = new Set([ "ssh_user", "sso_account", "sso_username", "uid_sso_account", "user_name", "username" ]);
 
-// Keys carrying a display name a person chose, pseudonymized to a readable stand-in so a capture still reads as a system rather than a wall of tokens. The two
-// families above are folded in here by construction, so a key that shares a hint is a member of this set without anyone having to keep two lists in step.
+// Keys carrying a display name a person chose, pseudonymized to a readable stand-in so a capture still reads as a system rather than a wall of tokens. Every family
+// listed above is folded in here by construction, so a key that shares a hint is a member of this set without anyone having to keep the lists in step.
 const NAME_KEYS: ReadonlySet<string> = new Set([
 
   ...SHARED_NAME_KEYS, ...USERNAME_KEYS, "alias", "alternate_name", "card_name", "company_name", "first_name", "group_name", "last_name", "nfc_alias", "policy_name",
@@ -152,6 +153,9 @@ const ROW_SUBJECT_MEMBERS: ReadonlyMap<string, string> = new Map([ [ "config_val
 // here at all: the library's own vocabulary answers that question, so the CLI cannot drift from what the wire calls an address.
 const IP_PATTERN = /^(\d{1,3}\.){3}\d{1,3}$/;
 const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+// The mail-address shape is deliberately broad - one at-sign with a dotted authority after it - so that no real address escapes it. That breadth also reads a
+// package-at-version locator such as "eslint@9.0.0" as an address, which is accepted: a controller capture carries no such locator, and a stand-in for a value
+// that was never an address costs nothing where a missed address would leak identity.
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /* An identifier that is entirely twenty-four hexadecimal characters, the width the controller addresses a camera-class device by. One camera's identity arrives
@@ -231,7 +235,9 @@ function scrubMac(context: ScrubContext, value: string): string {
   return value.includes(":") ? (styled.match(/.{2}/g) ?? [styled]).join(":") : styled;
 }
 
-// A synthetic address in TEST-NET-1, the range RFC 5737 reserves for documentation, so nothing in a capture can ever be mistaken for a routable host.
+// A synthetic address in TEST-NET-1, the range RFC 5737 reserves for documentation, so nothing in a capture can ever be mistaken for a routable host. The index wraps
+// at 254 distinct addresses, since that is every host TEST-NET-1 can address; a capture whose real IP vocabulary exceeds that count reuses a stand-in, so two real
+// hosts beyond the wrap can end up sharing one pseudonym.
 function scrubIp(context: ScrubContext, value: string): string {
 
   return remember(context, "ip", value, (index) => "192.0.2." + ((index % 254) + 1).toString());
@@ -272,8 +278,8 @@ function scrubEmail(context: ScrubContext, value: string): string {
   return remember(context, "email", value, (index) => "user-" + (index + 1).toString() + "@example.com");
 }
 
-// A synthetic telephone number. The 555 area code is unassignable and 555-01XX is the block reserved for fiction, so the result is a number that can be printed
-// anywhere and dialed nowhere.
+// A synthetic telephone number. The 555 area code is unassignable, so the result is a number that can be printed anywhere and dialed nowhere; the first hundred distinct
+// numbers minted in a run additionally fall within 555-01XX, the block reserved for fiction, before the suffix rolls past it.
 function scrubPhone(context: ScrubContext, value: string): string {
 
   return remember(context, "phone", value, (index) => "+1555555" + (100 + index).toString().padStart(4, "0"));
@@ -287,9 +293,9 @@ function scrubPlate(context: ScrubContext, value: string): string {
 
 /* A synthetic display name, seeded by the key it arrived under so the result reads as what it is - a `room_name` becomes "Test room_name 1".
  *
- * The memory is keyed by hint and value together, because the same text under two unrelated keys deserves two differently-worded stand-ins. Two families are the
- * exception, each because its several spellings name one thing: every spelling of a login collapses onto one hint, and every key that carries a copy of some
- * record's own name collapses onto another, so an event's actor and that person's user record read as one person afterwards.
+ * The memory is keyed by hint and value together, because the same text under two unrelated keys deserves two differently-worded stand-ins. Each such family is an
+ * exception, because its several spellings name one thing: every spelling of a login collapses onto one hint, and every key that carries a copy of some record's own
+ * name collapses onto another, so an event's actor and that person's user record read as one person afterwards.
  */
 function scrubName(context: ScrubContext, value: string, key: string): string {
 

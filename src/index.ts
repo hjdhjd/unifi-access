@@ -12,15 +12,24 @@
 //     single-source-of-truth rule is enforced by the compiler rather than by documentation.
 //   - Export nothing that is pure composition internals: the `EventBus` facade and the machinery each subsystem is assembled from. They are reachable in source for
 //     the reader, never on the published surface.
+//   - The one published surface outside this file is the test-support entry, `unifi-access/testing` (`src/testing/index.ts`): what a consumer's own test suite
+//     imports and production never does. It is deliberately not re-exported here, so the production/test boundary is a specifier a reader can see.
 //
-// The test the next contributor applies to any new symbol: does a consumer construct or call it (value), receive it (type), or neither (internal)? That keeps this
-// file a deliberate, reviewable contract rather than whatever each module happens to export.
+// The test the next contributor applies to any new symbol: does a consumer construct or call it (value), receive it (type), or neither (internal)? A value only a
+// consumer's own tests call is the one further answer, and it belongs on the testing entry rather than here. That keeps this file a deliberate, reviewable
+// contract rather than whatever each module happens to export.
 
 // Errors - the typed hierarchy. Consumers branch on these with `instanceof`, so they are value exports; the bootstrap-stage and identity-leg tags are types.
-export { AccessAbortedError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError, AccessError, AccessNetworkError,
-  AccessOfficialApiError, AccessProtocolError, AccessRequestError, AccessStallError, AccessThrottledError, AccessTimeoutError, FatalError,
+export { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError, AccessError,
+  AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError, AccessThrottledError, AccessTimeoutError, FatalError,
   RecoverableError } from "./errors.ts";
-export type { AccessBootstrapStage, AccessIdentityLeg, AccessOfficialApiCode } from "./errors.ts";
+export type { AccessApiCode, AccessBootstrapStage, AccessIdentityLeg } from "./errors.ts";
+
+// The rendering a consumer logs a failure through, so the diagnosis a wrapped error carries below the sentence that was caught reaches an operator.
+export { formatErrorChain } from "./errors.ts";
+
+// The reading a consumer branches a refused permission on, whichever spelling the controller answered the refusal in.
+export { isPrivilegeRefusal } from "./errors.ts";
 
 // Logging - the consumer-injectable logger interface and the silent default the library falls back to when a consumer injects none.
 export { noopLog } from "./logging.ts";
@@ -36,9 +45,9 @@ export { AccessClient } from "./client/client.ts";
 export type { AccessClientEvents, ConnectIdentity, ConnectOptions, ConnectOptionsBase } from "./client/client.ts";
 export type { StreamOptions } from "./event-bus.ts";
 
-// Routing - what a client can do, and which of the controller's two APIs its commands take. The capability map is what a consumer receives off the client, and its
-// two vocabularies are what a consumer both reads there and writes as a connect option. The routing service, the view the devices tier receives, and the request
-// shapes those two pass between them are composition internals like every other subsystem: no published signature accepts or returns one.
+// Routing - what a client can do, and which of the controller's APIs its commands take. The capability map is what a consumer receives off the client, and
+// its routing vocabularies are what a consumer both reads there and writes as a connect option. The routing service, the view the devices tier receives,
+// and the request shapes those two pass between them are composition internals like every other subsystem: no published signature accepts or returns one.
 export type { AccessApiMode, AccessApiOverride, AccessCapabilities } from "./client/routing.ts";
 
 // Connection - the observable health surface the client exposes as `client.connection`. Types only: a consumer receives the monitor from the client rather than
@@ -77,14 +86,21 @@ export type { AccessEventsPacketIdKind, AccessEventsPacketNoIdKind } from "./dia
 
 // Vocabulary - the cross-channel translations the controller's own inconsistent spelling makes necessary. Value exports because a consumer calls the folds and reads
 // the reason-code table as free surface, exactly as it does the selectors: the alternative is every consumer re-deriving the same facts about the wire. The address
-// pair is published for the same reason a consumer keys on an address at all: whatever it stored under one spelling, it folds with the library's own rule.
+// pair is published for the same reason a consumer keys on an address at all: whatever it stored under one spelling, it folds with the library's own rule. The
+// terminal vocabulary publishes here on the same terms: a consumer iterating the terminals a hub can report reads the library's own list rather than restating it.
+// The port-binding vocabulary publishes here too, on those same terms: the extension name a consumer holding a raw record selects a port binding on, and the record
+// shape the state tier's own bindings read answers with.
 export { ACCESS_AUTHENTICATION_TYPES, ACCESS_DOORBELL_REASON_CODES, isMacAddress, normalizeActorType, normalizeMacAddress } from "./protocol/vocabulary.ts";
 export type { AccessActorType } from "./protocol/vocabulary.ts";
+export { ACCESS_TERMINAL_INPUTS } from "./protocol/terminal-inputs.ts";
+export type { AccessTerminalInput, AccessTerminalInputFacts } from "./protocol/terminal-inputs.ts";
+export { PORT_EXTENSION } from "./protocol/port-bindings.ts";
+export type { AccessPortBinding } from "./protocol/port-bindings.ts";
 
 // Official API - the facade a consumer reaches through `client.official`, the webhook payload shapes it receives on its own HTTP surface, and the pure function that
-// establishes a delivery is authentic. The facade and its ten domains are types rather than values, because a consumer receives them from the client rather than
+// establishes a delivery is authentic. The facade and its domains are types rather than values, because a consumer receives them from the client rather than
 // constructing them: the client is the one composition root and official access hangs off it rather than beside it, so the token session and the request path
-// underneath stay internal. The two values here are what a consumer calls on its own webhook endpoint, which needs no client at all: the guard that narrows a
+// underneath stay internal. The values here are what a consumer calls on its own webhook endpoint, which needs no client at all: the guard that narrows a
 // parsed body to the delivery union, and the verification that establishes the delivery is authentic.
 export { isAccessWebhookDelivery, verifyWebhookSignature } from "./official/webhooks.ts";
 export type { OfficialAccessPolicies } from "./official/policies.ts";
@@ -144,11 +160,15 @@ export type { AccessOfficialCertificateUpload } from "./official/server.ts";
 // documented exception to composing through the client, for a harness that needs the real engine standalone. The classification predicates are published beside the
 // selectors because they are the one home of device-role qualification - the hub predicates are what the projections rest on - and a consumer re-deriving any of
 // them is the drift the selectors module warns against. The tamper pair publishes here on the same terms: a capability predicate and a per-record read, so that
-// what a record says about tampering has one home rather than being re-derived from the raw configuration rows by every consumer that wants it.
+// what a record says about tampering has one home rather than being re-derived from the raw configuration rows by every consumer that wants it, and the terminal read
+// publishes on those same terms for what a hub reports about the terminals on its back. The display name publishes on the same terms: the alias-over-name rule has one
+// home, read by the projection's own name and by a routing refusal alike, rather than being restated by every consumer that labels a device. The port-binding read
+// publishes on those same terms for which door each of a hub's ports is bound to, so a consumer ranking a multi-door hub's doors reads the list rather than parsing
+// the extensions itself.
 export { createStateStore } from "./state/store.ts";
 export type { StateStore, StateStoreOptions } from "./state/store.ts";
-export { isEnterpriseHubRecord, isHub, isReader, isTamperCapable, selectAccessPoints, selectController, selectControllerName, selectControllerUptime,
-  selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState } from "./state/selectors.ts";
+export { deviceDisplayName, isEnterpriseHubRecord, isHub, isReader, isTamperCapable, portBindings, selectAccessPoints, selectController, selectControllerName,
+  selectControllerUptime, selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState, terminalInput } from "./state/selectors.ts";
 
 // Settings - the externally observable timing and retry constants behind the library's defaults, exposed as documented reference values.
 export { ACCESS_API_ERROR_LIMIT, ACCESS_API_PATH_PREFIX, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT, ACCESS_BOOTSTRAP_REFRESH_INTERVAL,

@@ -6,6 +6,7 @@ import type { AccessOfficialCallOptions, AccessOfficialFileUpload, AccessOfficia
 import { officialEndpoint, officialPageQuery } from "./endpoints.ts";
 import type { AccessOfficialPageOptions } from "./endpoints.ts";
 import type { Nullable } from "../types/index.ts";
+import { officialPages } from "./pages.ts";
 
 /**
  * A license plate registered as a credential.
@@ -341,6 +342,22 @@ export class OfficialCredentials {
   }
 
   /**
+   * Iterate every NFC card, walking the listing to its end. `GET /credentials/nfc_cards/tokens`, permission `view:credential`. Requires UniFi Access 1.22.16 or
+   * later.
+   *
+   * Composed over {@link OfficialCredentials.fetchAllNfcCards}; the endpoint is live-verified.
+   *
+   * @param opts - The page size to walk the listing in.
+   * @param call - The per-call options - an optional abort signal.
+   *
+   * @returns Every card the listing reports, in the order its pages carry them.
+   */
+  async *iterateNfcCards(opts: AccessOfficialPageOptions = {}, call: AccessOfficialCallOptions = {}): AsyncGenerator<AccessOfficialNfcCard> {
+
+    yield* officialPages((page) => this.fetchAllNfcCards(page, call), opts);
+  }
+
+  /**
    * Delete an NFC card. `DELETE /credentials/nfc_cards/tokens/:token`, permission `edit:credential`. Requires UniFi Access 1.22.16 or later.
    *
    * Documentation-derived.
@@ -382,6 +399,21 @@ export class OfficialCredentials {
 
     return this.#dispatch.request<AccessOfficialTouchPass[]>(officialEndpoint(this.#host, "/credentials/touch_passes",
       { ...officialPageQuery(opts), "status": opts.status }), {}, call);
+  }
+
+  /**
+   * Iterate every Touch Pass, walking the listing to its end. `GET /credentials/touch_passes`, permission `view:credential`. Requires UniFi Access 3.2.20 or later.
+   *
+   * Composed over {@link OfficialCredentials.fetchAllTouchPasses}; the endpoint is live-verified.
+   *
+   * @param opts - The status to narrow to, and the page size to walk the listing in.
+   * @param call - The per-call options - an optional abort signal.
+   *
+   * @returns Every pass the listing reports, in the order its pages carry them.
+   */
+  async *iterateTouchPasses(opts: AccessOfficialTouchPassListOptions = {}, call: AccessOfficialCallOptions = {}): AsyncGenerator<AccessOfficialTouchPass> {
+
+    yield* officialPages((page) => this.fetchAllTouchPasses({ ...opts, ...page }, call), opts);
   }
 
   /**

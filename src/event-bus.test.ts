@@ -46,7 +46,7 @@ describe("EventBus", () => {
 
       {
 
-        using _subscription = bus.on("ping", (count) => received.push(count));
+        using subscription = bus.on("ping", (count) => received.push(count));
 
         bus.emit("ping", 1);
       }
@@ -72,8 +72,8 @@ describe("EventBus", () => {
       const first: number[] = [];
       const second: number[] = [];
 
-      using _s1 = bus.on("ping", (count) => first.push(count));
-      using _s2 = bus.on("ping", (count) => second.push(count));
+      using s1 = bus.on("ping", (count) => first.push(count));
+      using s2 = bus.on("ping", (count) => second.push(count));
 
       bus.emit("ping", 7);
 
@@ -87,7 +87,7 @@ describe("EventBus", () => {
 
       assert.equal(bus.emit("ping", 1), false, "emit with no listeners returns false");
 
-      using _subscription = bus.on("ping", () => { /* no-op */ });
+      using subscription = bus.on("ping", () => { /* no-op */ });
 
       assert.equal(bus.emit("ping", 1), true, "emit with a listener returns true");
     });
@@ -117,6 +117,18 @@ describe("EventBus", () => {
       controller.abort();
 
       await assert.rejects(pending, (error: unknown) => (error as Error).name === "AbortError");
+    });
+
+    test("rejects at once when the signal is already aborted", async () => {
+
+      const bus = new EventBus<TestEvents>();
+      const controller = new AbortController();
+
+      controller.abort();
+
+      // A signal that fired before the wait was registered is refused on the spot rather than waited on, which is what keeps a caller that aborts early from
+      // hanging on an emission that will never be looked for.
+      await assert.rejects(bus.once("ping", { signal: controller.signal }), { name: "AbortError" });
     });
   });
 
@@ -159,6 +171,40 @@ describe("EventBus", () => {
       await collector;
 
       assert.deepEqual(received, [ 1, 2 ], "the stream should surface buffered emissions and terminate cleanly on abort");
+    });
+
+    test("refuses an already-aborted signal at the call rather than on iteration", () => {
+
+      const bus = new EventBus<TestEvents>();
+      const controller = new AbortController();
+
+      controller.abort();
+
+      /* node:events' own contract for `on`: an already-aborted signal throws where the iterable is constructed, not where it is first awaited. The client's
+       * firehose relies on exactly that to end quietly - it wraps the construction in the same try its catch reads the aborted signal from, so a consumer that
+       * hands in a spent signal gets an empty loop instead of a throw.
+       */
+      assert.throws(() => bus.stream("ping", { signal: controller.signal }), { name: "AbortError" });
+    });
+
+    test("streams without a signal until the consumer stops iterating", async () => {
+
+      const bus = new EventBus<TestEvents>();
+      const received: number[] = [];
+
+      // No signal at all is the other arm of the options forwarding: the rail receives no options object rather than one carrying an undefined signal.
+      const iterable = bus.stream("ping");
+
+      bus.emit("ping", 1);
+
+      for await (const [count] of iterable) {
+
+        received.push(count);
+
+        break;
+      }
+
+      assert.deepEqual(received, [1]);
     });
   });
 

@@ -165,6 +165,8 @@ The 2.0.0 API is a clean-slate design and is not source-compatible with the 1.x 
 
 Ubiquiti publishes an official API for UniFi Access, and the native interface the Access app itself speaks is broader. This library implements both. The direct API is where realtime notifications and the full topology come from; the official API is the published, token-authenticated surface, implemented as a reference with a typed method for every documented endpoint plus webhook payload types and signature verification, and its device and door listings are what a token-only client's live projections are built from. A client connects with credentials, a token, or both, says what it can do at `client.capabilities`, and routes door commands official-first, with the `api` connect option holding a channel fixed when you need one.
 
+A consumer's own test suite has an entry of its own, `unifi-access/testing`: the webhook signing helper that mints a `Signature` header exactly as the controller does, so a suite can hand its receiver a delivery that verifies without restating the scheme. Nothing on the main surface reaches it, and nothing in production should.
+
 ## Why use this library for UniFi Access support?
 
 In short, because I use it every day to support a [Homebridge](https://homebridge.io) plugin named [homebridge-unifi-access](https://www.npmjs.com/package/homebridge-unifi-access) that I maintain. I package the core API library separately from the plugin so that other open source projects can take advantage of the work that has been done here to understand and decode the UniFi Access API.

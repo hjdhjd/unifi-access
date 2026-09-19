@@ -8,6 +8,7 @@ import { officialEndpoint, officialPageQuery } from "./endpoints.ts";
 import type { AccessOfficialAccessPolicy } from "./policies.ts";
 import type { AccessOfficialPageOptions } from "./endpoints.ts";
 import type { Nullable } from "../types/index.ts";
+import { officialPages } from "./pages.ts";
 
 /**
  * A user account on the controller.
@@ -49,14 +50,13 @@ export interface AccessOfficialUser {
 /**
  * What the registration endpoint echoes back.
  *
- * Against a live controller the echo carries the complete account record, not the four members the reference describes - which makes this another place the
- * documented response understates what the wire sends. The four documented members are required here because the reference claims them and the wire confirms
- * them; the rest are live-verified and optional, pending more specimens than the one this rests on.
+ * Against a live controller the echo carries the complete account record, not the members the reference describes - which makes this another place the documented
+ * response understates what the wire sends. The documented members are required here because the reference claims them and the wire confirms them; the rest are live-
+ * verified and optional, pending more specimens than the one this rests on.
  *
- * This is one account shape observed through two endpoints with different confidence rather than two shapes, so it is derived from {@link
- * AccessOfficialUserGroupMember} rather than restating the same member names beside it. The derivation is what carries the difference: the four the reference
- * documents stay required, and the rest become optional, so each endpoint's own observed confidence is expressed while the names and their types live in one
- * place and cannot drift apart.
+ * This is one account shape observed through two endpoints with different confidence rather than two shapes, so it is derived from {@link AccessOfficialUserGroupMember}
+ * rather than restating the same member names beside it. The derivation is what carries the difference: the members the reference documents stay required, and the rest
+ * become optional, so each endpoint's own observed confidence is expressed while the names and their types live in one place and cannot drift apart.
  *
  * Live-verified.
  *
@@ -120,15 +120,16 @@ export interface AccessOfficialUserGroup {
 }
 
 /**
- * Where a user's uploaded profile picture now lives.
+ * Where a user's uploaded profile picture lives. The answer carries the stored image's controller-relative path under `url`; the vendor reference documents that
+ * member as `avatar_url`, and what the wire sends is what this declares.
  *
- * Documentation-derived.
+ * Live-verified (2026-09-18): an upload answered one `url` member carrying a controller-relative path.
  *
  * @category Official
  */
 export interface AccessOfficialUserAvatar {
 
-  readonly avatar_url: string;
+  readonly url: string;
 }
 
 /**
@@ -328,6 +329,21 @@ export class OfficialUsers {
   async fetchAll(opts: AccessOfficialUserListOptions = {}, call: AccessOfficialCallOptions = {}): Promise<AccessOfficialResult<AccessOfficialUser[]>> {
 
     return this.#dispatch.request<AccessOfficialUser[]>(officialEndpoint(this.#host, "/users", { ...officialPageQuery(opts), "expand[]": opts.expand }), {}, call);
+  }
+
+  /**
+   * Iterate every user, walking the listing to its end. `GET /users`, permission `view:user`.
+   *
+   * Composed over {@link OfficialUsers.fetchAll}; the endpoint is live-verified.
+   *
+   * @param opts - The expansions to request, and the page size to walk the listing in.
+   * @param call - The per-call options - an optional abort signal.
+   *
+   * @returns Every user the listing reports, in the order its pages carry them.
+   */
+  async *iterateAll(opts: AccessOfficialUserListOptions = {}, call: AccessOfficialCallOptions = {}): AsyncGenerator<AccessOfficialUser> {
+
+    yield* officialPages((page) => this.fetchAll({ ...opts, ...page }, call), opts);
   }
 
   /**
@@ -605,17 +621,33 @@ export class OfficialUsers {
   /**
    * Search users. `GET /users/search`, permission `view:user`. Requires UniFi Access 3.1.30 or later.
    *
-   * Documentation-derived.
+   * Live-verified (2026-09-07): the keyword matches case-insensitively as a substring of the first name, the last name, and the full name; the answer carries no
+   * pagination member, so a walk over it ends after its first page.
    *
    * @param opts - The search terms and the page to fetch.
    * @param call - The per-call options - an optional abort signal.
    *
-   * @returns The page of matches, and the pagination describing it.
+   * @returns The page of matches; pagination is not reported by this endpoint.
    */
   async search(opts: AccessOfficialUserSearchOptions = {}, call: AccessOfficialCallOptions = {}): Promise<AccessOfficialResult<AccessOfficialUserSearchResult[]>> {
 
     return this.#dispatch.request<AccessOfficialUserSearchResult[]>(officialEndpoint(this.#host, "/users/search", { ...officialPageQuery(opts),
       "keyword": opts.keyword, "only_admin": opts.onlyAdmin, "status": opts.status, "user_id": opts.userId }), {}, call);
+  }
+
+  /**
+   * Iterate every user a search matches, walking the matches to their end. `GET /users/search`, permission `view:user`. Requires UniFi Access 3.1.30 or later.
+   *
+   * Composed over {@link OfficialUsers.search}; the endpoint is live-verified and answers no pagination member, so the walk ends after one page.
+   *
+   * @param opts - The search terms, and the page size to walk the matches in.
+   * @param call - The per-call options - an optional abort signal.
+   *
+   * @returns Every match the search reports, in the order its pages carry them.
+   */
+  async *iterateSearch(opts: AccessOfficialUserSearchOptions = {}, call: AccessOfficialCallOptions = {}): AsyncGenerator<AccessOfficialUserSearchResult> {
+
+    yield* officialPages((page) => this.search({ ...opts, ...page }, call), opts);
   }
 
   /**
@@ -705,7 +737,7 @@ export class OfficialUsers {
    *
    * Supported for local users only - an account backed by a UI account updates its picture through the UI account interface instead.
    *
-   * Documentation-derived.
+   * Live-verified (2026-09-18): a multipart upload sending the image under the field `file` answered the stored picture's location under `url`.
    *
    * @param id   - The user's identifier.
    * @param opts - The image bytes and the name to send them under.

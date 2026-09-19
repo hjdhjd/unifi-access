@@ -8,10 +8,10 @@
 
 The access methods a device offers, keyed by method.
 
-This map is SPARSE, and every member is optional for that reason: a device reports only the methods its hardware class has. A UA Ultra reports four, a G2
-Pro seven, and a UA Hub none at all - it answers with an empty map. So an absent key means the device cannot do that method, NOT that the method is switched
-off; reading absence as disabled is the misreading this type exists to prevent, and the two are distinguished by whether the key is there rather than by its
-value.
+This map is SPARSE, and every member is optional for that reason: a device reports only the methods its hardware class has, and a class with nothing to report
+answers with an empty map. Coverage ranges from that empty map up to the full set this type declares. So an absent key means the device cannot do that method,
+NOT that the method is switched off; reading absence as disabled is the misreading this type exists to prevent, and the two are distinguished by whether the
+key is there rather than by its value.
 
 Live-verified.
 

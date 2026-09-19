@@ -6,26 +6,20 @@
  *
  * Everything runs against an undici MockAgent through the real transport, so the request travels the same path a live official call would, without a controller.
  */
-import { AccessAuthorizationError, AccessNetworkError, AccessOfficialApiError, AccessProtocolError, AccessRequestError } from "../errors.ts";
-import { HOST, RecordingTransport, parseMultipart } from "./domain.helpers.ts";
+import { AccessApiError, AccessAuthorizationError, AccessNetworkError, AccessProtocolError, AccessRequestError } from "../errors.ts";
+import { HOST, RecordingTransport, captureRequest, officialPath, parseMultipart } from "./domain.helpers.ts";
+import { assertRejectsWith, present } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { officialEndpoint, officialHost } from "./endpoints.ts";
-import { ACCESS_OFFICIAL_API_PATH_PREFIX } from "../settings.ts";
 import type { AccessKnownJsonValue } from "../types/index.ts";
 import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
 import { OfficialDispatch } from "./dispatch.ts";
+import { TestClock } from "homebridge-plugin-utils/testing";
 import { Transport } from "../transport/http.ts";
 import assert from "node:assert/strict";
 import { createHttpsLoopback } from "../transport/loopback.helpers.ts";
-import { fakeClock } from "../testing.helpers.ts";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
-
-// The path an interception matches, which is the application prefix plus the endpoint's own path - the portion of an official URL below the origin.
-function officialPath(path: string): string {
-
-  return ACCESS_OFFICIAL_API_PATH_PREFIX + path;
-}
 
 /* Build a dispatch over a mocked official controller.
  *
@@ -39,6 +33,11 @@ function officialRig(): { dispatch: OfficialDispatch; pool: Interceptable } {
 
   return { dispatch: new OfficialDispatch({ transport }), pool };
 }
+
+/* The sentence the dispatch composes when a refusal arrives carrying no message of its own. It is spelled once here so the tests that assert it - one per dialect -
+ * measure sameness against a single literal rather than each asserting that some message or other was produced.
+ */
+const FALLBACK_REFUSAL_MESSAGE = "The UniFi Access controller refused an official API request without explaining why.";
 
 describe("OfficialDispatch", () => {
 
@@ -115,6 +114,24 @@ describe("OfficialDispatch", () => {
 
       await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), AccessProtocolError);
     });
+
+    test("unwraps a native-dialect success, its payload and its page report alike", async () => {
+
+      const { dispatch, pool } = officialRig();
+
+      /* No capture of a success in this dialect is in hand. The rule asserted here is the one the direct half of this library has always applied to the same
+       * spelling: the vocabulary string in `codeS` is what reports the outcome, so a `codeS` of "SUCCESS" is a success whatever the numeric code beside it says.
+       * Stating it in a test is what lets a future live observation falsify it.
+       */
+      pool.intercept({ method: "GET", path: officialPath("/users") })
+        .reply(200, { "code": 200, "codeS": "SUCCESS", "data": [ { "id": "abc" }, { "id": "def" } ], "msg": "success",
+          "pagination": { "page_num": 1, "page_size": 2, "total": 2 } });
+
+      const result = await dispatch.request<{ id: string }[]>(officialEndpoint(HOST, "/users"));
+
+      assert.deepEqual(result.data, [ { id: "abc" }, { id: "def" } ]);
+      assert.deepEqual(result.pagination, { "page_num": 1, "page_size": 2, "total": 2 });
+    });
   });
 
   describe("pagination", () => {
@@ -186,21 +203,22 @@ describe("OfficialDispatch", () => {
       pool.intercept({ method: "GET", path: officialPath("/doors/nope") })
         .reply(200, { "code": "CODE_RESOURCE_NOT_FOUND", "msg": "The requested resource was not found." });
 
-      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors/nope")), (error: unknown) => {
+      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/doors/nope")), AccessApiError, { check: (error) => {
 
-        assert.ok(error instanceof AccessOfficialApiError);
         assert.equal(error.code, "CODE_RESOURCE_NOT_FOUND");
         assert.equal(error.message, "The requested resource was not found.");
 
-        return true;
-      });
+        // The documented dialect carries no diagnostic member, so there is nothing to report as a detail, and no refusal of either dialect chains an exception.
+        assert.equal(error.cause, undefined);
+        assert.equal(error.detail, undefined);
+      } });
     });
 
     test("tells the two capability signals apart by their code rather than by their message", async () => {
 
       const { dispatch, pool } = officialRig();
 
-      /* These two codes are what a capability layer routes on: one says the official API does not exist on this controller at all, the other says the addressed
+      /* These two codes are what this test distinguishes by: one says the official API does not exist on this controller at all, the other says the addressed
        * device is below the endpoint's firmware floor. Both responses here carry the identical message, so a consumer that read the message could not tell them
        * apart, and only the typed code distinguishes them.
        */
@@ -212,8 +230,8 @@ describe("OfficialDispatch", () => {
       const identityLocked = await dispatch.request(officialEndpoint(HOST, "/doors")).catch((error: unknown) => error);
       const belowFloor = await dispatch.request(officialEndpoint(HOST, "/devices/abc/settings")).catch((error: unknown) => error);
 
-      assert.ok(identityLocked instanceof AccessOfficialApiError);
-      assert.ok(belowFloor instanceof AccessOfficialApiError);
+      assert.ok(identityLocked instanceof AccessApiError, "the identity-locked refusal is an official API error");
+      assert.ok(belowFloor instanceof AccessApiError, "the below-floor refusal is an official API error");
       assert.equal(identityLocked.message, belowFloor.message, "the messages are identical, so the code is the only thing telling these apart");
       assert.equal(identityLocked.code, "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED");
       assert.equal(belowFloor.code, "CODE_DEVICE_API_NOT_SUPPORTED");
@@ -227,13 +245,10 @@ describe("OfficialDispatch", () => {
       // and intact rather than being flattened into a generic failure.
       pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "code": "CODE_SOMETHING_UNDOCUMENTED", "msg": "Something went wrong." });
 
-      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), (error: unknown) => {
+      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/doors")), AccessApiError, { check: (error) => {
 
-        assert.ok(error instanceof AccessOfficialApiError);
         assert.equal(error.code, "CODE_SOMETHING_UNDOCUMENTED");
-
-        return true;
-      });
+      } });
     });
 
     test("still says something when a refusal arrives without a message", async () => {
@@ -242,14 +257,85 @@ describe("OfficialDispatch", () => {
 
       pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "code": "CODE_SYSTEM_ERROR" });
 
-      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), (error: unknown) => {
+      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/doors")), AccessApiError, { check: (error) => {
 
-        assert.ok(error instanceof AccessOfficialApiError);
         assert.equal(error.code, "CODE_SYSTEM_ERROR");
-        assert.ok(error.message.length > 0, "an error with an empty message tells its reader nothing");
+        assert.equal(error.message, FALLBACK_REFUSAL_MESSAGE);
+      } });
+    });
 
-        return true;
-      });
+    test("reads a native-dialect refusal, carrying the controller's code, its message and its diagnostic", async () => {
+
+      const { dispatch, pool } = officialRig();
+
+      /* The envelope a live controller answered an avatar upload with, reproduced verbatim: the result code as a number with the vocabulary string beside it in
+       * `codeS`, the controller's own diagnostic in `error` saying what it actually objected to where `msg` says only that the image was invalid, and a `source`
+       * member nothing in this library reads.
+       */
+      pool.intercept({ method: "POST", path: officialPath("/users/abc/profile_picture") })
+        .reply(200, { "code": 180005, "codeS": "CODE_USER_IMAGE_INVALID",
+          "error": "CODE[180005];Mesg:Invalid img file format;CauseBy:image: unknown format", "msg": "Invalid image.", "source": "" });
+
+      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/users/abc/profile_picture"), { method: "POST" }), AccessApiError,
+        { check: (error) => {
+
+          assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
+          assert.equal(error.message, "Invalid image.");
+          assert.equal(error.detail, "CODE[180005];Mesg:Invalid img file format;CauseBy:image: unknown format");
+
+          // The diagnostic is a fact the controller reported, not an exception this library caught, so it reaches the caller as a detail and the chain stays empty.
+          assert.equal(error.cause, undefined);
+        } });
+    });
+
+    test("falls back to the same sentence when a native-dialect refusal arrives without a message", async () => {
+
+      const { dispatch, pool } = officialRig();
+
+      // A refusal carrying neither member: the message falls back exactly as it does in the documented dialect, and an absent diagnostic is reported as absent.
+      pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "code": 180005, "codeS": "CODE_USER_IMAGE_INVALID" });
+
+      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/doors")), AccessApiError, { check: (error) => {
+
+        assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
+        assert.equal(error.message, FALLBACK_REFUSAL_MESSAGE);
+        assert.equal(error.detail, undefined);
+      } });
+    });
+
+    test("reports no diagnostic when a native-dialect refusal's error member is not a string", async () => {
+
+      const { dispatch, pool } = officialRig();
+
+      // A stringified object would be a detail no reader could use, so a member that is not a string reads as no diagnostic at all - and the code and the
+      // message still read exactly as the capture carries them.
+      pool.intercept({ method: "POST", path: officialPath("/users/abc/profile_picture") })
+        .reply(200, { "code": 180005, "codeS": "CODE_USER_IMAGE_INVALID", "error": {}, "msg": "Invalid image." });
+
+      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/users/abc/profile_picture"), { method: "POST" }), AccessApiError,
+        { check: (error) => {
+
+          assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
+          assert.equal(error.message, "Invalid image.");
+          assert.equal(error.detail, undefined);
+        } });
+    });
+
+    test("reports no diagnostic when a native-dialect refusal's error member is empty", async () => {
+
+      const { dispatch, pool } = officialRig();
+
+      // An empty string says nothing the message does not already say, so it reads as no diagnostic rather than as a detail a caller would render as a blank.
+      pool.intercept({ method: "POST", path: officialPath("/users/abc/profile_picture") })
+        .reply(200, { "code": 180005, "codeS": "CODE_USER_IMAGE_INVALID", "error": "", "msg": "Invalid image." });
+
+      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/users/abc/profile_picture"), { method: "POST" }), AccessApiError,
+        { check: (error) => {
+
+          assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
+          assert.equal(error.message, "Invalid image.");
+          assert.equal(error.detail, undefined);
+        } });
     });
   });
 
@@ -272,6 +358,28 @@ describe("OfficialDispatch", () => {
       // A document that parses but is not an envelope has no code to read, so there is nothing to say whether it succeeded. Treating it as a success would publish
       // whatever it happened to contain as the endpoint's result.
       pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "doors": [] });
+
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), AccessProtocolError);
+    });
+
+    test("throws a protocol error on a numeric result code carrying no vocabulary string beside it", async () => {
+
+      const { dispatch, pool } = officialRig();
+
+      // The native dialect is the numeric code AND the vocabulary string together. A number on its own leaves nothing to classify the outcome by and nothing to
+      // hand the typed error, so it is a document rather than an envelope.
+      pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "code": 180005 });
+
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), AccessProtocolError);
+    });
+
+    test("throws a protocol error when the vocabulary string is present but is not a string", async () => {
+
+      const { dispatch, pool } = officialRig();
+
+      // Reading this through the documented arm would hand the classification a `codeS` of 42 to report as the code. The presence of the member decides the arm,
+      // so once it is there its own type has to hold.
+      pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "code": "SUCCESS", "codeS": 42, "data": {} });
 
       await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), AccessProtocolError);
     });
@@ -320,7 +428,7 @@ function recordingRig(): { dispatch: OfficialDispatch; pool: Interceptable; tran
 
   agent.disableNetConnect();
 
-  const transport = new RecordingTransport({ clock: fakeClock(), dispatcher: agent, host: officialHost(HOST) });
+  const transport = new RecordingTransport({ clock: new TestClock(), dispatcher: agent, host: officialHost(HOST) });
 
   return { dispatch: new OfficialDispatch({ transport }), pool: agent.get("https://" + officialHost(HOST)), transport };
 }
@@ -355,13 +463,25 @@ describe("OfficialDispatch: the void-mutation arm", () => {
     pool.intercept({ method: "DELETE", path: officialPath("/users/abc") }).reply(200, { "code": "CODE_OPERATION_FORBIDDEN",
       "msg": "The requested operation is not allowed." });
 
-    await assert.rejects(dispatch.command(officialEndpoint(HOST, "/users/abc"), { method: "DELETE" }), (error: unknown) => {
+    await assertRejectsWith(dispatch.command(officialEndpoint(HOST, "/users/abc"), { method: "DELETE" }), AccessApiError, { check: (error) => {
 
-      assert.ok(error instanceof AccessOfficialApiError);
       assert.equal(error.code, "CODE_OPERATION_FORBIDDEN");
+    } });
+  });
 
-      return true;
-    });
+  test("throws the typed official error on a native-dialect refusal, exactly as it does on a documented one", async () => {
+
+    const { dispatch, pool } = officialRig();
+
+    // A refusal is the same event whatever the caller expected back and whichever dialect it arrived in, so this arm classifies it through the same chokepoint.
+    pool.intercept({ method: "DELETE", path: officialPath("/users/abc") }).reply(200, { "code": 180005, "codeS": "CODE_USER_IMAGE_INVALID",
+      "msg": "Invalid image." });
+
+    await assertRejectsWith(dispatch.command(officialEndpoint(HOST, "/users/abc"), { method: "DELETE" }), AccessApiError, { check: (error) => {
+
+      assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
+      assert.equal(error.message, "Invalid image.");
+    } });
   });
 
   test("throws a protocol error on a document that is not an envelope", async () => {
@@ -395,13 +515,26 @@ describe("OfficialDispatch: the binary arm", () => {
     pool.intercept({ method: "GET", path: officialPath("/credentials/qr_codes/download/v-1") }).reply(200, { "code": "CODE_RESOURCE_NOT_FOUND",
       "msg": "The requested resource was not found." }, { headers: { "content-type": "application/json" } });
 
-    await assert.rejects(dispatch.download(officialEndpoint(HOST, "/credentials/qr_codes/download/v-1")), (error: unknown) => {
+    await assertRejectsWith(dispatch.download(officialEndpoint(HOST, "/credentials/qr_codes/download/v-1")), AccessApiError, { check: (error) => {
 
-      assert.ok(error instanceof AccessOfficialApiError);
       assert.equal(error.code, "CODE_RESOURCE_NOT_FOUND");
+    } });
+  });
 
-      return true;
-    });
+  test("throws the typed official error when a binary endpoint answers a native-dialect refusal", async () => {
+
+    const { dispatch, pool } = officialRig();
+
+    // The dialect a refusal is spelled in is no more the binary arm's business than the caller's, so this classifies exactly as the typed read and the void
+    // mutation do.
+    pool.intercept({ method: "GET", path: officialPath("/credentials/qr_codes/download/v-1") }).reply(200, { "code": 180005,
+      "codeS": "CODE_USER_IMAGE_INVALID", "msg": "Invalid image." }, { headers: { "content-type": "application/json" } });
+
+    await assertRejectsWith(dispatch.download(officialEndpoint(HOST, "/credentials/qr_codes/download/v-1")), AccessApiError, { check: (error) => {
+
+      assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
+      assert.equal(error.message, "Invalid image.");
+    } });
   });
 
   test("throws a protocol error when a binary endpoint answers a success envelope", async () => {
@@ -426,13 +559,10 @@ describe("OfficialDispatch: the binary arm", () => {
     pool.intercept({ method: "GET", path: officialPath("/credentials/qr_codes/download/v-1") }).reply(200, { "code": "CODE_RESOURCE_NOT_FOUND",
       "msg": "The requested resource was not found." }, { headers: { "content-type": [ "application/json", "application/json" ] } });
 
-    await assert.rejects(dispatch.download(officialEndpoint(HOST, "/credentials/qr_codes/download/v-1")), (error: unknown) => {
+    await assertRejectsWith(dispatch.download(officialEndpoint(HOST, "/credentials/qr_codes/download/v-1")), AccessApiError, { check: (error) => {
 
-      assert.ok(error instanceof AccessOfficialApiError);
       assert.equal(error.code, "CODE_RESOURCE_NOT_FOUND");
-
-      return true;
-    });
+    } });
 
     pool.intercept({ method: "GET", path: officialPath("/credentials/qr_codes/download/v-1") }).reply(200, { "code": "SUCCESS", "data": "success",
       "msg": "success" }, { headers: { "content-type": [ "application/json", "application/json" ] } });
@@ -507,26 +637,17 @@ describe("OfficialDispatch: outbound encoding", () => {
     test("frames " + kind + " part into a multipart body its own content type describes", async () => {
 
       const { dispatch, pool } = officialRig();
-
-      let seen: { body: Buffer; contentType: string } | undefined;
-
-      pool.intercept({ method: "POST", path: officialPath("/credentials/nfc_cards/import") }).reply((request) => {
-
-        seen = { body: Buffer.from((request.body ?? "") as string), contentType: ((request.headers ?? {}) as Record<string, string>)["content-type"] ?? "" };
-
-        return { data: { "code": "SUCCESS", "msg": "success" }, responseOptions: { headers: {} }, statusCode: 200 };
-      });
+      const seen = captureRequest(pool, { method: "POST", path: officialPath("/credentials/nfc_cards/import") },
+        { data: { "code": "SUCCESS", "msg": "success" } });
 
       await dispatch.command(officialEndpoint(HOST, "/credentials/nfc_cards/import"),
         { form: [{ data, field: "file", filename: "cards.csv" }], method: "POST" });
 
-      assert.ok(seen);
-
       // The boundary is minted per request, so the assertions read the body back through the boundary the request itself declared - a body framed with one
       // boundary and announced with another would parse to nothing here.
-      assert.match(seen.contentType, (/^multipart\/form-data; boundary=/));
+      assert.match(seen().headers["content-type"] ?? "", (/^multipart\/form-data; boundary=/));
 
-      const parts = parseMultipart(seen.body, seen.contentType);
+      const parts = parseMultipart(seen().body, seen().headers["content-type"] ?? "");
 
       assert.equal(parts.length, 1);
       assert.equal(parts[0]?.field, "file");
@@ -549,21 +670,13 @@ describe("OfficialDispatch: outbound encoding", () => {
       everyOctet[value] = value;
     }
 
-    let seen: { body: Buffer; contentType: string } | undefined;
-
-    pool.intercept({ method: "POST", path: officialPath("/credentials/nfc_cards/import") }).reply((request) => {
-
-      seen = { body: Buffer.from((request.body ?? "") as Uint8Array), contentType: ((request.headers ?? {}) as Record<string, string>)["content-type"] ?? "" };
-
-      return { data: { "code": "SUCCESS", "msg": "success" }, responseOptions: { headers: {} }, statusCode: 200 };
-    });
+    const seen = captureRequest(pool, { method: "POST", path: officialPath("/credentials/nfc_cards/import") },
+      { data: { "code": "SUCCESS", "msg": "success" } });
 
     await dispatch.command(officialEndpoint(HOST, "/credentials/nfc_cards/import"),
       { form: [{ data: everyOctet, field: "file", filename: "all-values.bin" }], method: "POST" });
 
-    assert.ok(seen);
-
-    const parts = parseMultipart(seen.body, seen.contentType);
+    const parts = parseMultipart(seen().body, seen().headers["content-type"] ?? "");
 
     assert.equal(parts.length, 1);
     assert.deepEqual(parts[0]?.data, Buffer.from(everyOctet));
@@ -573,22 +686,12 @@ describe("OfficialDispatch: outbound encoding", () => {
 
     // An empty file is a real upload rather than an absent one, so it has to arrive as a part carrying no bytes rather than as no part at all.
     const { dispatch, pool } = officialRig();
-
-    let seen: { body: Buffer; contentType: string } | undefined;
-
-    pool.intercept({ method: "POST", path: officialPath("/users/abc/avatar") }).reply((request) => {
-
-      seen = { body: Buffer.from((request.body ?? "") as string), contentType: ((request.headers ?? {}) as Record<string, string>)["content-type"] ?? "" };
-
-      return { data: { "code": "SUCCESS", "msg": "success" }, responseOptions: { headers: {} }, statusCode: 200 };
-    });
+    const seen = captureRequest(pool, { method: "POST", path: officialPath("/users/abc/avatar") }, { data: { "code": "SUCCESS", "msg": "success" } });
 
     await dispatch.command(officialEndpoint(HOST, "/users/abc/avatar"),
       { form: [ { data: new Uint8Array(0), field: "empty", filename: "empty.bin" }, { data: "after", field: "after", filename: "after.txt" } ], method: "POST" });
 
-    assert.ok(seen);
-
-    const parts = parseMultipart(seen.body, seen.contentType);
+    const parts = parseMultipart(seen().body, seen().headers["content-type"] ?? "");
 
     assert.deepEqual(parts.map((part) => part.field), [ "empty", "after" ]);
     assert.equal(parts[0]?.data.length, 0);
@@ -598,43 +701,24 @@ describe("OfficialDispatch: outbound encoding", () => {
   test("frames a request with no parts as a body carrying only its own terminator", async () => {
 
     const { dispatch, pool } = officialRig();
-
-    let seen: { body: Buffer; contentType: string } | undefined;
-
-    pool.intercept({ method: "POST", path: officialPath("/users/abc/avatar") }).reply((request) => {
-
-      seen = { body: Buffer.from((request.body ?? "") as string), contentType: ((request.headers ?? {}) as Record<string, string>)["content-type"] ?? "" };
-
-      return { data: { "code": "SUCCESS", "msg": "success" }, responseOptions: { headers: {} }, statusCode: 200 };
-    });
+    const seen = captureRequest(pool, { method: "POST", path: officialPath("/users/abc/avatar") }, { data: { "code": "SUCCESS", "msg": "success" } });
 
     await dispatch.command(officialEndpoint(HOST, "/users/abc/avatar"), { form: [], method: "POST" });
 
-    assert.ok(seen);
-    assert.match(seen.contentType, (/^multipart\/form-data; boundary=/));
+    assert.match(seen().headers["content-type"] ?? "", (/^multipart\/form-data; boundary=/));
 
     // Still a well-formed multipart body: it declares a boundary and closes it, and parses to no parts rather than to nothing at all.
-    assert.deepEqual(parseMultipart(seen.body, seen.contentType), []);
+    assert.deepEqual(parseMultipart(seen().body, seen().headers["content-type"] ?? ""), []);
   });
 
   test("escapes the characters a field name or filename could otherwise forge a part header with", async () => {
 
     const { dispatch, pool } = officialRig();
-
-    let seen: { body: Buffer; contentType: string } | undefined;
-
-    pool.intercept({ method: "POST", path: officialPath("/users/abc/avatar") }).reply((request) => {
-
-      seen = { body: Buffer.from((request.body ?? "") as string), contentType: ((request.headers ?? {}) as Record<string, string>)["content-type"] ?? "" };
-
-      return { data: { "code": "SUCCESS", "msg": "success" }, responseOptions: { headers: {} }, statusCode: 200 };
-    });
+    const seen = captureRequest(pool, { method: "POST", path: officialPath("/users/abc/avatar") }, { data: { "code": "SUCCESS", "msg": "success" } });
 
     await dispatch.command(officialEndpoint(HOST, "/users/abc/avatar"), { form: [{ data: "x", field: "file", filename: "a\"b\r\nc.png" }], method: "POST" });
 
-    assert.ok(seen);
-
-    const parts = parseMultipart(seen.body, seen.contentType);
+    const parts = parseMultipart(seen().body, seen().headers["content-type"] ?? "");
 
     // A raw quote would close the filename early and let the rest of the name pose as further header parameters; the carriage return and newline would end the
     // header line outright.
@@ -644,22 +728,12 @@ describe("OfficialDispatch: outbound encoding", () => {
   test("frames every part a request carries, in the order it was given them", async () => {
 
     const { dispatch, pool } = officialRig();
-
-    let seen: { body: Buffer; contentType: string } | undefined;
-
-    pool.intercept({ method: "POST", path: officialPath("/api_server/certificates") }).reply((request) => {
-
-      seen = { body: Buffer.from((request.body ?? "") as string), contentType: ((request.headers ?? {}) as Record<string, string>)["content-type"] ?? "" };
-
-      return { data: { "code": "SUCCESS", "msg": "success" }, responseOptions: { headers: {} }, statusCode: 200 };
-    });
+    const seen = captureRequest(pool, { method: "POST", path: officialPath("/api_server/certificates") }, { data: { "code": "SUCCESS", "msg": "success" } });
 
     await dispatch.command(officialEndpoint(HOST, "/api_server/certificates"), { form: [ { data: "KEY", field: "key", filename: "k.pem" },
       { data: "CERT", field: "cert", filename: "c.pem" } ], method: "POST" });
 
-    assert.ok(seen);
-
-    const parts = parseMultipart(seen.body, seen.contentType);
+    const parts = parseMultipart(seen().body, seen().headers["content-type"] ?? "");
 
     assert.deepEqual(parts.map((part) => part.field), [ "key", "cert" ]);
     assert.deepEqual(parts.map((part) => part.data.toString("utf8")), [ "KEY", "CERT" ]);
@@ -668,17 +742,11 @@ describe("OfficialDispatch: outbound encoding", () => {
   test("declares the multipart content type in place of the transport's JSON stamp", async () => {
 
     const { dispatch, pool } = officialRig();
-
-    let stamped = "";
-
-    pool.intercept({ method: "POST", path: officialPath("/users/abc/avatar") }).reply((request) => {
-
-      stamped = ((request.headers ?? {}) as Record<string, string>)["content-type"] ?? "";
-
-      return { data: { "code": "SUCCESS", "msg": "success" }, responseOptions: { headers: {} }, statusCode: 200 };
-    });
+    const seen = captureRequest(pool, { method: "POST", path: officialPath("/users/abc/avatar") }, { data: { "code": "SUCCESS", "msg": "success" } });
 
     await dispatch.command(officialEndpoint(HOST, "/users/abc/avatar"), { form: [{ data: "x", field: "file", filename: "a.png" }], method: "POST" });
+
+    const stamped = seen().headers["content-type"] ?? "";
 
     // The transport stamps JSON on every request that does not say otherwise. A multipart body announced as JSON would reach the controller as an unparseable
     // document, and a boundary named nowhere would be unreadable even if it did not.
@@ -822,9 +890,7 @@ describe("OfficialDispatch: over a real socket", () => {
 
     assert.equal(loopback.hits.length, 1);
 
-    const hit = loopback.hits[0];
-
-    assert.ok(hit);
+    const hit = present(loopback.hits[0], "the loopback's one request");
 
     /* The bytes as a real server received them, parsed against the content type that really arrived. A mocked agent cannot reach this: it replaces undici's
      * dispatch wholesale, so everything below it - the socket write included - is out of its view.

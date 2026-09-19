@@ -204,6 +204,39 @@ export const SCRUB_OPTION = {
 } as const satisfies ParseArgsOptionsConfig;
 
 /**
+ * Refuse a document-only flag on a change arm. The JSON form and the scrub both act on a document on its way to the terminal, and a change arm prints
+ * confirmation lines composed by the command itself rather than a document the controller sent, so there each flag means nothing. Refusing beats quietly
+ * honoring either: a stated rejection is easier to predict than a flag that does nothing on the arm the operator chose. The first flag set is the one named,
+ * which is enough - the operator corrects the invocation either way. The refusal reads only the arguments, so a command runs it before anything connects.
+ *
+ * @param values        - The invocation's parsed flags.
+ * @param opts          - Which arm the invocation selected, and the two phrases the refusal sentence is composed from.
+ * @param opts.changing - Whether the invocation selected the change arm; on the read arm the flags mean what they say and nothing is refused.
+ * @param opts.prints   - What the change arm prints, as the sentence's opening clause, for example "A rule change prints a confirmation rather than a document".
+ * @param opts.read     - The read the flags apply to instead, for example "rule read".
+ *
+ * @throws {@link CliError} (exit 2) when a document-only flag is set on the change arm.
+ *
+ * @category CLI
+ */
+export function refuseDocumentFlags(values: { json?: boolean; scrub?: boolean }, opts: { changing: boolean; prints: string; read: string }): void {
+
+  if(!opts.changing) {
+
+    return;
+  }
+
+  const flag = ([ "json", "scrub" ] as const).find((name) => values[name] === true);
+
+  if(flag === undefined) {
+
+    return;
+  }
+
+  throw new CliError(opts.prints + ", so --" + flag + " applies to the " + opts.read + " only.", { exitCode: 2 });
+}
+
+/**
  * The transform a wired command applies to each document at acquisition: pseudonymizing when `--scrub` was given, the identity function when it was not.
  *
  * It is generic in the document's own type because the scrub is shape-preserving - it rebuilds a document whose members carry stand-ins - so a handler keeps the
@@ -220,7 +253,7 @@ export type DocumentScrubber = <T>(document: T) => T;
  * or render call - and every rendering downstream reads pseudonymized data by construction. One context for the whole invocation is what makes a value read as the
  * same stand-in in every document a command emits, and what keeps a stream's cross-packet references intact.
  *
- * Disabled, this constructs nothing and returns each document unchanged, so a command with no `--scrub` behaves exactly as it did before the flag existed.
+ * Disabled, this constructs nothing and returns each document unchanged, so a command with no `--scrub` performs no scrub work at all.
  *
  * @param enabled - Whether `--scrub` was given.
  *
@@ -384,8 +417,8 @@ export interface EventShortcuts {
   unlock?: boolean;
 }
 
-// The property-filter grammar: a dot-path, an operator, and a value, anchored so a token either is a filter or is not one. Taken from the shipped CLI verbatim, which
-// is what makes an operator's existing filter expression keep working.
+// The property-filter grammar: a dot-path, an operator, and a value, anchored so a token either is a filter or is not one. This is the grammar an operator's filter
+// expression is written against, so an existing expression keeps working.
 const FILTER_PATTERN = /^([a-zA-Z0-9_.]+)(==|!=|~|!~|>=|<=|>|<|=)(.+)$/;
 
 // The device types the hardware shortcuts select, as the controller spells them on the wire.
@@ -494,8 +527,8 @@ export function compileEventFilters(opts: { resolve: DeviceResolution; shortcuts
 
   const predicates: EventPredicate[] = [];
 
-  /* A token that does not parse as a property filter is not an error: the shipped CLI passed such tokens through to the command as arguments and streamed unfiltered,
-   * and the two-token legacy form below is the one shape that gave them meaning.
+  /* A token that does not parse as a property filter is not an error: it passes through to the command as an argument and streams unfiltered, and the two-token legacy
+   * form below is the one shape that gives such tokens meaning.
    */
   const bare: string[] = [];
 
@@ -515,8 +548,8 @@ export function compileEventFilters(opts: { resolve: DeviceResolution; shortcuts
     predicates.push(compilePropertyFilter(path, normalizeOperator(operator), value, opts.resolve));
   }
 
-  // Each `--device` value becomes its own term, exactly as each occurrence of the flag pushed its own filter in the shipped CLI. Two different values therefore match
-  // nothing, which is what AND composition means and what the help text states.
+  // Each `--device` value compiles to its own predicate, so repeating the flag ANDs the predicates together; two different values therefore match nothing, which is
+  // what the help text states.
   for(const device of opts.shortcuts.device ?? []) {
 
     predicates.push(compilePropertyFilter("device", "==", device, opts.resolve));
@@ -546,7 +579,7 @@ export function compileEventFilters(opts: { resolve: DeviceResolution; shortcuts
     predicates.push((packet) => AccessClient.classifyPacket(packet)?.kind === "unlock");
   }
 
-  // The legacy positional form: two bare tokens and nothing else compose one equality filter, the shape the CLI accepted before the operator grammar existed.
+  // The legacy positional form: two bare tokens and nothing else compose one equality filter, kept so an operator's existing two-token invocation keeps filtering.
   const [ legacyPath = "", legacyValue = "" ] = bare;
 
   if((predicates.length === 0) && (bare.length === 2)) {
@@ -779,7 +812,7 @@ export function documentFloors(document: unknown): Nullable<unknown[]> {
 
 /**
  * The doors of a topology document, flattened out of its floors, or `null` when that yields nothing. An empty result reads as `null` rather than as an empty array,
- * which is the shipped CLI's own answer for a topology whose floors carry no doors.
+ * which is the answer this function gives for a topology whose floors carry no doors.
  *
  * @param document - The topology document.
  *
@@ -796,6 +829,10 @@ export function documentDoors(document: unknown): Nullable<unknown[]> {
     return null;
   }
 
+  // Each floor contributes its doors array at face value from this untyped document, so the filter after the flatten discards a null or otherwise falsy element
+  // a malformed or sparse record could carry, rather than let it surface as a phantom door in the flattened result. The guard is defensive rather than
+  // capture-driven...no controller document in hand carries such an element, so there is no observed case to look for, and the filter stays because the document
+  // is untyped at this point rather than because the wire is known to need it.
   const doors = floors.flatMap((floor) => {
 
     const value = ((typeof floor === "object") && (floor !== null)) ? (floor as { doors?: unknown }).doors : undefined;
@@ -844,8 +881,9 @@ export async function *take<T>(source: AsyncIterable<T>, count: number): AsyncGe
 
 /**
  * Wire a single {@link AbortController} to SIGINT and SIGTERM. The returned signal is threaded through `AccessClient.connect({ signal })` and every nested operation, so
- * one Ctrl-C aborts the whole tree and `await using` unwinds it cleanly. Call `dispose()` on normal completion to detach the listeners, so a short command does not
- * leave handlers attached to the process.
+ * one Ctrl-C aborts the whole tree and `await using` unwinds it cleanly. A command that confirms a write with a read-back honors the signal there too, and reports
+ * the accepted write before the abort propagates, so a cancelled confirmation never reads as a cancelled change. Call `dispose()` on normal completion to detach
+ * the listeners, so a short command does not leave handlers attached to the process.
  *
  * @returns The lifetime signal and a disposer that removes the process listeners.
  *

@@ -4,14 +4,15 @@
  * assertions these tests assert reference identity in both directions: a change must mint a new reference on the path it touched, and a no-change must return the
  * very same object. The topology fixtures are real controller documents, so the flattening and pruning assertions run against wire material rather than mock shapes.
  */
-import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload,
-  AccessDeviceEntryConfig } from "../types/index.ts";
+import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload, AccessDeviceEntryConfig } from "../types/index.ts";
+import { ULTRA_ID, classify, documentWith, findPacket, withDuty } from "./capture.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture, accessControllerInfoFixture } from "./topology.fixtures.ts";
-import { accessEventPacketsDoorStateFixture, accessEventPacketsFixture, accessEventPacketsTamperFixture } from "./events.fixtures.ts";
+import { accessEventPacketsDoorStateFixture, accessEventPacketsTamperFixture } from "./events.fixtures.ts";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import { applyBootstrap, createInitialState, reduce } from "./reducer.ts";
 import { describe, test } from "node:test";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "../client/census.ts";
+import { present, topologyDevices } from "../testing.helpers.ts";
 import type { AccessOfficialDevice } from "../official/devices.ts";
 import type { AccessOfficialDoor } from "../official/spaces.ts";
 import { AccessProtocolError } from "../errors.ts";
@@ -19,7 +20,6 @@ import type { AccessState } from "./reducer.ts";
 import type { AccessTypedEvent } from "./events.ts";
 import assert from "node:assert/strict";
 import { classifyPacket } from "./events.ts";
-import { topologyDevices } from "../testing.helpers.ts";
 
 // The identity the captured camera-class doorbell reports. It appears throughout the notification corpus while being absent from every real topology document, which
 // is why a state that needs it present has to seed it deliberately.
@@ -48,9 +48,6 @@ const DOOR_ULTRA = "00000000-0000-0000-0000-000000000002";
 // admission normalization build one, and it takes an identity of its own so it can never be confused with a device a fixture supplied.
 const CAPABILITY_LESS_ID = "02ffee00b001";
 
-// A fresh structural copy, so a test that mutates or re-applies a document can never pass by sharing the fixture's own object identity.
-const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-
 const bootstrapEvent = (bootstrap: AccessBootstrapConfig): AccessTypedEvent => ({ data: bootstrap, kind: "bootstrapLoaded" });
 
 // One device out of the captured official listing, failing loudly rather than silently narrowing the corpus if it ever stops carrying that record.
@@ -63,25 +60,7 @@ const listedDevice = (id: string): AccessOfficialDevice => {
   return device;
 };
 
-const stateFrom = (bootstrap: AccessBootstrapConfig): AccessState => applyBootstrap(createInitialState(), clone(bootstrap));
-
-const findPacket = (predicate: (packet: (typeof accessEventPacketsFixture)[number]) => boolean, description: string) => {
-
-  const packet = accessEventPacketsFixture.find(predicate);
-
-  assert.ok(packet, "the fixture corpus should carry " + description);
-
-  return packet;
-};
-
-const classify = (packet: (typeof accessEventPacketsFixture)[number]): AccessTypedEvent => {
-
-  const event = classifyPacket(packet);
-
-  assert.ok(event, "the packet should classify");
-
-  return event;
-};
+const stateFrom = (bootstrap: AccessBootstrapConfig): AccessState => applyBootstrap(createInitialState(), structuredClone(bootstrap));
 
 // The door-state member of the event union, named once so the helper below reads without restating the extraction at every mention.
 type DoorStateEvent = Extract<AccessTypedEvent, { kind: "doorStateChanged" }>;
@@ -95,7 +74,7 @@ const classifyDoorState = (predicate: (event: DoorStateEvent) => boolean): DoorS
 
   for(const packet of accessEventPacketsDoorStateFixture) {
 
-    const event = classifyPacket(clone(packet));
+    const event = classifyPacket(structuredClone(packet));
 
     if((event?.kind === "doorStateChanged") && predicate(event)) {
 
@@ -120,8 +99,8 @@ const syntheticDoorState = (locationId: string): AccessTypedEvent => ({ device: 
  */
 const seededBootstrap = (): AccessBootstrapConfig => {
 
-  const bootstrap = clone(accessBootstrap2026Fixture);
-  const template = clone(bootstrap.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0]);
+  const bootstrap = structuredClone(accessBootstrap2026Fixture);
+  const template = structuredClone(bootstrap.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0]);
 
   assert.ok(template, "the 2026 document should carry a device record to clone");
 
@@ -138,7 +117,7 @@ const seededBootstrap = (): AccessBootstrapConfig => {
  */
 const capabilityLessDevice = (): AccessDeviceConfig => {
 
-  const template = clone(accessBootstrap2026Fixture.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0]);
+  const template = structuredClone(accessBootstrap2026Fixture.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0]);
 
   assert.ok(template, "the 2026 document should carry a device record to clone");
 
@@ -149,7 +128,7 @@ const capabilityLessDevice = (): AccessDeviceConfig => {
 
 // The 2026 document carrying that record at root level, as hardware the building hosts directly, which keeps the synthetic document one key different from the real
 // one and leaves every door-hosted record exactly as the capture holds it.
-const capabilityLessBootstrap = (): AccessBootstrapConfig => ({ ...clone(accessBootstrap2026Fixture), "device_groups": [[capabilityLessDevice()]] });
+const capabilityLessBootstrap = (): AccessBootstrapConfig => ({ ...structuredClone(accessBootstrap2026Fixture), "device_groups": [[capabilityLessDevice()]] });
 
 describe("applyBootstrap flattening", () => {
 
@@ -173,7 +152,7 @@ describe("applyBootstrap flattening", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    assert.ok(state.floors.has(FLOOR_2026));
+    assert.ok(state.floors.has(FLOOR_2026), "the 2026 floor is flattened into the floors map");
     assert.equal(state.floors.get(FLOOR_2026)?.name, "Test Name 2");
 
     for(const id of [ "00000000-0000-0000-0000-000000000002", DOOR_HUB, "00000000-0000-0000-0000-00000000000e" ]) {
@@ -222,12 +201,13 @@ describe("applyBootstrap door-state seeding", () => {
   test("seeds each door with exactly what its own serving hardware establishes", () => {
 
     /* The per-door values, asserted against what the catalog predicts for the hardware this real document carries, because an assertion that entries merely exist
-     * would pass just as well against a derivation that read the wrong flags. The Ultra reports no wiring pair, so it establishes its lock alone; the other two
-     * report their pairs dark, which is a sensor that is not connected; and all three relays are at rest.
+     * would pass just as well against a derivation that read the wrong flags. The Ultra reports no wiring pair, and its duty selector is what establishes its
+     * position instead: the terminal is assigned to door position and the input reads open. The other two report their pairs dark, which is a sensor that is not
+     * connected, and all three relays are at rest.
      */
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    assert.deepEqual(state.doorStates.get(DOOR_ULTRA), { "location_id": DOOR_ULTRA, "lock": "locked" });
+    assert.deepEqual(state.doorStates.get(DOOR_ULTRA), { "dps": "open", "dps_connected": true, "location_id": DOOR_ULTRA, "lock": "locked" });
     assert.deepEqual(state.doorStates.get(DOOR_HUB), { "dps": "none", "dps_connected": false, "location_id": DOOR_HUB, "lock": "locked" });
     assert.deepEqual(state.doorStates.get(DOOR_MINI_DOOR), { "dps": "none", "dps_connected": false, "location_id": DOOR_MINI_DOOR, "lock": "locked" });
     assert.equal(state.doorStates.size, 3);
@@ -235,11 +215,10 @@ describe("applyBootstrap door-state seeding", () => {
 
   test("leaves a member the hardware never established absent rather than undefined", () => {
 
-    // The seed spreads its facts into the entry, so a member present and undefined would be a key that overwrites. The Ultra is the door that proves it: no wiring
-    // pair means no position evidence in either direction.
-    const entry = stateFrom(accessBootstrap2026Fixture).doorStates.get(DOOR_ULTRA);
-
-    assert.ok(entry);
+    // The seed spreads its facts into the entry, so a member present and undefined would be a key that overwrites. The duty-less Ultra is the door that proves it:
+    // no wiring pair and no duty selector means no position evidence in either direction.
+    const entry = present(stateFrom(documentWith(accessBootstrap2026Fixture, withDuty(ULTRA_ID, undefined))).doorStates.get(DOOR_ULTRA),
+      "the duty-less Ultra's door state");
 
     for(const member of [ "dps", "dps_connected", "emergency", "is_unavailable" ]) {
 
@@ -254,7 +233,7 @@ describe("applyBootstrap door-state seeding", () => {
      */
     const reported = reduce(stateFrom(accessBootstrap2026Fixture), syntheticDoorState(DOOR_MINI_DOOR));
     const entry = reported.doorStates.get(DOOR_MINI_DOOR);
-    const refreshed = reduce(reported, bootstrapEvent(clone(accessBootstrap2026Fixture)));
+    const refreshed = reduce(reported, bootstrapEvent(structuredClone(accessBootstrap2026Fixture)));
 
     assert.equal(refreshed.doorStates.get(DOOR_MINI_DOOR)?.dps, "close");
     assert.equal(Object.is(refreshed.doorStates.get(DOOR_MINI_DOOR), entry), true, "the reported entry keeps its exact reference across a refresh");
@@ -264,7 +243,7 @@ describe("applyBootstrap door-state seeding", () => {
 
     // Every door is already established after the first document, so the second one adds nothing and the whole state hands back its own reference.
     const state = stateFrom(accessBootstrap2026Fixture);
-    const again = reduce(state, bootstrapEvent(clone(accessBootstrap2026Fixture)));
+    const again = reduce(state, bootstrapEvent(structuredClone(accessBootstrap2026Fixture)));
 
     assert.equal(Object.is(again, state), true);
     assert.equal(Object.is(again.doorStates, state.doorStates), true);
@@ -282,10 +261,8 @@ describe("applyBootstrap door-state seeding", () => {
     assert.deepEqual([...eah.doorStates.keys()], [EAH_HUB_DOOR], "only the door with a hub of its own establishes anything");
     assert.deepEqual(eah.doorStates.get(EAH_HUB_DOOR), { "dps": "none", "dps_connected": false, "location_id": EAH_HUB_DOOR, "lock": "locked" });
 
-    const readersOnly = clone(accessBootstrap2026Fixture);
-    const floor = readersOnly.floors?.[0];
-
-    assert.ok(floor);
+    const readersOnly = structuredClone(accessBootstrap2026Fixture);
+    const floor = present(readersOnly.floors?.[0], "the first floor");
 
     floor.doors = floor.doors.map((door) => ({ ...door, "device_groups": [] }));
 
@@ -295,17 +272,16 @@ describe("applyBootstrap door-state seeding", () => {
   test("seeds a door the previous document did not carry", () => {
 
     // The seed runs on every document rather than only the first, so a door added to the controller is established the moment a refresh brings it in.
-    const withoutMini = clone(accessBootstrap2026Fixture);
-    const floor = withoutMini.floors?.[0];
+    const withoutMini = structuredClone(accessBootstrap2026Fixture);
+    const floor = present(withoutMini.floors?.[0], "the first floor");
 
-    assert.ok(floor);
     floor.doors = floor.doors.filter((door) => door.unique_id !== DOOR_MINI_DOOR);
 
     const state = stateFrom(withoutMini);
 
     assert.equal(state.doorStates.has(DOOR_MINI_DOOR), false);
 
-    const restored = reduce(state, bootstrapEvent(clone(accessBootstrap2026Fixture)));
+    const restored = reduce(state, bootstrapEvent(structuredClone(accessBootstrap2026Fixture)));
 
     assert.equal(restored.doorStates.get(DOOR_MINI_DOOR)?.dps, "none");
   });
@@ -346,12 +322,12 @@ describe("applyBootstrap pruning", () => {
   test("the stored root carries neither floors nor a device group, against a document that really sends both", () => {
 
     // The 2024 document is the one carrying both members on its root, so this assertion is answering a real question rather than being vacuously true.
-    assert.ok(Object.hasOwn(accessBootstrapEahFixture, "floors"));
-    assert.ok(Object.hasOwn(accessBootstrapEahFixture, "device_groups"));
+    assert.ok(Object.hasOwn(accessBootstrapEahFixture, "floors"), "the 2024 document carries floors on its root");
+    assert.ok(Object.hasOwn(accessBootstrapEahFixture, "device_groups"), "the 2024 document carries a device group on its root");
 
     const state = stateFrom(accessBootstrapEahFixture);
 
-    assert.ok(state.root);
+    assert.ok(state.root, "the document's root is stored");
     assert.equal(Object.hasOwn(state.root, "floors"), false, "the stored root should not embed the floors map's records");
     assert.equal(Object.hasOwn(state.root, "device_groups"), false, "the stored root should not embed the devices map's records");
 
@@ -366,7 +342,7 @@ describe("applyBootstrap pruning", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    assert.ok(state.root);
+    assert.ok(state.root, "the document's root is stored");
     assert.equal(Object.hasOwn(state.root, "floors"), false);
     assert.equal(Object.hasOwn(state.root, "device_groups"), false);
   });
@@ -377,8 +353,8 @@ describe("applyBootstrap reconciliation", () => {
   test("re-applying an equal document returns the very same state object", () => {
 
     // Two independent parses, so a pass here cannot come from the two applications sharing input objects.
-    const state = applyBootstrap(createInitialState(), clone(accessBootstrap2026Fixture));
-    const again = applyBootstrap(state, clone(accessBootstrap2026Fixture));
+    const state = applyBootstrap(createInitialState(), structuredClone(accessBootstrap2026Fixture));
+    const again = applyBootstrap(state, structuredClone(accessBootstrap2026Fixture));
 
     assert.equal(Object.is(again, state), true, "a refresh that found no drift should produce no new state");
     assert.equal(Object.is(again.devices, state.devices), true);
@@ -390,10 +366,9 @@ describe("applyBootstrap reconciliation", () => {
   test("an unchanged record keeps its reference while a changed one does not", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const drifted = clone(accessBootstrap2026Fixture);
-    const target = drifted.floors?.[0]?.doors?.[1]?.device_groups?.[0]?.[0];
+    const drifted = structuredClone(accessBootstrap2026Fixture);
+    const target = present(drifted.floors?.[0]?.doors?.[1]?.device_groups?.[0]?.[0], "the hub record");
 
-    assert.ok(target);
     assert.equal(target.unique_id, HUB_ID);
 
     target.ip = "192.0.2.1";
@@ -415,21 +390,20 @@ describe("applyBootstrap reconciliation", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    assert.ok(state.devices.has("aabbcc000004"));
+    assert.ok(state.devices.has("aabbcc000004"), "the device is held before the later document drops it");
 
-    const reduced = clone(accessBootstrap2026Fixture);
+    const reduced = structuredClone(accessBootstrap2026Fixture);
     const doors = reduced.floors?.[0]?.doors;
 
-    const emptied = doors?.[2];
+    const emptied = present(doors?.[2], "the third door");
 
-    assert.ok(doors);
-    assert.ok(emptied);
+    assert.ok(doors, "the cloned document carries its first floor's doors");
     doors[2] = { ...emptied, "device_groups": [] };
 
     const next = applyBootstrap(state, reduced);
 
     assert.equal(next.devices.has("aabbcc000004"), false, "a device the document no longer carries should leave the map");
-    assert.ok(next.devices.has(HUB_ID));
+    assert.ok(next.devices.has(HUB_ID), "a device the document still carries stays in the map");
   });
 
   test("the document is authoritative over a value a live notification had advanced", () => {
@@ -442,7 +416,7 @@ describe("applyBootstrap reconciliation", () => {
 
     assert.equal(advanced.devices.get(HUB_ID)?.revision, "1786095367040183648");
 
-    const refreshed = applyBootstrap(advanced, clone(accessBootstrap2026Fixture));
+    const refreshed = applyBootstrap(advanced, structuredClone(accessBootstrap2026Fixture));
 
     assert.equal(refreshed.devices.get(HUB_ID)?.revision, "1785876758583455467", "the document's value replaces the advanced one wholesale");
   });
@@ -453,9 +427,8 @@ describe("applyBootstrap capability normalization", () => {
   test("a record arriving without a capabilities array is admitted carrying an empty one", () => {
 
     const document = capabilityLessBootstrap();
-    const carrier = document.floors?.[0]?.doors?.[1]?.device_groups?.[0]?.[0];
+    const carrier = present(document.floors?.[0]?.doors?.[1]?.device_groups?.[0]?.[0], "the hub record");
 
-    assert.ok(carrier);
     assert.equal(carrier.unique_id, HUB_ID);
 
     const state = applyBootstrap(createInitialState(), document);
@@ -518,9 +491,8 @@ describe("applyBootstrap address spelling", () => {
 
     assert.equal(documentRecord(accessBootstrap2026Fixture, G2_ID).mac, "AA:BB:CC:00:00:03", "the document itself spells this address with separators");
 
-    const stored = stateFrom(accessBootstrap2026Fixture).devices.get(G2_ID);
+    const stored = present(stateFrom(accessBootstrap2026Fixture).devices.get(G2_ID), "the stored G2");
 
-    assert.ok(stored);
     assert.equal(stored.mac, "AABBCC000003");
   });
 
@@ -528,7 +500,7 @@ describe("applyBootstrap address spelling", () => {
 
     // No captured topology document spells an address the library's way, so the record is prepared on a clone: the assertion is that the fold hands back the very
     // object when it has nothing to do, which is what keeps a canonical record from being rebuilt on every pass.
-    const document = clone(accessBootstrap2026Fixture);
+    const document = structuredClone(accessBootstrap2026Fixture);
     const carrier = documentRecord(document, HUB_ID);
 
     carrier.mac = "AABBCC000001";
@@ -541,7 +513,7 @@ describe("applyBootstrap address spelling", () => {
     // The controller does exactly this between reads of one site. A refresh that only re-cased addresses must be the no-op the failsafe promises, all the way up
     // to the state reference itself.
     const state = stateFrom(accessBootstrap2026Fixture);
-    const recased = clone(accessBootstrap2026Fixture);
+    const recased = structuredClone(accessBootstrap2026Fixture);
 
     for(const record of topologyDevices(recased)) {
 
@@ -558,7 +530,7 @@ describe("applyBootstrap address spelling", () => {
     // A hub embeds the camera records it serves - the companion Protect controller's own material, which this library does not model. Those are wire material inside
     // the record rather than the record's own identity, so they are kept exactly as sent. The wire happens to spell them the library's way already, which would make
     // an assertion on the captured value vacuous, so the nested address is re-spelled on a clone and must come back untouched.
-    const document = clone(accessBootstrap2026Fixture);
+    const document = structuredClone(accessBootstrap2026Fixture);
     const camera = documentRecord(document, HUB_ID).cameras?.[0];
 
     assert.ok(camera, "the hub should embed a camera record");
@@ -574,16 +546,14 @@ describe("deviceChanged", () => {
   test("merges a real sparse v2 payload, updating what changed and preserving what did not", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = state.devices.get(HUB_ID);
+    const stored = present(state.devices.get(HUB_ID), "the stored hub");
 
-    assert.ok(stored);
     assert.equal(stored.revision, "1785876758583455467");
 
     const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === HUB_ID), "the v2 hub update");
     const next = reduce(state, classify(packet));
-    const merged = next.devices.get(HUB_ID);
+    const merged = present(next.devices.get(HUB_ID), "the merged hub");
 
-    assert.ok(merged);
     assert.equal(merged.revision, "1786095367040183648", "the changed field should take the notification's value");
     assert.notEqual(Object.is(merged, stored), true, "a changed device should be a new reference");
 
@@ -613,9 +583,7 @@ describe("deviceChanged", () => {
 
     // A routine legacy update nulls more than a dozen keys whose stored values are real, so a merge that honored null as a clear would erase live state.
     const state = stateFrom(seededBootstrap());
-    const stored = state.devices.get(DOORBELL_ID);
-
-    assert.ok(stored);
+    const stored = present(state.devices.get(DOORBELL_ID), "the stored doorbell");
 
     // The seeded record is a clone of the document's own first device, so its stored values are that device's.
     assert.equal(stored.revision, "1764007943753538037");
@@ -626,9 +594,8 @@ describe("deviceChanged", () => {
     assert.equal(packet.data?.["last_seen"], null);
 
     const next = reduce(state, classify(packet));
-    const merged = next.devices.get(DOORBELL_ID);
+    const merged = present(next.devices.get(DOORBELL_ID), "the merged doorbell");
 
-    assert.ok(merged);
     assert.equal(merged.revision, "1764007943753538037", "a null must not clear a stored value");
     assert.equal(merged.last_seen, stored.last_seen);
 
@@ -639,27 +606,24 @@ describe("deviceChanged", () => {
   test("a partial nested object merges key by key rather than replacing its siblings", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = state.devices.get(READER_ID);
-
-    assert.ok(stored);
+    const stored = present(state.devices.get(READER_ID), "the stored reader");
 
     // The topology census establishes the icon set, which is what these reads assert before comparing against it - the stored type states only that a census may
     // have established it, because the official inventory carries no icons at all.
-    assert.ok(stored.images);
+    assert.ok(stored.images, "the topology census established the reader's icon set");
 
     const originalMedium = stored.images.m;
     const originalSmall = stored.images.s;
 
-    assert.ok(originalMedium);
-    assert.ok(originalSmall);
+    assert.ok(originalMedium, "the stored medium icon is a non-empty URL");
+    assert.ok(originalSmall, "the stored small icon is a non-empty URL");
 
     // A payload naming one key of a nested object. A shallow merge would drop every sibling key the payload did not mention.
     const event: AccessTypedEvent = { eventName: "access.data.device.update", id: READER_ID, kind: "deviceChanged",
       payload: { images: { l: "https://example.invalid/icon-64.png" } } };
-    const merged = reduce(state, event).devices.get(READER_ID);
+    const merged = present(reduce(state, event).devices.get(READER_ID), "the merged reader");
 
-    assert.ok(merged);
-    assert.ok(merged.images);
+    assert.ok(merged.images, "the merged reader keeps an icon set");
     assert.equal(merged.images.l, "https://example.invalid/icon-64.png", "the named key should land");
     assert.equal(merged.images.m, originalMedium, "a sibling key should survive with its value");
     assert.equal(merged.images.s, originalSmall);
@@ -672,9 +636,8 @@ describe("deviceChanged", () => {
     // The controller re-cases an address between one read and the next, and the older dialect carries the address on every update. Folding the payload before the
     // merge is what makes this the reference-preserving no-op it is; folding after it would mint a new record - and wake every observer - for a spelling.
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = state.devices.get(HUB_ID);
+    const stored = present(state.devices.get(HUB_ID), "the stored hub");
 
-    assert.ok(stored);
     assert.equal(stored.mac, "AABBCC000001");
 
     const event: AccessTypedEvent = { eventName: "access.data.device.update", id: HUB_ID, kind: "deviceChanged", payload: { "mac": "AA:BB:CC:00:00:01" } };
@@ -685,18 +648,16 @@ describe("deviceChanged", () => {
   test("a notification carrying a real change beside a re-cased address stores the address in the library's spelling", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = state.devices.get(HUB_ID);
+    const stored = present(state.devices.get(HUB_ID), "the stored hub");
 
-    assert.ok(stored);
     // The premise, asserted so the row cannot pass on a value the record already holds: the firmware below is a real change to this record.
     assert.notEqual(stored.firmware, "v9.9.9");
 
     const event: AccessTypedEvent = { eventName: "access.data.device.update", id: HUB_ID, kind: "deviceChanged",
       payload: { "firmware": "v9.9.9", "mac": "AA:BB:CC:00:00:01" } };
     const next = reduce(state, event);
-    const merged = next.devices.get(HUB_ID);
+    const merged = present(next.devices.get(HUB_ID), "the merged hub");
 
-    assert.ok(merged);
     assert.notEqual(Object.is(next, state), true, "a real change moves the state");
     assert.equal(merged.firmware, "v9.9.9", "the real change lands");
     assert.equal(merged.mac, "AABBCC000001", "the address keeps the library's spelling whatever spelling the payload used");
@@ -748,7 +709,7 @@ describe("the device-record merge", () => {
     return rows;
   };
 
-  // One row of a held array by position, so an assertion about a neighbour is about a row that is really there rather than about two absences comparing equal.
+  // One row of a held array by position, so an assertion about a neighbor is about a row that is really there rather than about two absences comparing equal.
   const rowAt = (rows: readonly AccessDeviceEntryConfig[], index: number): AccessDeviceEntryConfig => {
 
     const row = rows[index];
@@ -809,7 +770,7 @@ describe("the device-record merge", () => {
     const held = heldRows(state, HUB_ID);
     const target = held.findIndex((row) => row.key === "dps_mode");
 
-    assert.ok((target > 0) && (target < (held.length - 1)), "the hub's rows should carry the door-position mode with a neighbour on either side");
+    assert.ok((target > 0) && (target < (held.length - 1)), "the hub's rows should carry the door-position mode with a neighbor on either side");
 
     const merged = heldRows(reduce(state, rowDelivery([{ "key": "dps_mode", "value": "not_available" }])), HUB_ID);
 
@@ -918,7 +879,7 @@ describe("the device-record merge", () => {
     const state = stateFrom(accessBootstrap2026Fixture);
     const held = heldCapabilities(state, HUB_ID);
 
-    assert.ok(held.includes("is_hub"));
+    assert.ok(held.includes("is_hub"), "the hub holds its hub capability before the delivery drops it");
 
     const merged = heldCapabilities(reduce(state, capabilityDelivery(held.filter((capability) => capability !== "is_hub"))), HUB_ID);
 
@@ -961,7 +922,7 @@ describe("deviceRemoved", () => {
 
       const state = stateFrom(seededBootstrap());
 
-      assert.ok(state.devices.has(DOORBELL_ID));
+      assert.ok(state.devices.has(DOORBELL_ID), "the seeded doorbell is held before the delete");
 
       const packet = findPacket((entry) => entry.event === name, "a " + name + " packet");
       const event = classify(packet);
@@ -994,9 +955,7 @@ describe("locationChanged", () => {
   test("a real v2 door notification lands its translated fields and skips the null one", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = state.doors.get(DOOR_HUB);
-
-    assert.ok(stored);
+    const stored = present(state.doors.get(DOOR_HUB), "the stored hub door");
 
     const storedExtras = stored.extras;
     const packet = findPacket((entry) => (entry.event === "access.data.v2.location.update") && (entry.meta?.id === DOOR_HUB), "a v2 door update");
@@ -1006,9 +965,8 @@ describe("locationChanged", () => {
     assert.equal(event.payload.extras, null, "this specimen really does null the extras");
 
     const next = reduce(state, event);
-    const merged = next.doors.get(DOOR_HUB);
+    const merged = present(next.doors.get(DOOR_HUB), "the merged hub door");
 
-    assert.ok(merged);
     assert.equal(merged.unique_id, DOOR_HUB);
     assert.equal(merged.name, "Test Name 10");
     assert.equal(merged.location_type, "door");
@@ -1025,9 +983,8 @@ describe("locationChanged", () => {
     const state = stateFrom(accessBootstrap2026Fixture);
     const packet = findPacket((entry) => (entry.event === "access.data.location.update") && (entry.event_object_id === DOOR_HUB), "the legacy door update");
     const next = reduce(state, classify(packet));
-    const merged = next.doors.get(DOOR_HUB);
+    const merged = present(next.doors.get(DOOR_HUB), "the merged hub door");
 
-    assert.ok(merged);
     assert.equal(merged.full_name, "Test Name 11");
     assert.equal(Object.hasOwn(merged, "device_groups"), false);
   });
@@ -1141,8 +1098,8 @@ describe("activity signals and the exhaustiveness guard", () => {
 
   test("a bootstrap dispatched through reduce reaches the same place as applying it directly", () => {
 
-    const viaReduce = reduce(createInitialState(), bootstrapEvent(clone(accessBootstrap2026Fixture)));
-    const viaApply = applyBootstrap(createInitialState(), clone(accessBootstrap2026Fixture));
+    const viaReduce = reduce(createInitialState(), bootstrapEvent(structuredClone(accessBootstrap2026Fixture)));
+    const viaApply = applyBootstrap(createInitialState(), structuredClone(accessBootstrap2026Fixture));
 
     assert.deepEqual([...viaReduce.devices.keys()].sort(), [...viaApply.devices.keys()].sort());
     assert.equal(viaReduce.root?.unique_id, viaApply.root?.unique_id);
@@ -1159,10 +1116,9 @@ describe("doorStateChanged", () => {
     assert.equal(empty.controller, null);
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const seeded = state.doorStates.get(DOOR_MINI_DOOR);
+    const seeded = present(state.doorStates.get(DOOR_MINI_DOOR), "the Door Mini's seeded door state");
 
     // What the document's own hardware flags established for this door: an unwired sensor and a locked relay, and nothing about the members only a report carries.
-    assert.ok(seeded);
     assert.equal(seeded.dps, "none");
     assert.equal(Object.hasOwn(seeded, "emergency"), false, "a seeded entry states only what its source answered");
 
@@ -1199,20 +1155,33 @@ describe("doorStateChanged", () => {
     assert.deepEqual(alarmed.doorStates.get(DOOR_MINI_DOOR)?.alarms, [{ type: "force_unlock" }]);
 
     const cleared = reduce(alarmed, classifyDoorState((entry) => (entry.states[0]?.alarms === undefined) && (entry.states[0]?.lock === "unlocked")));
-    const stored = cleared.doorStates.get(DOOR_MINI_DOOR);
+    const stored = present(cleared.doorStates.get(DOOR_MINI_DOOR), "the Door Mini's cleared door state");
 
-    assert.ok(stored);
     assert.equal(stored.alarms, undefined, "the omitted optional reads as cleared rather than as unmentioned");
     assert.equal(stored.lock, "unlocked", "and the rest of the entry advanced");
+  });
+
+  test("a sparse report replaces the held entry wholesale, stating only what it carried", () => {
+
+    /* A report is the door's whole current statement, so a member it omits is not established rather than carried over from what the door said before. That is the
+     * same rule the omitted optional above rests on, read against a report that states fewer members than a door hub sends.
+     */
+    const reported = reduce(stateFrom(accessBootstrap2026Fixture), classifyDoorState((entry) => entry.states[0]?.dps === "close"));
+
+    assert.ok(reported.doorStates.get(DOOR_MINI_DOOR)?.emergency, "the full report established the members only a report carries");
+
+    const sparse: AccessTypedEvent = { device: { id: DOOR_MINI, payload: {} }, eventName: "access.data.v2.device.update", kind: "doorStateChanged",
+      states: [{ "location_id": DOOR_MINI_DOOR, "lock": "unlocked" }] };
+    const stored = reduce(reported, sparse).doorStates.get(DOOR_MINI_DOOR);
+
+    assert.deepEqual(stored, { "location_id": DOOR_MINI_DOOR, "lock": "unlocked" });
   });
 
   test("the device facet advances the device record it names", () => {
 
     // The Door Mini is in the 2026 topology, so the facet has a record to merge onto.
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = state.devices.get(DOOR_MINI);
-
-    assert.ok(stored);
+    const stored = present(state.devices.get(DOOR_MINI), "the stored Door Mini");
 
     const before = stored.revision;
     const event = classifyDoorState((entry) => entry.states[0]?.dps === "close");
@@ -1220,9 +1189,7 @@ describe("doorStateChanged", () => {
     assert.equal(event.kind, "doorStateChanged");
     assert.ok(event.device, "this specimen is the device carrier");
 
-    const merged = reduce(state, event).devices.get(DOOR_MINI);
-
-    assert.ok(merged);
+    const merged = present(reduce(state, event).devices.get(DOOR_MINI), "the merged Door Mini");
 
     // Field-level assertions rather than a reference comparison: the facet's own translated values have to land, and the fields it did not mention have to survive.
     assert.equal(merged.revision, event.device.payload.revision);
@@ -1235,18 +1202,15 @@ describe("doorStateChanged", () => {
   test("the location facet advances the door record it names", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = state.doors.get(DOOR_MINI_DOOR);
-
-    assert.ok(stored);
+    const stored = present(state.doors.get(DOOR_MINI_DOOR), "the Door Mini's stored door");
 
     const event = classifyDoorState((entry) => entry.location !== undefined);
 
     assert.equal(event.kind, "doorStateChanged");
     assert.ok(event.location, "this specimen is the location carrier");
 
-    const merged = reduce(state, event).doors.get(DOOR_MINI_DOOR);
+    const merged = present(reduce(state, event).doors.get(DOOR_MINI_DOOR), "the Door Mini's merged door");
 
-    assert.ok(merged);
     assert.equal(merged.name, "Test Name 22");
     assert.equal(merged.location_type, "door");
     assert.equal(merged.unique_id, DOOR_MINI_DOOR);
@@ -1267,16 +1231,15 @@ describe("doorStateChanged", () => {
     const survivor = state.doorStates.get(DOOR_HUB);
 
     // A document carrying no drift changes nothing at all, the map reference included, so the failsafe stays invisible to an observer of door state.
-    const unchanged = reduce(state, bootstrapEvent(clone(accessBootstrap2026Fixture)));
+    const unchanged = reduce(state, bootstrapEvent(structuredClone(accessBootstrap2026Fixture)));
 
     assert.equal(Object.is(unchanged, state), true);
     assert.equal(Object.is(unchanged.doorStates, state.doorStates), true);
 
     // A document that dropped the Door Mini's door prunes its entry and leaves the survivor's own reference untouched.
-    const reduced = clone(accessBootstrap2026Fixture);
-    const floor = reduced.floors?.[0];
+    const reduced = structuredClone(accessBootstrap2026Fixture);
+    const floor = present(reduced.floors?.[0], "the first floor");
 
-    assert.ok(floor);
     floor.doors = floor.doors.filter((door) => door.unique_id !== DOOR_MINI_DOOR);
 
     const pruned = reduce(state, bootstrapEvent(reduced));
@@ -1291,7 +1254,7 @@ describe("doorStateChanged", () => {
     const state = reduce(stateFrom(seededBootstrap()), syntheticDoorState(DOOR_HUB));
     const before = state.doorStates.size;
 
-    assert.ok(state.doorStates.has(DOOR_HUB));
+    assert.ok(state.doorStates.has(DOOR_HUB), "the hub's door holds a reported state before the device is removed");
 
     const packet = findPacket((entry) => entry.event === "access.data.v2.device.delete", "a v2 device delete");
     const next = reduce(state, classify(packet));
@@ -1306,13 +1269,13 @@ describe("controllerChanged", () => {
 
   test("stores the controller document and keeps it on an identical independent parse", () => {
 
-    const state = reduce(stateFrom(accessBootstrap2026Fixture), controllerEvent(clone(accessControllerInfoFixture)));
+    const state = reduce(stateFrom(accessBootstrap2026Fixture), controllerEvent(structuredClone(accessControllerInfoFixture)));
 
     assert.equal(state.controller?.host.hostname, "host-2.test.local");
     assert.equal(state.controller.version, accessControllerInfoFixture.version);
 
     // A second parse of the same document shares no references with the first, so reference preservation here is the structural compare doing its job.
-    const again = reduce(state, controllerEvent(clone(accessControllerInfoFixture)));
+    const again = reduce(state, controllerEvent(structuredClone(accessControllerInfoFixture)));
 
     assert.equal(Object.is(again, state), true, "a re-served identical document changes nothing");
     assert.equal(Object.is(again.controller, state.controller), true);
@@ -1320,9 +1283,9 @@ describe("controllerChanged", () => {
 
   test("advances on a document that differs only in uptime", () => {
 
-    const state = reduce(stateFrom(accessBootstrap2026Fixture), controllerEvent(clone(accessControllerInfoFixture)));
+    const state = reduce(stateFrom(accessBootstrap2026Fixture), controllerEvent(structuredClone(accessControllerInfoFixture)));
     const before = state.controller?.host.uptime;
-    const advanced = clone(accessControllerInfoFixture);
+    const advanced = structuredClone(accessControllerInfoFixture);
 
     advanced.host.uptime = (before ?? 0) + 3600;
 
@@ -1341,7 +1304,7 @@ describe("controllerChanged", () => {
     // Both wire spellings the controller has produced for the host: the captured document's own, and the same address re-cased as a later read spells it.
     for(const spelling of [ "aa:bb:cc:00:00:0f", "AA:BB:CC:00:00:0F" ]) {
 
-      const document = clone(accessControllerInfoFixture);
+      const document = structuredClone(accessControllerInfoFixture);
 
       document.host.mac = spelling;
 
@@ -1353,8 +1316,8 @@ describe("controllerChanged", () => {
 
     // The controller re-cases the host's address between reads exactly as it does a device's, and a document that differs only in that spelling must wake nobody:
     // the fold runs before the structural compare, which is what lets the compare see the no-op.
-    const state = reduce(stateFrom(accessBootstrap2026Fixture), controllerEvent(clone(accessControllerInfoFixture)));
-    const recased = clone(accessControllerInfoFixture);
+    const state = reduce(stateFrom(accessBootstrap2026Fixture), controllerEvent(structuredClone(accessControllerInfoFixture)));
+    const recased = structuredClone(accessControllerInfoFixture);
 
     assert.equal(recased.host.mac, "aa:bb:cc:00:00:0f", "the captured document spells the address with separators, in lowercase");
     recased.host.mac = "AA:BB:CC:00:00:0F";
@@ -1368,7 +1331,7 @@ describe("controllerChanged", () => {
   test("leaves every other collection alone on the first document", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const next = reduce(state, controllerEvent(clone(accessControllerInfoFixture)));
+    const next = reduce(state, controllerEvent(structuredClone(accessControllerInfoFixture)));
 
     assert.equal(Object.is(next.devices, state.devices), true);
     assert.equal(Object.is(next.doors, state.doors), true);
@@ -1385,9 +1348,9 @@ describe("the door state entry's honest unknowns", () => {
    */
   test("refuses an unguarded read of a member a seeded entry may not carry", () => {
 
-    const entry = stateFrom(accessBootstrap2026Fixture).doorStates.get(DOOR_ULTRA);
-
-    assert.ok(entry);
+    // The duty-less Ultra, whose hardware establishes its lock and nothing else, so each guarded read below has a genuinely absent member to fall back from.
+    const entry = present(stateFrom(documentWith(accessBootstrap2026Fixture, withDuty(ULTRA_ID, undefined))).doorStates.get(DOOR_ULTRA),
+      "the duty-less Ultra's door state");
 
     // @ts-expect-error - the lock condition is established only where the hardware or the controller answered it.
     const lock: string = entry.lock;
@@ -1406,9 +1369,7 @@ describe("the door state entry's honest unknowns", () => {
 
   test("keeps the door's own identity required, because an entry that names no door addresses nothing", () => {
 
-    const entry = stateFrom(accessBootstrap2026Fixture).doorStates.get(DOOR_ULTRA);
-
-    assert.ok(entry);
+    const entry = present(stateFrom(accessBootstrap2026Fixture).doorStates.get(DOOR_ULTRA), "the Ultra's door state");
 
     const locationId: string = entry.location_id;
 
@@ -1531,7 +1492,7 @@ describe("censusApplied", () => {
     const seeded = reduce(createInitialState(), census());
     const held = seeded.devices.get(HUB_ID)?.capabilities;
 
-    assert.ok(held?.length);
+    assert.ok(held?.length, "the census seeds the hub with capabilities to lose");
 
     const stripped = accessOfficialDevicesFixture.flat().map((device) => (device.id === HUB_ID) ? { ...device, "capabilities": [] } : device);
     const next = reduce(seeded, census({ devices: stripped }));
@@ -1545,9 +1506,7 @@ describe("censusApplied", () => {
     // Wholesale replacement would leave the record holding the one capability the listing named, which is exactly what a hub classification reads and would then
     // answer false to.
     const seeded = reduce(createInitialState(), census());
-    const held = seeded.devices.get(HUB_ID)?.capabilities;
-
-    assert.ok(held);
+    const held = present(seeded.devices.get(HUB_ID)?.capabilities, "the hub's capabilities");
 
     const narrowed = accessOfficialDevicesFixture.flat().map((device) => (device.id === HUB_ID) ?
       { ...device, "capabilities": [ "test_only_capability", "test_only_capability" ] } : device);
@@ -1564,7 +1523,7 @@ describe("censusApplied", () => {
     const seeded = stateFrom(accessBootstrap2026Fixture);
     const held = seeded.devices.get(HUB_ID)?.configs;
 
-    assert.ok(held?.length);
+    assert.ok(held?.length, "the topology established configuration rows for the hub");
 
     const next = reduce(seeded, census());
 

@@ -24,6 +24,9 @@ timestamp is handed back instead, and a receiver applies its own window to it wi
 Every failure is a clean `null` rather than a throw - a malformed header, an absent signature, a truncated MAC, and a MAC that simply does not match are all
 "this did not come from the controller", and a receiver handling untrusted input should not have to distinguish them to stay safe.
 
+The other half, for a consumer's own tests, is `signWebhookDelivery` on the `unifi-access/testing` entry: it mints the header this function verifies, from the
+same recipe, so a suite can hand its receiver a delivery that verifies without restating the scheme.
+
 ## Parameters
 
 | Parameter | Type | Description |

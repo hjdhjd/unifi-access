@@ -314,6 +314,57 @@ One result per row of the file.
 
 ***
 
+### iterateNfcCards()
+
+```ts
+iterateNfcCards(opts?, call?): AsyncGenerator<AccessOfficialNfcCard>;
+```
+
+Iterate every NFC card, walking the listing to its end. `GET /credentials/nfc_cards/tokens`, permission `view:credential`. Requires UniFi Access 1.22.16 or
+later.
+
+Composed over [OfficialCredentials.fetchAllNfcCards](#fetchallnfccards); the endpoint is live-verified.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `opts` | [`AccessOfficialPageOptions`](AccessOfficialPageOptions.md) | The page size to walk the listing in. |
+| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+
+#### Returns
+
+`AsyncGenerator`\<[`AccessOfficialNfcCard`](AccessOfficialNfcCard.md)\>
+
+Every card the listing reports, in the order its pages carry them.
+
+***
+
+### iterateTouchPasses()
+
+```ts
+iterateTouchPasses(opts?, call?): AsyncGenerator<AccessOfficialTouchPass>;
+```
+
+Iterate every Touch Pass, walking the listing to its end. `GET /credentials/touch_passes`, permission `view:credential`. Requires UniFi Access 3.2.20 or later.
+
+Composed over [OfficialCredentials.fetchAllTouchPasses](#fetchalltouchpasses); the endpoint is live-verified.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `opts` | [`AccessOfficialTouchPassListOptions`](AccessOfficialTouchPassListOptions.md) | The status to narrow to, and the page size to walk the listing in. |
+| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+
+#### Returns
+
+`AsyncGenerator`\<[`AccessOfficialTouchPass`](AccessOfficialTouchPass.md)\>
+
+Every pass the listing reports, in the order its pages carry them.
+
+***
+
 ### purchaseTouchPasses()
 
 ```ts

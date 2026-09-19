@@ -278,6 +278,9 @@ export interface AccessWebhookSignature {
  * Every failure is a clean `null` rather than a throw - a malformed header, an absent signature, a truncated MAC, and a MAC that simply does not match are all
  * "this did not come from the controller", and a receiver handling untrusted input should not have to distinguish them to stay safe.
  *
+ * The other half, for a consumer's own tests, is `signWebhookDelivery` on the `unifi-access/testing` entry: it mints the header this function verifies, from the
+ * same recipe, so a suite can hand its receiver a delivery that verifies without restating the scheme.
+ *
  * @param opts        - The delivery to verify.
  * @param opts.body   - The request body exactly as received, as bytes or as text.
  * @param opts.header - The delivery's `Signature` header value.
@@ -296,9 +299,7 @@ export function verifyWebhookSignature(opts: { body: Uint8Array | string; header
     return null;
   }
 
-  // The MAC covers three pieces in order, fed to the digest separately rather than concatenated first so that a byte body never has to be decoded to text - a
-  // delivery is bytes on the wire, and decoding it to compare it would be one more chance to alter what was signed.
-  const expected = createHmac("sha256", opts.secret).update(signature.timestamp).update(".").update(opts.body).digest();
+  const expected = signatureMac(opts.secret, signature.timestamp, opts.body);
   const provided = Buffer.from(signature.mac, "hex");
 
   /* The length check is what turns a truncated or malformed MAC into a clean `false`. Hex decoding a short or invalid value simply yields a shorter buffer, and the
@@ -311,6 +312,37 @@ export function verifyWebhookSignature(opts: { body: Uint8Array | string; header
   }
 
   return timingSafeEqual(provided, expected) ? { timestamp: Number(signature.timestamp) } : null;
+}
+
+/**
+ * Sign a delivery the way the controller does, answering with the `Signature` header value a receiver verifies.
+ *
+ * This is the other half of {@link verifyWebhookSignature}, composed from the same recipe so the two cannot drift: a consumer's test suite hands its webhook
+ * receiver a delivery that verifies, without restating the scheme in its own words. It is published through the `unifi-access/testing` entry rather than the
+ * main surface, because minting controller signatures is a test's business and never production's - nothing in this library's production code calls it.
+ *
+ * @param opts           - The delivery to sign.
+ * @param opts.body      - The request body exactly as it will be delivered, as bytes or as text.
+ * @param opts.secret    - The secret the endpoint was registered with.
+ * @param opts.timestamp - The unix timestamp in seconds the signature covers, a non-negative whole number.
+ *
+ * @returns The `Signature` header value: the timestamp and the hex-encoded MAC in the controller's own form.
+ *
+ * @throws {TypeError} If the timestamp is not a non-negative whole number - caller misuse, raised before anything is signed.
+ *
+ * @category Testing
+ */
+export function signWebhookDelivery(opts: { body: Uint8Array | string; secret: string; timestamp: number }): string {
+
+  // A caller's own bad argument is a programming error rather than anything about a delivery, so it raises the language's own error type before any signing.
+  if(!Number.isSafeInteger(opts.timestamp) || (opts.timestamp < 0)) {
+
+    throw new TypeError("A webhook signature's timestamp must be a non-negative whole number of seconds.");
+  }
+
+  const timestamp = String(opts.timestamp);
+
+  return SIGNATURE_TIMESTAMP_KEY + "=" + timestamp + "," + SIGNATURE_MAC_KEY + "=" + signatureMac(opts.secret, timestamp, opts.body).toString("hex");
 }
 
 /**
@@ -501,6 +533,15 @@ export class OfficialWebhooks {
 
     await this.#dispatch.command(officialEndpoint(this.#host, "/webhooks/endpoints/" + encodeURIComponent(id)), { method: "DELETE" }, call);
   }
+}
+
+/* The MAC the scheme puts over a delivery: HMAC-SHA256 over the timestamp's decimal digits, a literal `.`, and the body exactly as delivered, fed to the digest
+ * separately rather than concatenated first so that a byte body never has to be decoded to text - a delivery is bytes on the wire, and decoding it to compare it
+ * would be one more chance to alter what was signed. The verifier and the signing helper both read this one recipe, which is what keeps them from drifting.
+ */
+function signatureMac(secret: string, timestamp: string, body: Uint8Array | string): Buffer {
+
+  return createHmac("sha256", secret).update(timestamp).update(".").update(body).digest();
 }
 
 /* Read the members the signature header carries. Returns null for a header that is not the documented comma-separated, `=`-delimited form, or that lacks

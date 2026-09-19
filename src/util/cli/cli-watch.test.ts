@@ -8,22 +8,27 @@ import type { AccessDoorStateEntry, AccessEventPacket } from "../../index.ts";
 import { CliError, compileEventFilters, packetSubjectId } from "./shared.ts";
 import type { FakeClientSpec, FakeDoorSpec } from "./cli.helpers.ts";
 import { accessEventPacketsDoorStateFixture, accessEventPacketsInteractiveFixture } from "../../protocol/events.fixtures.ts";
+import { asAccessClient, makeCommandContext, makeFakeClient, rendered } from "./cli.helpers.ts";
 import { describe, test } from "node:test";
-import { makeCommandContext, makeFakeClient, rendered, specimen } from "./cli.helpers.ts";
 import assert from "node:assert/strict";
 import { buildDeviceResolution } from "./lookup.ts";
+import { findPacket } from "../../protocol/capture.helpers.ts";
 import { watch } from "./commands/watch.ts";
 import { watchEvents } from "./commands/watch-events.ts";
 import { watchRaw } from "./commands/watch-raw.ts";
 import { watchState } from "./commands/watch-state.ts";
 
 // Named specimens from the committed corpus, each chosen for what it proves about attribution.
-const RING = specimen(accessEventPacketsInteractiveFixture, "access.remote_view");
-const LOG_ADD = specimen(accessEventPacketsInteractiveFixture, "access.logs.add");
-const CANCEL = specimen(accessEventPacketsInteractiveFixture, "access.remote_view.change");
-const REMOTE_UNLOCK = specimen(accessEventPacketsInteractiveFixture, "access.data.device.remote_unlock");
-const DOOR_STATE_DEVICE = specimen(accessEventPacketsDoorStateFixture, "access.data.v2.device.update");
-const DOOR_STATE_LOCATION = specimen(accessEventPacketsDoorStateFixture, "access.data.v2.location.update");
+const RING = findPacket((packet) => packet.event === "access.remote_view", "an interactive ring", { corpus: accessEventPacketsInteractiveFixture });
+const LOG_ADD = findPacket((packet) => packet.event === "access.logs.add", "an interactive log entry", { corpus: accessEventPacketsInteractiveFixture });
+const CANCEL = findPacket((packet) => packet.event === "access.remote_view.change", "an interactive ring cancellation",
+  { corpus: accessEventPacketsInteractiveFixture });
+const REMOTE_UNLOCK = findPacket((packet) => packet.event === "access.data.device.remote_unlock", "an interactive remote unlock",
+  { corpus: accessEventPacketsInteractiveFixture });
+const DOOR_STATE_DEVICE = findPacket((packet) => packet.event === "access.data.v2.device.update", "a door-state device update",
+  { corpus: accessEventPacketsDoorStateFixture });
+const DOOR_STATE_LOCATION = findPacket((packet) => packet.event === "access.data.v2.location.update", "a door-state location update",
+  { corpus: accessEventPacketsDoorStateFixture });
 
 // The identities those specimens carry, read off the corpus: the reader that rang, the hub that unlocked, the door hub that reported its state, and the door itself.
 const READER_ID = "aabbcc000002";
@@ -245,7 +250,7 @@ describe("the filter engine", () => {
 
     // The resolution snapshot is taken before the stream opens, so a name resolves the same way for every packet in a run.
     const { client } = makeFakeClient({ devices: [{ id: READER_ID, name: "Front Reader" }] });
-    const resolve = buildDeviceResolution(client as never);
+    const resolve = buildDeviceResolution(asAccessClient(client));
     const filters = compileEventFilters({ resolve, shortcuts: { device: ["Front Reader"] }, tokens: [] });
 
     assert.equal(filters.length, 1);
@@ -308,23 +313,24 @@ describe("the watch events command", () => {
 
   test("an omitted duration means no bound", async () => {
 
-    // With no bound armed, every packet arrives despite the per-packet delay a zero-milliseconds timer would have cut short.
-    const lines = await runEvents(["--json"], [ RING, CANCEL ], { packetDelayMs: 30 });
+    // With no bound armed, the stream runs to its end and every packet arrives.
+    const lines = await runEvents(["--json"], [ RING, CANCEL ]);
 
     assert.equal(lines.length, 2);
   });
 
   test("a sub-second duration arms the bound, preserving the fractional-second capability", async () => {
 
-    // A 20ms bound closes the stream before the first packet lands behind its 120ms delay - the ms unit is what expresses a bound finer than one second.
-    const lines = await runEvents([ "--json", "--duration=20ms" ], [ RING, CANCEL ], { packetDelayMs: 120 });
+    // A 20ms bound closes a stream that has yielded nothing, and the stream holds until that bound fires - the ms unit is what expresses a bound finer than
+    // one second.
+    const lines = await runEvents([ "--json", "--duration=20ms" ], [ RING, CANCEL ], { holdUntilAborted: true });
 
     assert.equal(lines.length, 0);
   });
 
   test("a generous duration is accepted and the stream completes beneath it", async () => {
 
-    const lines = await runEvents([ "--json", "--duration=1500ms" ], [ RING, CANCEL ], { packetDelayMs: 5 });
+    const lines = await runEvents([ "--json", "--duration=1500ms" ], [ RING, CANCEL ]);
 
     assert.equal(lines.length, 2);
   });
@@ -337,6 +343,7 @@ describe("the watch events command", () => {
     await assert.rejects(async () => watchEvents.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
 
     assert.equal(calls.opens.length, 0, "the refusal happens before anything connects");
+    assert.equal(calls.credentialLoads, 0, "the refusal never reaches for the identity file");
   });
 
   test("a bare-number or malformed duration is refused", async () => {
@@ -460,7 +467,7 @@ describe("the watch capture scrub", () => {
     assert.match(second.data.mac, /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/, "the second occurrence keeps its own separators and case");
     assert.equal(second.data.mac.replaceAll(":", "").toUpperCase(), first.data.mac, "both spellings resolve to one stand-in across the two packets");
     assert.notEqual(second.data.host_device_mac, first.data.mac, "a genuinely different address is still a different stand-in");
-    assert.ok(!lines.join("").includes("02FFEE000002") && !lines.join("").includes("02:ff:ee:00:00:02"));
+    assert.ok(!lines.join("").includes("02FFEE000002") && !lines.join("").includes("02:ff:ee:00:00:02"), "neither spelling of the planted address survives the scrub");
   });
 
   test("the raw rail prints packets verbatim without the flag and pseudonymized with it", async () => {
@@ -480,8 +487,8 @@ describe("the watch capture scrub", () => {
     const text = rendered(scrubbedRun.lines).join("");
 
     assert.equal(rendered(scrubbedRun.lines).length, 2, "every packet still arrives");
-    assert.ok(!text.includes(SCRUBBED_ID));
-    assert.ok(!text.includes(SCRUBBED_NAME));
+    assert.ok(!text.includes(SCRUBBED_ID), "the packet's device identifier does not survive the scrub");
+    assert.ok(!text.includes(SCRUBBED_NAME), "the packet's device name does not survive the scrub");
     assert.ok(text.includes("access.remote_view"), "the notification names are protocol vocabulary and survive");
   });
 
@@ -494,6 +501,7 @@ describe("the watch capture scrub", () => {
       (error.message === "The --stats tally counts event names rather than printing packets, so --scrub has nothing to act on."));
 
     assert.equal(calls.opens.length, 0);
+    assert.equal(calls.credentialLoads, 0);
   });
 });
 
@@ -534,11 +542,12 @@ describe("the watch raw command", () => {
       (error.message === "The --count value must be a non-negative integer, but received \"x\"."));
 
     assert.equal(calls.opens.length, 0, "the refusal happens before anything connects");
+    assert.equal(calls.credentialLoads, 0, "the refusal never reaches for the identity file");
   });
 
   test("a duration bounds the capture", async () => {
 
-    const { calls, client } = makeFakeClient({ packetDelayMs: 120, packets: [ RING, CANCEL ] });
+    const { calls, client } = makeFakeClient({ holdUntilAborted: true, packets: [ RING, CANCEL ] });
     const { ctx, lines } = makeCommandContext({ args: ["--duration=20ms"], calls, client });
 
     await watchRaw.run(ctx);
@@ -576,6 +585,17 @@ describe("the watch state command", () => {
     assert.match(output[1] ?? "", /^ {2}2F - Loading Bay +no established state$/);
   });
 
+  test("an empty state map renders the one-line notice", async () => {
+
+    const { calls, client } = makeFakeClient({ doorStates: new Map<string, AccessDoorStateEntry>(), snapshot: { doors } });
+    const { ctx, lines } = makeCommandContext({ calls, client });
+
+    await watchState.run(ctx);
+
+    // A topology carrying doors with nothing established renders the notice rather than a row per door, which is what tells the empty map from a missing one.
+    assert.deepEqual(rendered(lines), ["No doors carry established state."]);
+  });
+
   test("each observed change renders through the same renderer as the snapshot", async () => {
 
     const { calls, client } = makeFakeClient({ doorStates: seeded, observations: [changed], snapshot: { doors } });
@@ -588,6 +608,22 @@ describe("the watch state command", () => {
     assert.equal(output.length, 4, "the snapshot and one change, two doors each");
     assert.match(output[2] ?? "", /^ {2}1F - Loading Dock +position open, lock unlocked, wired yes$/);
     assert.match(output[3] ?? "", /^ {2}2F - Loading Bay +no established state$/);
+  });
+
+  // The row names a door by its own id when the topology holds no record for it, and this is the one test that reaches that arm, so its door is deliberately
+  // absent from the block's doors map above.
+  test("a door the topology does not hold renders by its id", async () => {
+
+    const absent = new Map<string, AccessDoorStateEntry>([[ "door-9", { "location_id": "door-9" } ]]);
+    const { calls, client } = makeFakeClient({ doorStates: absent, snapshot: { doors } });
+    const { ctx, lines } = makeCommandContext({ calls, client });
+
+    await watchState.run(ctx);
+
+    const output = rendered(lines);
+
+    assert.equal(output.length, 1, "one state entry renders one row");
+    assert.match(output[0] ?? "", /^ {2}door-9 +no established state$/);
   });
 
   test("a count bounds the change yields and the initial render is not a count draw", async () => {

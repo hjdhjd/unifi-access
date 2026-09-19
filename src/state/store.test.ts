@@ -6,15 +6,15 @@
  */
 import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, Nullable } from "../types/index.ts";
 import type { AccessRefreshDocuments, StateStoreOptions } from "./store.ts";
+import type { AccessState, AccessStateDevice } from "../protocol/reducer.ts";
+import type { CapturingLog, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { StateStore, createStateStore } from "./store.ts";
+import { TestClock, capturingLog, settle, silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
-import { capturingLog, expectAt, fakeClock, silentLog, topologyDevices } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
-import type { AccessState } from "../protocol/reducer.ts";
-import type { AccessStateDevice } from "../protocol/reducer.ts";
+import { present, settleUntil, topologyDevices } from "../testing.helpers.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
-import { setTimeout as delay } from "node:timers/promises";
 import { selectHubs } from "./selectors.ts";
 
 // Named entries from the 2026 topology document, so an assertion cites a specific record rather than a number re-derived from the same fixture.
@@ -65,7 +65,7 @@ const renameDoor = (name: string): AccessTypedEvent => ({ eventName: "access.dat
 const activitySignal = (): AccessTypedEvent => ({ eventName: "access.door.unlock", id: DOOR_HUB, kind: "unlock" });
 
 // Drive an observer in the background, collecting every yielded value. Returns the array plus the iteration's completion promise, so a test can end the iteration
-// and await a clean teardown. Callers await a scheduler tick after calling this, so the async-generator body registers the observer before any dispatch.
+// and await a clean teardown. Callers let the released cascade run after calling this, so the async-generator body registers the observer before any dispatch.
 function collect<T>(iterable: AsyncIterable<T>): { done: Promise<void>; values: T[] } {
 
   const values: T[] = [];
@@ -84,7 +84,7 @@ function collect<T>(iterable: AsyncIterable<T>): { done: Promise<void>; values: 
  * which is exactly the contract the failsafe takes. Every test here that resolves documents from its refresh uses this one shape, so the callback's own bookkeeping
  * - a counter, a rejection on the first attempt - stays in the caller's `documents` closure where the test can read it.
  *
- * Reading the binding inside the closure is safe by construction: it is assigned before the store is returned, and nothing can tick the loop before then.
+ * Reading the binding inside the closure is safe by construction: it is assigned before the store is returned, and nothing can wake the loop before then.
  */
 function refreshingStore(options: Omit<StateStoreOptions, "refresh"> & { documents: () => Promise<AccessRefreshDocuments> }): StateStore {
 
@@ -95,10 +95,11 @@ function refreshingStore(options: Omit<StateStoreOptions, "refresh"> & { documen
 }
 
 // A store with the refresh failsafe disabled - the shape for tests that exercise dispatch and observe in isolation. The refresh callback rejects, so an accidental
-// invocation is loud rather than silent.
-function plainStore(): StateStore {
+// invocation is loud rather than silent. A test that reads what the chokepoint reported hands its own sink in, which is the same store with the dispatch hook
+// wired.
+function plainStore(onDispatch?: StateStoreOptions["onDispatch"]): StateStore {
 
-  return new StateStore({ clock: fakeClock(), log: silentLog(),
+  return new StateStore({ clock: new TestClock(), log: silentLog(), ...(onDispatch && { onDispatch }),
     refresh: () => Promise.reject(new Error("the refresh callback must not be called when the failsafe is disabled")), refreshIntervalMs: false });
 }
 
@@ -119,12 +120,10 @@ describe("StateStore", () => {
     test("applies its own defaults for the clock, the logger, and the initial state", async () => {
 
       // Every option but the refresh callback left out, so the constructor takes its default branches. A fake clock is not supplied here, which means the failsafe
-      // arms against the real clock at the default interval - disposal below is what keeps that timer from outliving the test.
-      const store = refreshingStore({ documents: () => Promise.resolve(refreshDocuments()) });
+      // arms against the real clock at the default interval - the guard on its declaration is what keeps that timer from outliving the test.
+      await using store = refreshingStore({ documents: () => Promise.resolve(refreshDocuments()) });
 
       assert.equal(store.snapshot().devices.size, 0, "the default initial state is the empty one");
-
-      await store[Symbol.asyncDispose]();
     });
 
     test("a bootstrap advances the state and flattens the document into the devices map", () => {
@@ -163,11 +162,11 @@ describe("StateStore", () => {
       const { done, values } = collect(store.observe((state) => state, { signal: ac.signal }));
 
       // Let the async-generator body run: this is the point at which the observer registers and reads its baseline.
-      await delay(0);
+      await settle();
       assert.equal(values.length, 0, "iteration seeds a baseline rather than re-emitting the current value");
 
       store.dispatch(renameDoor("Renamed"));
-      await expectAt(() => values.length === 1);
+      await settleUntil(() => values.length === 1);
 
       const afterSecond = store.snapshot();
 
@@ -188,13 +187,13 @@ describe("StateStore", () => {
       const ac = new AbortController();
       const { done, values } = collect(store.observe((state) => state.doors, { signal: ac.signal }));
 
-      await delay(0);
+      await settle();
       store.dispatch(activitySignal());
-      await delay(5);
+      await settle();
       assert.equal(values.length, 0, "an activity signal changes no state, so no observer wakes");
 
       store.dispatch(renameDoor("Renamed"));
-      await expectAt(() => values.length === 1);
+      await settleUntil(() => values.length === 1);
       assert.equal(values[0]?.get(DOOR_HUB)?.name, "Renamed");
 
       ac.abort();
@@ -209,9 +208,8 @@ describe("StateStore", () => {
 
       store.dispatch(bootstrapEvent(topologyDocument()));
 
-      const stored = store.snapshot().devices.get(HUB_2026);
+      const stored = present(store.snapshot().devices.get(HUB_2026), "the stored hub");
 
-      assert.ok(stored);
       assert.equal(stored.mac, "AABBCC000001");
       // The premise for the second dispatch below, asserted so it cannot be a no-op on a value the record already holds.
       assert.notEqual(stored.firmware, "v9.9.9");
@@ -219,14 +217,14 @@ describe("StateStore", () => {
       const ac = new AbortController();
       const { done, values } = collect(store.observe((state) => state.devices, { signal: ac.signal }));
 
-      await delay(0);
+      await settle();
       store.dispatch({ eventName: "access.data.device.update", id: HUB_2026, kind: "deviceChanged", payload: { "mac": "AA:BB:CC:00:00:01" } });
-      await delay(5);
+      await settle();
       assert.equal(values.length, 0, "a re-cased address changes no state, so no observer wakes");
 
       // The same observer wakes on a real change to the same record, which is what shows the silence above was the fold's doing rather than a dead observer.
       store.dispatch({ eventName: "access.data.device.update", id: HUB_2026, kind: "deviceChanged", payload: { "firmware": "v9.9.9" } });
-      await expectAt(() => values.length === 1);
+      await settleUntil(() => values.length === 1);
       assert.equal(values[0]?.get(HUB_2026)?.mac, "AABBCC000001");
 
       ac.abort();
@@ -251,14 +249,14 @@ describe("StateStore", () => {
       const ac = new AbortController();
       const { done, values } = collect(store.observe(countingDevices, { signal: ac.signal }));
 
-      await delay(0);
+      await settle();
 
       const atRegistration = evaluations;
       const before = store.snapshot();
 
       // A second parse of the same document reconciles to the identical state reference, so the gate absorbs it outright.
       store.dispatch(bootstrapEvent(topologyDocument()));
-      await delay(5);
+      await settle();
 
       assert.equal(evaluations, atRegistration, "a drift-free bootstrap is suppressed at the gate, before any observer evaluates");
       assert.ok(Object.is(before, store.snapshot()), "a drift-free bootstrap leaves the state reference alone");
@@ -266,8 +264,8 @@ describe("StateStore", () => {
 
       // A real change to a collection this selection does not read: the state reference advances, the observer runs, and its own comparison is what keeps it quiet.
       store.dispatch(renameDoor("Renamed"));
-      await expectAt(() => evaluations > atRegistration);
-      await delay(5);
+      await settleUntil(() => evaluations > atRegistration);
+      await settle();
 
       assert.ok(!Object.is(before, store.snapshot()), "a door rename is a real state change");
       assert.equal(values.length, 0, "the observer evaluated and found its own selection unchanged, so it yielded nothing");
@@ -285,7 +283,7 @@ describe("StateStore", () => {
       const ac = new AbortController();
       const { done, values } = collect(store.observe((state) => state.devices, { signal: ac.signal }));
 
-      await delay(0);
+      await settle();
 
       const drifted = topologyDocument();
       const device = drifted.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0];
@@ -294,7 +292,7 @@ describe("StateStore", () => {
       device.alias = "Renamed Hardware";
 
       store.dispatch(bootstrapEvent(drifted));
-      await expectAt(() => values.length === 1);
+      await settleUntil(() => values.length === 1);
       assert.equal(store.snapshot().devices.size, DEVICE_COUNT_2026);
 
       ac.abort();
@@ -320,9 +318,9 @@ describe("StateStore", () => {
       const ac = new AbortController();
       const { done, values } = collect(store.observe((state) => state, { signal: ac.signal }));
 
-      await delay(0);
+      await settle();
       store.dispatch(bootstrapEvent(topologyDocument()));
-      await expectAt(() => values.length === 1);
+      await settleUntil(() => values.length === 1);
 
       ac.abort();
 
@@ -350,9 +348,9 @@ describe("StateStore", () => {
         }
       })();
 
-      await delay(0);
+      await settle();
       store.dispatch(bootstrapEvent(topologyDocument()));
-      await expectAt(() => values.length === 1);
+      await settleUntil(() => values.length === 1);
 
       // Two further changes land behind the parked consumer.
       store.dispatch(renameDoor("Second"));
@@ -374,14 +372,17 @@ describe("StateStore", () => {
     test("runs no failsafe at all when there is nothing to refresh from", async () => {
 
       /* A store built with no refresh callback is one whose composer has no document source to offer - a client whose identity cannot reach those endpoints. The
-       * failsafe then does not exist rather than existing with nothing to call, so no amount of clock advancing produces a tick, and the store is otherwise a
+       * failsafe then does not exist rather than existing with nothing to call, so no amount of clock advancing produces a wake, and the store is otherwise a
        * perfectly ordinary store.
        */
-      const clock = fakeClock();
-      const store = new StateStore({ clock, refreshIntervalMs: 1000 });
+      const clock = new TestClock();
 
-      await clock.tick();
-      await clock.tick();
+      await using store = new StateStore({ clock, refreshIntervalMs: 1000 });
+
+      clock.advance(1000);
+      await settle();
+      clock.advance(1000);
+      await settle();
 
       assert.equal(store.snapshot().devices.size, 0, "no refresh ran, so nothing was applied");
 
@@ -389,31 +390,29 @@ describe("StateStore", () => {
       store.dispatch({ data: topologyDocument(), kind: "bootstrapLoaded" });
 
       assert.equal(store.snapshot().devices.size, DEVICE_COUNT_2026);
-
-      await store[Symbol.asyncDispose]();
     });
 
     test("fires on the clock and dispatches what the refresh returned", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let refreshes = 0;
-      const store = refreshingStore({ clock, documents: () => {
+
+      await using store = refreshingStore({ clock, documents: () => {
 
         refreshes += 1;
 
         return Promise.resolve(refreshDocuments());
       }, refreshIntervalMs: 1000 });
 
-      await clock.tick();
-      await expectAt(() => store.snapshot().devices.size === DEVICE_COUNT_2026);
+      clock.advance(1000);
+      await settle();
+      await settleUntil(() => store.snapshot().devices.size === DEVICE_COUNT_2026);
       assert.equal(refreshes, 1);
-
-      await store[Symbol.asyncDispose]();
     });
 
     test("contains a refresh failure and recovers on the next tick", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const log = capturingLog();
       let attempt = 0;
       const documents = (): Promise<AccessRefreshDocuments> => {
@@ -422,23 +421,24 @@ describe("StateStore", () => {
 
         return (attempt === 1) ? Promise.reject(new Error("transient")) : Promise.resolve(refreshDocuments());
       };
-      const store = refreshingStore({ clock, documents, log, refreshIntervalMs: 1000 });
 
-      // The first tick fails: the loop logs at debug and stays alive.
-      await clock.tick();
-      await expectAt(() => log.entries.some((entry) => (entry.level === "debug") && entry.message.includes("Bootstrap refresh failed")));
+      await using store = refreshingStore({ clock, documents, log, refreshIntervalMs: 1000 });
+
+      // The first wake fails: the loop logs at debug and stays alive.
+      clock.advance(1000);
+      await settle();
+      await settleUntil(() => log.entries.some((entry) => (entry.level === "debug") && entry.message.includes("Bootstrap refresh failed")));
       assert.equal(store.snapshot().devices.size, 0);
 
-      // The second tick succeeds, and the failsafe applies the document as if nothing had gone wrong.
-      await clock.tick();
-      await expectAt(() => store.snapshot().devices.size === DEVICE_COUNT_2026);
-
-      await store[Symbol.asyncDispose]();
+      // The second wake succeeds, and the failsafe applies the document as if nothing had gone wrong.
+      clock.advance(1000);
+      await settle();
+      await settleUntil(() => store.snapshot().devices.size === DEVICE_COUNT_2026);
     });
 
     test("stops on disposal", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let refreshes = 0;
       const store = refreshingStore({ clock, documents: () => {
 
@@ -447,24 +447,25 @@ describe("StateStore", () => {
         return Promise.resolve(refreshDocuments());
       }, refreshIntervalMs: 1000 });
 
-      await clock.tick();
-      await expectAt(() => refreshes === 1);
+      clock.advance(1000);
+      await settle();
+      await settleUntil(() => refreshes === 1);
 
       await store[Symbol.asyncDispose]();
 
-      // With the loop's controller aborted there is no interval consumer left, so a tick releases nothing.
-      await clock.tick();
-      await delay(5);
+      // With the loop's controller aborted there is no delay pending, so advancing releases nothing.
+      clock.advance(1000);
+      await settle();
       assert.equal(refreshes, 1, "disposal ended the refresh loop");
     });
 
     test("hands every refresh the one signal the loop lives by, and fires it on disposal", async () => {
 
-      /* The signal a refresh receives is the loop's own lifetime signal rather than one minted per tick, which is what lets a read in flight be released when the
-       * store goes away. Two ticks are taken because that is what tells the two apart: a per-tick controller would hand out a different object each time, and both
+      /* The signal a refresh receives is the loop's own lifetime signal rather than one minted per wake, which is what lets a read in flight be released when the
+       * store goes away. Two wakes are taken because that is what tells the two apart: a per-wake controller would hand out a different object each time, and both
        * would compare equal to each other by shape while unaborted.
        */
-      const clock = fakeClock();
+      const clock = new TestClock();
       const seen: (AbortSignal | undefined)[] = [];
       const store = new StateStore({ clock, refresh: (signal?: AbortSignal): Promise<void> => {
 
@@ -473,13 +474,15 @@ describe("StateStore", () => {
         return Promise.resolve();
       }, refreshIntervalMs: 1000 });
 
-      await clock.tick();
-      await expectAt(() => seen.length === 1);
-      await clock.tick();
-      await expectAt(() => seen.length === 2);
+      clock.advance(1000);
+      await settle();
+      await settleUntil(() => seen.length === 1);
+      clock.advance(1000);
+      await settle();
+      await settleUntil(() => seen.length === 2);
 
-      assert.ok(seen[0]);
-      assert.equal(seen[0], seen[1], "one signal across both ticks, so it belongs to the loop rather than to a tick");
+      assert.ok(seen[0], "the loop handed its signal to the first wake");
+      assert.equal(seen[0], seen[1], "one signal across both wakes, so it belongs to the loop rather than to a wake");
       assert.equal(seen[0].aborted, false, "and it has not fired while the store is alive");
 
       await store[Symbol.asyncDispose]();
@@ -492,7 +495,7 @@ describe("StateStore", () => {
       /* A read still in flight at disposal rejects because the store aborted it, which is the shutdown path rather than a refresh that went wrong. Announcing a
        * retry on the next interval would promise an interval the disposal has already ended, so this failure is the one the loop passes over without a word.
        */
-      const clock = fakeClock();
+      const clock = new TestClock();
       const log = capturingLog();
       let released = false;
       const store = new StateStore({ clock, log, refresh: async (signal?: AbortSignal): Promise<void> => {
@@ -505,19 +508,19 @@ describe("StateStore", () => {
         }));
       }, refreshIntervalMs: 1000 });
 
-      // The tick starts a read that never answers on its own, so it is still in flight when disposal arrives.
-      await clock.tick();
-      await delay(5);
+      // The wake starts a read that never answers on its own, so it is still in flight when disposal arrives.
+      clock.advance(1000);
+      await settle();
       await store[Symbol.asyncDispose]();
-      await expectAt(() => released);
-      await delay(5);
+      await settleUntil(() => released);
+      await settle();
 
       assert.ok(!log.entries.some((entry) => entry.message.includes("Bootstrap refresh failed")), "the shutdown path logged no retry promise");
     });
 
     test("never arms when the interval is false, and never arms on a non-positive interval", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let refreshes = 0;
       const documents = (): Promise<AccessRefreshDocuments> => {
 
@@ -526,15 +529,12 @@ describe("StateStore", () => {
         return Promise.resolve(refreshDocuments());
       };
 
-      const disabled = refreshingStore({ clock, documents, refreshIntervalMs: false });
-      const nonPositive = refreshingStore({ clock, documents, refreshIntervalMs: 0 });
+      await using disabled = refreshingStore({ clock, documents, refreshIntervalMs: false });
+      await using nonPositive = refreshingStore({ clock, documents, refreshIntervalMs: 0 });
 
-      await clock.tick();
-      await delay(5);
-      assert.equal(refreshes, 0, "neither store armed the loop, so a tick releases nothing");
-
-      await disabled[Symbol.asyncDispose]();
-      await nonPositive[Symbol.asyncDispose]();
+      clock.advance(1000);
+      await settle();
+      assert.equal(refreshes, 0, "neither store armed the loop, so advancing releases nothing");
     });
   });
 
@@ -553,15 +553,13 @@ describe("StateStore", () => {
 
     test("the observed order is controller first, then topology", async () => {
 
-      const store = new StateStore({ clock: fakeClock(), log: silentLog(), onDispatch: (event) => void seen.push(event.kind),
-        refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
       const seen: string[] = [];
+
+      await using store = plainStore((event) => void seen.push(event.kind));
 
       store.applyRefreshDocuments({ controller: controllerDocument(), topology: topologyDocument() });
 
       assert.deepEqual(seen, [ "controllerChanged", "bootstrapLoaded" ]);
-
-      await store[Symbol.asyncDispose]();
     });
 
     test("a pair that only re-spells its addresses leaves the state reference alone", () => {
@@ -593,8 +591,7 @@ describe("StateStore", () => {
     test("a topology-only pair dispatches the topology alone", () => {
 
       const seen: string[] = [];
-      const store = new StateStore({ clock: fakeClock(), log: silentLog(), onDispatch: (event) => void seen.push(event.kind),
-        refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
+      const store = plainStore((event) => void seen.push(event.kind));
 
       store.applyRefreshDocuments(refreshDocuments());
 
@@ -625,8 +622,8 @@ describe("StateStore", () => {
        * default the door facts take, because only an enumerating read may say a record is gone.
        */
       const seen: AccessTypedEvent[] = [];
-      const store = new StateStore({ clock: fakeClock(), log: silentLog(), onDispatch: (event) => void seen.push(event),
-        refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
+
+      await using store = plainStore((event) => void seen.push(event));
       const devices = [{ "alias": "Test alias 13", "capabilities": ["is_hub"], "connected_uah_id": "", "device_type": "UAH", "is_adopted": true, "is_connected": true,
         "is_managed": true, "is_online": true, "location_id": DOOR_HUB, "name": "Test Name 76", "unique_id": "aabbcc000001" }];
       const doors = [{ "full_name": "Test Name 11", "location_type": "door", "name": "Test Name 10", "unique_id": DOOR_HUB,
@@ -639,14 +636,13 @@ describe("StateStore", () => {
       assert.equal(store.snapshot().devices.size, 1);
       assert.equal(store.snapshot().doors.size, 1);
       assert.equal(store.snapshot().doorStates.size, 1);
-
-      await store[Symbol.asyncDispose]();
     });
 
     test("applyCensus carries the enumeration license when a caller passes it", async () => {
 
       const seen: AccessTypedEvent[] = [];
-      const store = new StateStore({ clock: fakeClock(), log: silentLog(), onDispatch: (event) => void seen.push(event), refreshIntervalMs: false });
+
+      await using store = plainStore((event) => void seen.push(event));
 
       store.dispatch(bootstrapEvent(topologyDocument()));
 
@@ -658,23 +654,106 @@ describe("StateStore", () => {
       assert.equal((seen.at(-1) as { complete: boolean }).complete, true);
       assert.deepEqual([...store.snapshot().doors.keys()], [DOOR_HUB], "the doors the enumeration did not name left with it");
       assert.equal(store.snapshot().devices.size, DEVICE_COUNT_2026, "and the collection it named nothing in kept every record");
-
-      await store[Symbol.asyncDispose]();
     });
 
     test("the refresh failsafe applies its pair through the same method", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const seen: string[] = [];
-      const store = refreshingStore({ clock, documents: () => Promise.resolve(refreshDocuments(controllerDocument())),
+
+      await using store = refreshingStore({ clock, documents: () => Promise.resolve(refreshDocuments(controllerDocument())),
         onDispatch: (event) => void seen.push(event.kind), refreshIntervalMs: 1000 });
 
-      await clock.tick();
-      await expectAt(() => store.snapshot().devices.size === DEVICE_COUNT_2026);
+      clock.advance(1000);
+      await settle();
+      await settleUntil(() => store.snapshot().devices.size === DEVICE_COUNT_2026);
 
       assert.deepEqual(seen, [ "controllerChanged", "bootstrapLoaded" ], "the failsafe seeds in the order the store owns rather than one of its own");
+    });
+  });
+
+  describe("the seed's debug line", () => {
+
+    // A store that keeps its own log, with the failsafe gated off so nothing but the test's own seed can reach the state.
+    const loggingStore = (): { log: CapturingLog; store: StateStore } => {
+
+      const log = capturingLog();
+
+      return { log, store: new StateStore({ clock: new TestClock(), log, refreshIntervalMs: false }) };
+    };
+
+    // The debug entries one seed produced, read by exact message so the refresh loop's own line can never stand in for a seed's.
+    const seedLines = (log: CapturingLog, message: string): TestLogEntry[] => {
+
+      return log.entries.filter((entry) => (entry.level === "debug") && (entry.message === message));
+    };
+
+    test("a refresh pair logs the counts the state holds after the seed", () => {
+
+      const { log, store } = loggingStore();
+
+      store.applyRefreshDocuments(refreshDocuments());
+
+      const lines = seedLines(log, "Applied the refresh documents to the state.");
+
+      assert.equal(lines.length, 1, "a seed that changed what the store holds speaks exactly once");
+      assert.deepEqual(lines[0]?.params, [{ devices: DEVICE_COUNT_2026, doorStates: 3, doors: 3 }]);
+    });
+
+    test("door-state facts on an empty store log the one door they established", () => {
+
+      const { log, store } = loggingStore();
+
+      store.applyDoorStateFacts([{ "location_id": DOOR_HUB, "lock": "locked" }]);
+
+      const lines = seedLines(log, "Applied the door-state facts to the state.");
+
+      assert.equal(lines.length, 1);
+
+      // What the line reports is what the store holds rather than what the source carried, and a fact about a door no topology has landed establishes door state
+      // and nothing else - which is the partial shape the line exists to make visible.
+      assert.deepEqual(lines[0]?.params, [{ devices: 0, doorStates: 1, doors: 0 }]);
+    });
+
+    test("a census logs each collection it seeded", () => {
+
+      const { log, store } = loggingStore();
+      const devices = [{ "alias": "Test alias 13", "capabilities": ["is_hub"], "connected_uah_id": "", "device_type": "UAH", "is_adopted": true,
+        "is_connected": true, "is_managed": true, "is_online": true, "location_id": DOOR_HUB, "name": "Test Name 76", "unique_id": HUB_2026 }];
+      const doors = [{ "full_name": "Test Name 11", "location_type": "door", "name": "Test Name 10", "unique_id": DOOR_HUB,
+        "up_id": "00000000-0000-0000-0000-000000000001" }];
+
+      store.applyCensus({ devices, doorStates: [{ "location_id": DOOR_HUB, "lock": "locked" }], doors });
+
+      const lines = seedLines(log, "Applied the official census to the state.");
+
+      assert.equal(lines.length, 1, "the three collections travel as one dispatch, so they report as one line");
+      assert.deepEqual(lines[0]?.params, [{ devices: 1, doorStates: 1, doors: 1 }]);
+    });
+
+    test("a refresh that reconciled to zero drift logs nothing", () => {
+
+      const { log, store } = loggingStore();
+
+      store.applyRefreshDocuments(refreshDocuments());
+      store.applyRefreshDocuments(refreshDocuments());
+
+      /* The second pair is a fresh parse of the same document, so the reducer reconciles it down to the records the first established and leaves the state
+       * reference where it was. A long-lived consumer's log therefore carries one line per change rather than one per refresh wake.
+       */
+      assert.equal(seedLines(log, "Applied the refresh documents to the state.").length, 1);
+    });
+
+    test("a seed applied after disposal logs nothing", async () => {
+
+      const { log, store } = loggingStore();
 
       await store[Symbol.asyncDispose]();
+      store.applyRefreshDocuments(refreshDocuments());
+
+      // Disposal is terminal, so the dispatch chokepoint refuses the work and the state reference never moves. The line reports what the store now holds, and
+      // nothing about what it holds changed.
+      assert.equal(log.entries.filter((entry) => entry.message.startsWith("Applied ")).length, 0);
     });
   });
 
@@ -683,8 +762,7 @@ describe("StateStore", () => {
     test("fires for each committed dispatch and stays silent for one the reducer absorbed", () => {
 
       const seen: string[] = [];
-      const store = new StateStore({ clock: fakeClock(), log: silentLog(), onDispatch: (event) => void seen.push(event.kind),
-        refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
+      const store = plainStore((event) => void seen.push(event.kind));
 
       store.dispatch(bootstrapEvent(topologyDocument()));
       assert.deepEqual(seen, ["bootstrapLoaded"]);
@@ -704,7 +782,7 @@ describe("StateStore", () => {
     test("runs before observers, so a hook reading the store sees the committed state", async () => {
 
       const order: string[] = [];
-      const store = new StateStore({ clock: fakeClock(), log: silentLog(),
+      const store = new StateStore({ clock: new TestClock(), log: silentLog(),
         onDispatch: () => order.push("hook:" + String(store.snapshot().doors.get(DOOR_HUB)?.name)),
         refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
 
@@ -719,9 +797,9 @@ describe("StateStore", () => {
         }
       })();
 
-      await delay(0);
+      await settle();
       store.dispatch(renameDoor("Renamed"));
-      await expectAt(() => order.includes("observer"));
+      await settleUntil(() => order.includes("observer"));
 
       assert.deepEqual(order.slice(-2), [ "hook:Renamed", "observer" ], "the hook sees the committed state and runs ahead of the observers");
 
@@ -732,8 +810,7 @@ describe("StateStore", () => {
     test("is construction-bound and ends with disposal", async () => {
 
       const seen: string[] = [];
-      const store = new StateStore({ clock: fakeClock(), log: silentLog(), onDispatch: (event) => void seen.push(event.kind),
-        refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
+      const store = plainStore((event) => void seen.push(event.kind));
 
       store.dispatch(bootstrapEvent(topologyDocument()));
       assert.equal(seen.length, 1);
@@ -763,7 +840,7 @@ describe("StateStore", () => {
       const first = collect(store.observe((state) => state.devices));
       const second = collect(store.observe((state) => state.doors));
 
-      await delay(0);
+      await settle();
       await store[Symbol.asyncDispose]();
 
       // Both iterations complete, and neither yielded anything.
@@ -798,7 +875,7 @@ describe("StateStore", () => {
 
     test("a refresh still in flight at disposal dispatches nothing when it settles", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { promise, resolve } = Promise.withResolvers<AccessRefreshDocuments>();
       let refreshes = 0;
       const store = refreshingStore({ clock, documents: () => {
@@ -808,9 +885,10 @@ describe("StateStore", () => {
         return promise;
       }, refreshIntervalMs: 1000 });
 
-      // Tick the loop into the refresh and leave it parked there.
-      await clock.tick();
-      await expectAt(() => refreshes === 1);
+      // Wake the loop into the refresh and leave it parked there.
+      clock.advance(1000);
+      await settle();
+      await settleUntil(() => refreshes === 1);
 
       const before = store.snapshot();
 
@@ -819,7 +897,7 @@ describe("StateStore", () => {
       // The refresh settles after disposal, and its dispatch meets the chokepoint guard.
       resolve(refreshDocuments());
       await promise;
-      await delay(5);
+      await settle();
 
       assert.ok(Object.is(before, store.snapshot()), "a late-settling refresh dispatches nothing into a disposed store");
       assert.equal(store.snapshot().devices.size, 0);
@@ -831,8 +909,13 @@ describe("StateStore", () => {
 
       await store[Symbol.asyncDispose]();
 
+      let completed = false;
+
       const { done, values } = collect(store.observe((state) => state.devices));
-      const completed = await Promise.race([ done.then(() => true), delay(50).then(() => false) ]);
+
+      // Reading completion through a flag rather than awaiting the iteration is what makes a hang fail this test with its own message rather than the runner's timeout.
+      void done.then(() => { completed = true; });
+      await settle();
 
       assert.ok(completed, "an observation of a disposed store must complete rather than hang its consumer");
       assert.equal(values.length, 0);
@@ -844,7 +927,7 @@ describe("createStateStore", () => {
 
   test("constructs the real engine: an observer wakes on the selected change and stays asleep on an unrelated one", async () => {
 
-    const store = createStateStore({ clock: fakeClock(),
+    const store = createStateStore({ clock: new TestClock(),
       refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
 
     store.dispatch(bootstrapEvent(topologyDocument()));
@@ -852,11 +935,11 @@ describe("createStateStore", () => {
     const ac = new AbortController();
     const { done, values } = collect(store.observe((state) => state.devices, { signal: ac.signal }));
 
-    await delay(0);
+    await settle();
 
     // A door rename must not wake an observer watching devices, while a device rename must - which proves the factory built the genuine engine rather than a stub.
     store.dispatch(renameDoor("Renamed"));
-    await delay(5);
+    await settle();
     assert.equal(values.length, 0, "an unrelated change is deduped");
 
     const drifted = topologyDocument();
@@ -866,7 +949,7 @@ describe("createStateStore", () => {
     device.alias = "Renamed Hardware";
 
     store.dispatch(bootstrapEvent(drifted));
-    await expectAt(() => values.length === 1);
+    await settleUntil(() => values.length === 1);
 
     ac.abort();
     await done;

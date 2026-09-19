@@ -8,18 +8,19 @@
  * without real-time waits. The injected dispatcher and clock let these tests assert the controller's throttle and retry behavior - the established behavioral
  * contract - exactly and without flakiness.
  */
-import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL } from "../settings.ts";
+import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT } from "../settings.ts";
 import { AccessAbortedError, AccessAuthError, AccessAuthorizationError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessThrottledError,
   AccessTimeoutError } from "../errors.ts";
 import type { AccessHttpRequestEndPayload, AccessHttpRequestStartPayload, AccessHttpThrottleEnteredPayload,
   AccessHttpThrottleExitedPayload } from "../diagnostics.ts";
+import { DIAL_CUT_BOUND_MS, createHttpsLoopback, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
+import { TestClock, capturingLog, settle, silentLog } from "homebridge-plugin-utils/testing";
+import { Transport, controllerReachable, responseOk } from "./http.ts";
+import { assertRejectsWith, errnoError, present, subscribeTo } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
-import { Transport } from "./http.ts";
 import assert from "node:assert/strict";
-import { capturingLog } from "../testing.helpers.ts";
-import { createHttpsLoopback } from "./loopback.helpers.ts";
-import diagnosticsChannel from "node:diagnostics_channel";
+import { channels } from "../diagnostics.ts";
 import { errors } from "undici";
 
 // The breaker cooldown in milliseconds, mirroring the transport's own derivation, so the fake-clock advances line up with the gate math.
@@ -142,7 +143,7 @@ describe("Transport", () => {
         thrown = error;
       }
 
-      assert.ok(thrown instanceof AccessAuthError);
+      assert.ok(thrown instanceof AccessAuthError, "a 401 surfaces as an authentication error");
       assert.equal(thrown.statusCode, 401);
       assert.equal(thrown.identity, "credentials", "a transport constructed without an identity authenticates with credentials");
 
@@ -168,7 +169,7 @@ describe("Transport", () => {
         thrown = error;
       }
 
-      assert.ok(thrown instanceof AccessAuthError);
+      assert.ok(thrown instanceof AccessAuthError, "a 401 surfaces as an authentication error");
       assert.equal(thrown.statusCode, 401);
       assert.equal(thrown.identity, "token");
 
@@ -194,7 +195,7 @@ describe("Transport", () => {
         thrown = error;
       }
 
-      assert.ok(thrown instanceof AccessAuthorizationError);
+      assert.ok(thrown instanceof AccessAuthorizationError, "a 403 surfaces as an authorization error");
       assert.equal(thrown.statusCode, 403);
       assert.equal(thrown.identity, "credentials", "a transport constructed without an identity authenticates with credentials");
 
@@ -220,7 +221,7 @@ describe("Transport", () => {
         thrown = error;
       }
 
-      assert.ok(thrown instanceof AccessAuthorizationError);
+      assert.ok(thrown instanceof AccessAuthorizationError, "a 403 surfaces as an authorization error");
       assert.equal(thrown.statusCode, 403);
       assert.equal(thrown.identity, "token");
 
@@ -246,7 +247,7 @@ describe("Transport", () => {
         thrown = error;
       }
 
-      assert.ok(thrown instanceof AccessRequestError);
+      assert.ok(thrown instanceof AccessRequestError, "a 500 surfaces as a request error");
       assert.equal(thrown.statusCode, 500);
       assert.equal(thrown.body, "boom");
       assert.equal(thrown.headers?.["x-trace"], "abc");
@@ -261,6 +262,24 @@ describe("Transport", () => {
       const response = await transport.send(url(host, "/ok"));
 
       assert.equal(response.ensureOk(), response, "ensureOk must return the same instance so calls can chain");
+    });
+  });
+
+  /* The two free predicates the module publishes, asserted across their boundaries rather than through a caller. One deepEqual of a mapped array per predicate is
+   * what makes a boundary that moves name the input it moved on, where an equality assertion per code would report only that one of them changed.
+   */
+  describe("the status predicates", () => {
+
+    test("responseOk answers true for 2xx alone", () => {
+
+      assert.deepEqual([ undefined, 199, 200, 299, 300 ].map(responseOk), [ false, false, true, true, false ]);
+    });
+
+    test("controllerReachable answers true for any defined status below 500", () => {
+
+      // A refusal came from a controller that was there to refuse, so the breaker counts it as reachable; only a 5xx or no answer at all says the controller
+      // could not serve the request.
+      assert.deepEqual([ undefined, 499, 500, 501, 200 ].map(controllerReachable), [ false, true, false, false, true ]);
     });
   });
 
@@ -389,17 +408,54 @@ describe("Transport", () => {
 
     test("our timeout deadline surfaces as AccessTimeoutError", async () => {
 
-      const { host, pool, transport } = makeMockTransport();
+      const { clock, host, pool, transport } = makeMockTransport();
+
+      /* undici installs a request's abort hook at dispatch, so a reply the mock holds open by its own delay is what stays in flight long enough for the deadline
+       * to end it; a reply the test releases by hand would sit ahead of that hook and never be reached by an abort at all. The deadline is the injected clock's,
+       * so firing it is an advance rather than a real wait.
+       */
+      pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
+
+      const pending = transport.send(url(host, "/slow"));
+
+      await settle();
+      clock.advance(ACCESS_API_TIMEOUT);
+
+      await assert.rejects(pending, AccessTimeoutError);
+    });
+
+    test("a caller's timeout option sets the deadline", async () => {
+
+      const { clock, host, pool, transport } = makeMockTransport();
 
       pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
 
-      await assert.rejects(transport.send(url(host, "/slow"), { timeout: 20 }), AccessTimeoutError);
+      const pending = transport.send(url(host, "/slow"), { timeout: 50 });
+
+      // The rejection is observed here as well as by the assertion below, so reading the flag never leaves the request's failure unhandled in the meantime.
+      let settled = false;
+      const observed = pending.then((): void => undefined, (): void => undefined).then((): void => {
+
+        settled = true;
+      });
+
+      await settle();
+      clock.advance(49);
+      await settle();
+
+      assert.equal(settled, false, "a deadline one millisecond short of the caller's value must leave the request in flight");
+
+      clock.advance(1);
+
+      // The elapsed time the error carries is the injected clock's own measurement, which is what makes the caller's value and the reported one the same number.
+      await assert.rejects(pending, (error: unknown) => (error instanceof AccessTimeoutError) && (error.elapsedMs === 50));
+      await observed;
     });
 
     test("a socket-level failure surfaces as AccessNetworkError with the errno code", async () => {
 
       const { host, pool, transport } = makeMockTransport();
-      const errno = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+      const errno = errnoError("connect ECONNREFUSED", "ECONNREFUSED");
 
       pool.intercept({ method: "GET", path: "/x" }).replyWithError(errno);
 
@@ -445,6 +501,190 @@ describe("Transport", () => {
     });
   });
 
+  /* What a connection attempt still in flight does when something ends it.
+   *
+   * Every test here builds its transport WITHOUT an injected dispatcher, exactly as the certificate-verification tests below do, because the owned pool and the
+   * connector beside it are the whole subject: a MockAgent replaces undici's dispatch wholesale, and everything beneath it - the connect phase included - is
+   * permanently out of a mocked test's reach. The peer is a silent one, which accepts a connection and then answers nothing, so the TLS handshake stays in flight
+   * for as long as a test needs it.
+   *
+   * Each settlement is bounded on REAL wall-clock even where the deadline itself runs on virtual time, because a virtual clock cannot tell a cut from undici's own
+   * ten-second connect timer: both end the request as the same class, and a `TestClock` reports whatever elapsed time its advance says. A cut that quietly did
+   * nothing therefore fails these tests by blowing the bound rather than by changing a class.
+   */
+  describe("the connection dial", () => {
+
+    test("a caller abort during the dial rejects at once with AccessAbortedError and releases the socket", async () => {
+
+      await using peer = await createSilentLoopback();
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+
+      const controller = new AbortController();
+      const arriving = peer.connection(0);
+      const pending = transport.send(url(peer.host, "/x"), { signal: controller.signal });
+      const connection = await arriving;
+      const startedAt = process.hrtime.bigint();
+
+      controller.abort();
+
+      await assert.rejects(pending, AccessAbortedError);
+      await connection.closed;
+
+      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "a cancelled connection attempt ends at once rather than running on to undici's own connect timer");
+
+      // The retry interceptor must not put the cut request back on the wire, and the count of connections the peer accepted is what says it did not.
+      await settle();
+
+      assert.equal(peer.accepted, 1, "a request whose connection attempt was cut must not be re-dialed");
+    });
+
+    test("the deadline during the dial rejects with AccessTimeoutError on virtual time and releases the socket", async () => {
+
+      await using peer = await createSilentLoopback();
+
+      const clock = new TestClock();
+
+      await using transport = new Transport({ clock, host: peer.host, log: silentLog() });
+
+      const arriving = peer.connection(0);
+      const pending = transport.send(url(peer.host, "/x"));
+      const connection = await arriving;
+      const startedAt = process.hrtime.bigint();
+
+      clock.advance(ACCESS_API_TIMEOUT);
+
+      await assert.rejects(pending, (error: unknown) => (error instanceof AccessTimeoutError) && (error.elapsedMs === ACCESS_API_TIMEOUT));
+      await connection.closed;
+
+      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "an expired connection attempt ends at once rather than running on to undici's own connect timer");
+    });
+
+    test("a signal already aborted when the request is dispatched rejects at once and opens no connection", async () => {
+
+      await using peer = await createSilentLoopback();
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+
+      const controller = new AbortController();
+
+      controller.abort();
+
+      const startedAt = process.hrtime.bigint();
+
+      // A listener attached to a signal that has already fired never runs, and undici acts on one only after the connect, so the check that catches this has to sit
+      // ahead of the dispatch itself. What proves the check is there is that the peer never sees a connection at all.
+      await assert.rejects(transport.send(url(peer.host, "/x"), { signal: controller.signal }), AccessAbortedError);
+
+      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "a request whose signal had already fired ends at once");
+
+      await settle();
+
+      assert.equal(peer.accepted, 0, "a request whose signal had already fired must never open a connection");
+    });
+
+    test("a concurrent dial for another caller is cut as a recoverable network interruption", async () => {
+
+      await using peer = await createSilentLoopback();
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+
+      const cancelled = new AbortController();
+      const bystander = new AbortController();
+      const arriving = Promise.all([ peer.connection(0), peer.connection(1) ]);
+      const pendingCancelled = transport.send(url(peer.host, "/one"), { signal: cancelled.signal });
+      const pendingBystander = transport.send(url(peer.host, "/two"), { signal: bystander.signal });
+      const connections = await arriving;
+
+      /* A pool's connection attempts are shared while a signal is per request, so one caller's cancel reaches a connection attempt another caller was waiting on.
+       * That is the accepted collateral, and what matters is that the bystander is told the truth about it rather than told it was cancelled.
+       */
+      cancelled.abort();
+
+      await assert.rejects(pendingCancelled, AccessAbortedError);
+      await assert.rejects(pendingBystander, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("cut for another request"));
+      await Promise.all(connections.map(async (connection) => connection.closed));
+    });
+
+    test("two requests sharing one caller signal both report the cancel", async () => {
+
+      await using peer = await createSilentLoopback();
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+
+      const controller = new AbortController();
+      const arriving = Promise.all([ peer.connection(0), peer.connection(1) ]);
+      const first = transport.send(url(peer.host, "/one"), { signal: controller.signal });
+      const second = transport.send(url(peer.host, "/two"), { signal: controller.signal });
+      const connections = await arriving;
+
+      controller.abort();
+
+      // Both requests carry the signal that fired, so identity names the caller's cancel for each of them rather than making one of them a bystander.
+      await assert.rejects(first, AccessAbortedError);
+      await assert.rejects(second, AccessAbortedError);
+      await Promise.all(connections.map(async (connection) => connection.closed));
+    });
+
+    test("a cut names the request whose signal fired, whichever was dialed first", async () => {
+
+      await using peer = await createSilentLoopback();
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+
+      const bystander = new AbortController();
+      const cancelled = new AbortController();
+      const arriving = Promise.all([ peer.connection(0), peer.connection(1) ]);
+      const pendingBystander = transport.send(url(peer.host, "/one"), { signal: bystander.signal });
+      const pendingCancelled = transport.send(url(peer.host, "/two"), { signal: cancelled.signal });
+      const connections = await arriving;
+
+      // The same collateral in the other order, which is what says the naming follows the signal that fired rather than the order the connections were opened in.
+      cancelled.abort();
+
+      await assert.rejects(pendingCancelled, AccessAbortedError);
+      await assert.rejects(pendingBystander, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("cut for another request"));
+      await Promise.all(connections.map(async (connection) => connection.closed));
+    });
+
+    test("reset() during a dial fails the request as the pool-reset interruption and releases the socket", async () => {
+
+      await using peer = await createSilentLoopback();
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+
+      const arriving = peer.connection(0);
+      const pending = transport.send(url(peer.host, "/x"));
+      const connection = await arriving;
+      const startedAt = process.hrtime.bigint();
+
+      transport.reset();
+
+      // undici's own destroy fails the request at once whether or not the connection attempt was cut, so the peer's close is the assertion that carries this row.
+      await assert.rejects(pending, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("connection pool was reset"));
+      await connection.closed;
+
+      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "a reset releases a connection attempt rather than leaving it to undici's own connect timer");
+    });
+
+    test("disposal during a dial releases the socket and does not wait on it", async () => {
+
+      await using peer = await createSilentLoopback();
+
+      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      const arriving = peer.connection(0);
+      const pending = transport.send(url(peer.host, "/x"));
+      const connection = await arriving;
+
+      // The rejection is claimed before the disposal that causes it, so it is never a rejection nobody is waiting on.
+      const failing = assert.rejects(pending, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("connection pool was reset"));
+      const startedAt = process.hrtime.bigint();
+
+      await transport[Symbol.asyncDispose]();
+
+      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "disposal must not wait out the connection attempt it severed");
+
+      await failing;
+      await connection.closed;
+
+      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "the severed connection attempt ends within the same bound");
+    });
+  });
+
   describe("throttle circuit breaker", () => {
 
     test("trips after the consecutive-failure threshold, then refuses without dispatching", async () => {
@@ -452,7 +692,7 @@ describe("Transport", () => {
       let entered = 0;
       const { host, pool, transport } = makeMockTransport();
 
-      using _enteredSub = transport.on("throttleEntered", () => entered++);
+      using enteredSub = transport.on("throttleEntered", () => entered++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT);
 
@@ -501,7 +741,7 @@ describe("Transport", () => {
       let entered = 0;
       const { host, pool, transport } = makeMockTransport();
 
-      using _enteredSub = transport.on("throttleEntered", () => entered++);
+      using enteredSub = transport.on("throttleEntered", () => entered++);
 
       // A 503 is the controller saying it could not serve the request, which is the shape the cooldown exists for. Paired with the refusal test above, this is what
       // distinguishes "the breaker ignores 4xx" from "the breaker stopped counting".
@@ -547,7 +787,7 @@ describe("Transport", () => {
       let exited = 0;
       const { clock, host, pool, transport } = makeMockTransport();
 
-      using _exitedSub = transport.on("throttleExited", () => exited++);
+      using exitedSub = transport.on("throttleExited", () => exited++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT);
       pool.intercept({ method: "GET", path: "/f" }).reply(200, { recovered: true });
@@ -567,7 +807,7 @@ describe("Transport", () => {
       let exited = 0;
       const { clock, host, pool, transport } = makeMockTransport();
 
-      using _exitedSub = transport.on("throttleExited", () => exited++);
+      using exitedSub = transport.on("throttleExited", () => exited++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(503, "unavailable").times(ACCESS_API_ERROR_LIMIT);
       pool.intercept({ method: "GET", path: "/f" }).reply(403, "forbidden");
@@ -578,7 +818,7 @@ describe("Transport", () => {
       assert.equal(transport.isThrottled, true);
 
       /* The trial comes back refused. That is the controller answering on the merits of one request, which settles the only question the breaker asked - so the
-       * episode ends here rather than re-arming for another five minutes on the strength of an answer that proves the controller is up.
+       * episode ends here rather than re-arming the cooldown on the strength of an answer that proves the controller is up.
        */
       clock.advance(COOLDOWN_MS);
 
@@ -598,8 +838,8 @@ describe("Transport", () => {
       let exited = 0;
       const { clock, host, pool, transport } = makeMockTransport();
 
-      using _enteredSub = transport.on("throttleEntered", () => entered++);
-      using _exitedSub = transport.on("throttleExited", () => exited++);
+      using enteredSub = transport.on("throttleEntered", () => entered++);
+      using exitedSub = transport.on("throttleExited", () => exited++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT + 1);
 
@@ -624,8 +864,8 @@ describe("Transport", () => {
       let exited = 0;
       const { clock, host, pool, transport } = makeMockTransport();
 
-      using _enteredSub = transport.on("throttleEntered", () => entered++);
-      using _exitedSub = transport.on("throttleExited", () => exited++);
+      using enteredSub = transport.on("throttleEntered", () => entered++);
+      using exitedSub = transport.on("throttleExited", () => exited++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT + 1);
       pool.intercept({ method: "GET", path: "/f" }).reply(200, {});
@@ -650,7 +890,7 @@ describe("Transport", () => {
       let exited = 0;
       const { clock, host, pool, transport } = makeMockTransport();
 
-      using _exitedSub = transport.on("throttleExited", () => exited++);
+      using exitedSub = transport.on("throttleExited", () => exited++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT);
       pool.intercept({ method: "GET", path: "/f" }).reply(200, { recovered: true });
@@ -677,8 +917,8 @@ describe("Transport", () => {
       let exited = 0;
       const { clock, host, pool, transport } = makeMockTransport();
 
-      using _enteredSub = transport.on("throttleEntered", () => entered++);
-      using _exitedSub = transport.on("throttleExited", () => exited++);
+      using enteredSub = transport.on("throttleEntered", () => entered++);
+      using exitedSub = transport.on("throttleExited", () => exited++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT + 1);
 
@@ -698,7 +938,7 @@ describe("Transport", () => {
     test("a transport-level exception books a failure and trips the breaker", async () => {
 
       const { host, pool, transport } = makeMockTransport();
-      const errno = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+      const errno = errnoError("connect ECONNREFUSED", "ECONNREFUSED");
 
       pool.intercept({ method: "GET", path: "/f" }).replyWithError(errno).times(ACCESS_API_ERROR_LIMIT);
 
@@ -738,36 +978,23 @@ describe("Transport", () => {
 
       const starts: AccessHttpRequestStartPayload[] = [];
       const ends: AccessHttpRequestEndPayload[] = [];
-      const onStart = (message: unknown): void => void starts.push(message as AccessHttpRequestStartPayload);
-      const onEnd = (message: unknown): void => void ends.push(message as AccessHttpRequestEndPayload);
 
-      diagnosticsChannel.subscribe("unifi-access:http:request:start", onStart);
-      diagnosticsChannel.subscribe("unifi-access:http:request:end", onEnd);
+      using startSub = subscribeTo(channels.httpRequestStart, (message) => void starts.push(message));
+      using endSub = subscribeTo(channels.httpRequestEnd, (message) => void ends.push(message));
 
-      let configuredHost = "";
+      const { host: configuredHost, pool, transport } = makeMockTransport();
 
-      try {
+      pool.intercept({ method: "GET", path: "/d" }).reply(200, {});
 
-        const { host, pool, transport } = makeMockTransport();
-
-        configuredHost = host;
-        pool.intercept({ method: "GET", path: "/d" }).reply(200, {});
-
-        await transport.send(url(host, "/d"));
-      } finally {
-
-        diagnosticsChannel.unsubscribe("unifi-access:http:request:start", onStart);
-        diagnosticsChannel.unsubscribe("unifi-access:http:request:end", onEnd);
-      }
+      await transport.send(url(configuredHost, "/d"));
 
       assert.equal(starts.length, 1);
       assert.equal(starts[0]?.method, "GET");
       assert.equal(starts[0]?.host, configuredHost, "the start payload carries the configured controller host verbatim");
       assert.equal(ends.length, 1);
 
-      const end = ends[0];
+      const end = present(ends[0], "the request's end payload");
 
-      assert.ok(end);
       assert.equal(end.outcome, "response", "a request that received a response reports the response outcome");
       assert.equal((end.outcome === "response") ? end.statusCode : undefined, 200);
       assert.equal(end.host, configuredHost, "the end payload carries the configured controller host verbatim");
@@ -777,31 +1004,19 @@ describe("Transport", () => {
     test("reports the failure outcome on the end channel when the request fails at the transport level", async () => {
 
       const ends: AccessHttpRequestEndPayload[] = [];
-      const onEnd = (message: unknown): void => void ends.push(message as AccessHttpRequestEndPayload);
 
-      diagnosticsChannel.subscribe("unifi-access:http:request:end", onEnd);
+      using endSub = subscribeTo(channels.httpRequestEnd, (message) => void ends.push(message));
 
-      let configuredHost = "";
+      const { host: configuredHost, pool, transport } = makeMockTransport();
 
-      try {
+      pool.intercept({ method: "GET", path: "/x" }).replyWithError(errnoError("connect ECONNREFUSED", "ECONNREFUSED"));
 
-        const { host, pool, transport } = makeMockTransport();
-        const errno = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
-
-        configuredHost = host;
-        pool.intercept({ method: "GET", path: "/x" }).replyWithError(errno);
-
-        await assert.rejects(transport.send(url(host, "/x")), AccessNetworkError);
-      } finally {
-
-        diagnosticsChannel.unsubscribe("unifi-access:http:request:end", onEnd);
-      }
+      await assert.rejects(transport.send(url(configuredHost, "/x")), AccessNetworkError);
 
       assert.equal(ends.length, 1);
 
-      const end = ends[0];
+      const end = present(ends[0], "the request's end payload");
 
-      assert.ok(end);
       assert.equal(end.host, configuredHost, "the failure-path end payload still carries the configured controller host");
       assert.equal(end.outcome, "failure", "a request that never received a response reports the failure outcome");
       assert.ok(((end.outcome === "failure") ? end.error : "").length > 0, "a transport-level failure carries the classified error's message");
@@ -811,30 +1026,18 @@ describe("Transport", () => {
 
       const entered: AccessHttpThrottleEnteredPayload[] = [];
       const exited: AccessHttpThrottleExitedPayload[] = [];
-      const onEntered = (message: unknown): void => void entered.push(message as AccessHttpThrottleEnteredPayload);
-      const onExited = (message: unknown): void => void exited.push(message as AccessHttpThrottleExitedPayload);
 
-      diagnosticsChannel.subscribe("unifi-access:http:throttle:entered", onEntered);
-      diagnosticsChannel.subscribe("unifi-access:http:throttle:exited", onExited);
+      using enteredSub = subscribeTo(channels.httpThrottleEntered, (message) => void entered.push(message));
+      using exitedSub = subscribeTo(channels.httpThrottleExited, (message) => void exited.push(message));
 
-      let configuredHost = "";
+      const { clock, host: configuredHost, pool, transport } = makeMockTransport();
 
-      try {
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT);
+      pool.intercept({ method: "GET", path: "/f" }).reply(200, {});
 
-        const { clock, host, pool, transport } = makeMockTransport();
-
-        configuredHost = host;
-        pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT);
-        pool.intercept({ method: "GET", path: "/f" }).reply(200, {});
-
-        await sendFailures(transport, url(host, "/f"), ACCESS_API_ERROR_LIMIT);
-        clock.advance(COOLDOWN_MS);
-        await transport.send(url(host, "/f"));
-      } finally {
-
-        diagnosticsChannel.unsubscribe("unifi-access:http:throttle:entered", onEntered);
-        diagnosticsChannel.unsubscribe("unifi-access:http:throttle:exited", onExited);
-      }
+      await sendFailures(transport, url(configuredHost, "/f"), ACCESS_API_ERROR_LIMIT);
+      clock.advance(COOLDOWN_MS);
+      await transport.send(url(configuredHost, "/f"));
 
       assert.deepEqual(entered, [{ consecutiveFailures: ACCESS_API_ERROR_LIMIT, cooldownMs: COOLDOWN_MS, host: configuredHost }]);
 
@@ -898,13 +1101,10 @@ describe("Transport", () => {
        * classifies as the reachability fault it is, and the errno lifted from the cause chain is what says the refusal was about the certificate rather than about
        * reaching the host at all.
        */
-      await assert.rejects(async () => transport.send(url(peer.host, "/ok")), (error: unknown) => {
+      await assertRejectsWith(async () => transport.send(url(peer.host, "/ok")), AccessNetworkError, { check: (error) => {
 
-        assert.ok(error instanceof AccessNetworkError);
         assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
-
-        return true;
-      });
+      } });
     });
   });
 

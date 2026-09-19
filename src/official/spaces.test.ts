@@ -5,16 +5,13 @@
  */
 import type { AccessOfficialDoor, AccessOfficialDoorGroup, AccessOfficialDoorGroupResource, AccessOfficialDoorGroupTopology, AccessOfficialEmergencyState,
   AccessOfficialLockRule, AccessOfficialLockRuleSet, AccessOfficialResourceTopology, AccessOfficialTopologyResource } from "./spaces.ts";
+import { PATH_ID, PATH_ID_ENCODED, VOID_OK, describeDomainTable, domainRig, officialPath } from "./domain.helpers.ts";
 import { describe, test } from "node:test";
-import { describeDomainTable, domainRig, officialPath } from "./domain.helpers.ts";
 import { AccessAbortedError } from "../errors.ts";
 import type { DomainRow } from "./domain.helpers.ts";
 import { OfficialSpaces } from "./spaces.ts";
 import assert from "node:assert/strict";
-
-const ID = "a b/c";
-const ENCODED = "a%20b%2Fc";
-const VOID_OK = { "code": "SUCCESS", "msg": "success" };
+import { present } from "../testing.helpers.ts";
 
 // Transcribed from a live controller: the UA Hub, whose position sensor is unwired and which reports the DPS triplet on its own door record.
 const DOOR_HUB = { "door_lock_relay_status": "lock", "door_position_status": "none",
@@ -42,42 +39,44 @@ const rows: readonly DomainRow<OfficialSpaces>[] = [
     reply: { "code": "SUCCESS", "data": DOOR_GROUP, "msg": "success" },
     run: async (domain, call) => domain.createDoorGroup({ "group_name": "Perimeter", resources: ["d-1"] }, call), verb: "POST" },
 
-  { expected: DOOR_GROUP, method: "fetchDoorGroup", path: officialPath("/door_groups/" + ENCODED), reply: { "code": "SUCCESS", "data": DOOR_GROUP,
-    "msg": "success" }, run: async (domain, call) => domain.fetchDoorGroup(ID, call), verb: "GET" },
+  { expected: DOOR_GROUP, method: "fetchDoorGroup", path: officialPath("/door_groups/" + PATH_ID_ENCODED), reply: { "code": "SUCCESS", "data": DOOR_GROUP,
+    "msg": "success" }, run: async (domain, call) => domain.fetchDoorGroup(PATH_ID, call), verb: "GET" },
 
-  { body: "{\"resources\":[]}", expected: DOOR_GROUP, method: "updateDoorGroup", path: officialPath("/door_groups/" + ENCODED),
-    reply: { "code": "SUCCESS", "data": DOOR_GROUP, "msg": "success" }, run: async (domain, call) => domain.updateDoorGroup(ID, { resources: [] }, call), verb: "PUT" },
+  { body: "{\"resources\":[]}", expected: DOOR_GROUP, method: "updateDoorGroup", path: officialPath("/door_groups/" + PATH_ID_ENCODED),
+    reply: { "code": "SUCCESS", "data": DOOR_GROUP, "msg": "success" }, run: async (domain, call) => domain.updateDoorGroup(PATH_ID, { resources: [] }, call),
+    verb: "PUT" },
 
   { expected: [], method: "fetchAllDoorGroups", path: officialPath("/door_groups"), reply: { "code": "SUCCESS", "data": [], "msg": "success" },
     run: async (domain, call) => domain.fetchAllDoorGroups(call), verb: "GET" },
 
-  { method: "deleteDoorGroup", path: officialPath("/door_groups/" + ENCODED), reply: VOID_OK, run: async (domain, call) => domain.deleteDoorGroup(ID, call),
+  { method: "deleteDoorGroup", path: officialPath("/door_groups/" + PATH_ID_ENCODED), reply: VOID_OK, run: async (domain, call) => domain.deleteDoorGroup(PATH_ID, call),
     verb: "DELETE" },
 
-  { expected: DOOR_HUB, method: "fetch", path: officialPath("/doors/" + ENCODED), reply: { "code": "SUCCESS", "data": DOOR_HUB, "msg": "success" },
-    run: async (domain, call) => domain.fetch(ID, call), verb: "GET" },
+  { expected: DOOR_HUB, method: "fetch", path: officialPath("/doors/" + PATH_ID_ENCODED), reply: { "code": "SUCCESS", "data": DOOR_HUB, "msg": "success" },
+    run: async (domain, call) => domain.fetch(PATH_ID, call), verb: "GET" },
 
   { expected: [ DOOR_MINI, DOOR_HUB ], method: "fetchAll", path: officialPath("/doors"), reply: { "code": "SUCCESS", "data": [ DOOR_MINI, DOOR_HUB ],
     "msg": "success" }, run: async (domain, call) => domain.fetchAll(call), verb: "GET" },
 
   // A relay actuation, so the call site opts out of the transparent retry rather than inheriting the pool's default.
   { body: "{\"actor_id\":\"bot-1\",\"actor_name\":\"the automation\",\"extra\":{\"ticket\":\"T-42\"}}", method: "unlock",
-    path: officialPath("/doors/" + ENCODED + "/unlock") + "?control_cmd=open&entry_method=in&reader_id=r-1", reply: VOID_OK, retry: false,
-    run: async (domain, call) => domain.unlock(ID, { actor: { id: "bot-1", name: "the automation" }, controlCmd: "open", entryMethod: "in",
+    path: officialPath("/doors/" + PATH_ID_ENCODED + "/unlock") + "?control_cmd=open&entry_method=in&reader_id=r-1", reply: VOID_OK, retry: false,
+    run: async (domain, call) => domain.unlock(PATH_ID, { actor: { id: "bot-1", name: "the automation" }, controlCmd: "open", entryMethod: "in",
       extra: { ticket: "T-42" }, readerId: "r-1" }, call), verb: "PUT" },
 
-  { body: "{}", method: "unlock", path: officialPath("/doors/" + ENCODED + "/unlock"), reply: VOID_OK, retry: false,
-    run: async (domain, call) => domain.unlock(ID, {}, call), verb: "PUT" },
+  { body: "{}", method: "unlock", path: officialPath("/doors/" + PATH_ID_ENCODED + "/unlock"), reply: VOID_OK, retry: false,
+    run: async (domain, call) => domain.unlock(PATH_ID, {}, call), verb: "PUT" },
 
   // The interval is minutes, on the wire and in the reference alike - a two-unit custom rule was live-measured holding the relay for 120 seconds.
-  { body: "{\"interval\":2,\"type\":\"custom\"}", method: "setLockRule", path: officialPath("/doors/" + ENCODED + "/lock_rule"), reply: VOID_OK,
-    run: async (domain, call) => domain.setLockRule(ID, { interval: 2, type: "custom" }, call), verb: "PUT" },
+  { body: "{\"interval\":2,\"type\":\"custom\"}", method: "setLockRule", path: officialPath("/doors/" + PATH_ID_ENCODED + "/lock_rule"), reply: VOID_OK,
+    run: async (domain, call) => domain.setLockRule(PATH_ID, { interval: 2, type: "custom" }, call), verb: "PUT" },
 
-  { body: "{\"type\":\"reset\"}", method: "setLockRule", path: officialPath("/doors/" + ENCODED + "/lock_rule"), reply: VOID_OK,
-    run: async (domain, call) => domain.setLockRule(ID, { type: "reset" }, call), verb: "PUT" },
+  { body: "{\"type\":\"reset\"}", method: "setLockRule", path: officialPath("/doors/" + PATH_ID_ENCODED + "/lock_rule"), reply: VOID_OK,
+    run: async (domain, call) => domain.setLockRule(PATH_ID, { type: "reset" }, call), verb: "PUT" },
 
-  { expected: { "ended_time": 0, "type": "" }, method: "fetchLockRule", path: officialPath("/doors/" + ENCODED + "/lock_rule"),
-    reply: { "code": "SUCCESS", "data": { "ended_time": 0, "type": "" }, "msg": "success" }, run: async (domain, call) => domain.fetchLockRule(ID, call), verb: "GET" },
+  { expected: { "ended_time": 0, "type": "" }, method: "fetchLockRule", path: officialPath("/doors/" + PATH_ID_ENCODED + "/lock_rule"),
+    reply: { "code": "SUCCESS", "data": { "ended_time": 0, "type": "" }, "msg": "success" }, run: async (domain, call) => domain.fetchLockRule(PATH_ID, call),
+    verb: "GET" },
 
   // All three states, each sending both flags, so no request leaves the other flag's prior value ambiguous.
   { body: "{\"evacuation\":true,\"lockdown\":false}", method: "setEmergency", path: officialPath("/doors/settings/emergency"), reply: VOID_OK,
@@ -124,7 +123,7 @@ describe("OfficialSpaces wire truths", () => {
 
     const doors = await rig.domain.fetchAll();
 
-    // The three states mirror three real hardware carriers, and nothing here synthesizes a fourth value to tell them apart.
+    // The three states arise from how inconsistently hardware reports extras, not from a one-to-one correspondence with distinct device models.
     assert.equal(doors[0]?.extras, undefined);
     assert.deepEqual(doors[1]?.extras, {});
     assert.equal(typeof doors[2]?.extras?.["uah-wiring_state_dps-pos"], "string");
@@ -225,9 +224,7 @@ describe("the caller's abort signal on a door command", () => {
 
     await rig.domain.unlock("d-1", {}, { signal: controller.signal });
 
-    const call = rig.dispatch.calls[0];
-
-    assert.ok(call);
+    const call = present(rig.dispatch.calls[0], "the dispatched call");
 
     /* A cancellation is something the request is steered by rather than something the controller is told, so it belongs to the call options alone. The body and
      * the query must read exactly as they would have without it - a signal that reached either would be a caller's control leaking onto the wire.
@@ -247,9 +244,8 @@ describe("the caller's abort signal on a door command", () => {
 
     await rig.domain.setLockRule("d-1", { type: "reset" }, { signal: controller.signal });
 
-    const call = rig.dispatch.calls[0];
+    const call = present(rig.dispatch.calls[0], "the dispatched call");
 
-    assert.ok(call);
     assert.equal(call.call.signal, controller.signal);
     assert.deepEqual(call.opts.json, { type: "reset" }, "the rule alone is what was sent");
   });

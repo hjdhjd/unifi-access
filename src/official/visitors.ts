@@ -8,6 +8,7 @@ import { officialEndpoint, officialPageQuery } from "./endpoints.ts";
 import type { AccessOfficialPageOptions } from "./endpoints.ts";
 import type { AccessOfficialWeekSchedule } from "./policies.ts";
 import type { Nullable } from "../types/index.ts";
+import { officialPages } from "./pages.ts";
 
 /**
  * A door or door group a visitor may enter, as their record names it.
@@ -29,8 +30,8 @@ export interface AccessOfficialVisitorResource {
 /**
  * The recurring visit schedule attached to a visitor.
  *
- * `weekly` is null on a one-time visit, which is the wire's way of saying the visit has no recurring pattern rather than that it has an empty one. The member is
- * spelled `weekly` on every response sample, where the request that sets it is spelled `week_schedule` - the two spellings are the reference's own, transcribed
+ * `weekly` is null on a one-time visit, which is the wire's way of saying the visit has no recurring pattern rather than that it has an empty one. The member is spelled
+ * `weekly` on every response sample, where the request that sets it is spelled `week_schedule` - the request and response spellings are the reference's own, transcribed
  * rather than reconciled.
  *
  * Documentation-derived.
@@ -244,6 +245,22 @@ export class OfficialVisitors {
   }
 
   /**
+   * Iterate every visitor, walking the listing to its end. `GET /visitors`, permission `view:visitor`. License plates on the returned records require UniFi Access
+   * 3.3.10 or later.
+   *
+   * Composed over {@link OfficialVisitors.fetchAll}; the endpoint is live-verified.
+   *
+   * @param opts - The status to narrow to, the expansions to request, and the page size to walk the listing in.
+   * @param call - The per-call options - an optional abort signal.
+   *
+   * @returns Every visitor the listing reports, in the order its pages carry them.
+   */
+  async *iterateAll(opts: AccessOfficialVisitorListOptions = {}, call: AccessOfficialCallOptions = {}): AsyncGenerator<AccessOfficialVisitor> {
+
+    yield* officialPages((page) => this.fetchAll({ ...opts, ...page }, call), opts);
+  }
+
+  /**
    * Update a visitor. `PUT /visitors/:id`, permission `edit:visitor`.
    *
    * Documentation-derived.
@@ -293,6 +310,9 @@ export class OfficialVisitors {
 
   /**
    * Unassign an NFC card from a visitor. `PUT /visitors/:id/nfc_cards/delete`, permission `edit:visitor`.
+   *
+   * The `/delete` path suffix on a `PUT` is the same verb-tunneling workaround {@link OfficialUsers.unassignNfcCard} explains in full: the operation carries a
+   * body, so it goes through a verb that allows one, with the suffix carrying the delete semantics.
    *
    * Documentation-derived.
    *

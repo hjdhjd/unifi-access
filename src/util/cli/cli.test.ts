@@ -5,18 +5,16 @@
  *
  * Every test here runs offline. Commands reach the controller only through the injected hooks, so a structural fake stands in for a connected client and the
  * assertions are about what each command reads, writes, and commands - never about a live controller.
- *
- * One path is deliberately untested and named here rather than left as a silent gap: the entry point's EPIPE handler calls `process.exit(0)` from a stream error
- * listener, which cannot be exercised in-process without ending the test run itself. It is a handful of lines with no branching beyond the errno check, and the
- * donor's suite leaves it unexercised for the same reason.
  */
-import { CREDENTIALS_PAIR, CREDENTIALS_TOKEN, makeCommandContext, makeFakeClient, rendered, withExitCode, withStderr } from "./cli.helpers.ts";
-import { CliError, groupCommand, isHelpToken, isMember, parseDuration, parseWholeMinutes, writeByteSink } from "./shared.ts";
+import { CREDENTIALS_PAIR, CREDENTIALS_TOKEN, asAccessClient, assertNothingPlantedSurvives, makeCommandContext, makeFakeClient, parsedJson, rendered, withExitCode,
+  withStderr } from "./cli.helpers.ts";
+import { CliError, groupCommand, isHelpToken, isMember, parseDuration, parseWholeMinutes, refuseDocumentFlags, writeByteSink } from "./shared.ts";
 import type { CommandContext, CommandSpec } from "./shared.ts";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../../protocol/topology.fixtures.ts";
-import { describe, test } from "node:test";
+import { describe, mock, test } from "node:test";
+import { loadUfaIdentity, openClient, requireOfficial, requireSurface } from "./client.ts";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { openClient, requireOfficial, requireSurface } from "./client.ts";
+import { AccessAbortedError } from "../../index.ts";
 import { Output } from "./output/format.ts";
 import { api } from "./commands/api.ts";
 import assert from "node:assert/strict";
@@ -25,6 +23,7 @@ import { classify } from "./commands/classify.ts";
 import { device } from "./commands/device.ts";
 import { doctor } from "./commands/doctor.ts";
 import { door } from "./commands/door.ts";
+import { errnoError } from "../../testing.helpers.ts";
 import { info } from "./commands/info.ts";
 import { loadCredentials } from "./credentials.ts";
 import { logs } from "./commands/logs.ts";
@@ -121,6 +120,20 @@ describe("the command surface", () => {
     }
   });
 
+  test("counts a context's own loader before it runs, so a refusal the loader itself throws still records the read", async () => {
+
+    const { calls, client } = makeFakeClient();
+    const { ctx } = makeCommandContext({ calls, client, loadCredentials: (): never => {
+
+      throw new Error("The identity file could not be read.");
+    } });
+
+    await assert.rejects(async () => info.run(ctx), /The identity file could not be read\./);
+
+    assert.equal(calls.credentialLoads, 1, "the read is counted even though the loader threw");
+    assert.equal(calls.opens.length, 0, "a loader that throws never reaches a client");
+  });
+
   test("an unknown flag is a parse error the entry point renders as a usage error", async () => {
 
     const { ctx } = offlineContext(["--nope"]);
@@ -154,14 +167,6 @@ describe("the group dispatcher", () => {
     }
   });
 
-  test("an unknown subcommand is a usage error naming the valid set derived from the table", async () => {
-
-    const { ctx } = makeCommandContext({ args: ["gamma"] });
-
-    await assert.rejects(async () => group.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("alpha, beta"));
-  });
-
   test("a known subcommand dispatches with the remaining arguments and the same context", async () => {
 
     const { ctx, lines } = makeCommandContext({ args: [ "alpha", "--x", "y" ] });
@@ -174,6 +179,14 @@ describe("the group dispatcher", () => {
   test("the group's summary is the one the composer was given", () => {
 
     assert.equal(group.summary, "A sample group.");
+  });
+
+  test("an unknown subcommand is a usage error naming the valid set derived from the table", async () => {
+
+    const { ctx } = makeCommandContext({ args: ["gamma"] });
+
+    await assert.rejects(async () => group.run(ctx),
+      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("alpha, beta"));
   });
 });
 
@@ -219,6 +232,38 @@ describe("the duration grammar", () => {
       assert.throws(() => parseWholeMinutes(value, "--duration"),
         (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("whole-minute"), value);
     }
+  });
+});
+
+describe("the document-only flag rule", () => {
+
+  const opts = { prints: "A rule change prints a confirmation rather than a document", read: "rule read" };
+
+  test("the read arm consumes the document-only flags rather than refusing them", () => {
+
+    assert.doesNotThrow(() => refuseDocumentFlags({ json: true, scrub: true }, { ...opts, changing: false }));
+  });
+
+  test("a change arm with neither document-only flag set refuses nothing", () => {
+
+    assert.doesNotThrow(() => refuseDocumentFlags({}, { ...opts, changing: true }));
+  });
+
+  test("a change arm refuses each document-only flag on its own, naming the flag inside the caller's clause at exit code 2", () => {
+
+    const table: [ string, { json?: boolean; scrub?: boolean } ][] = [ [ "json", { json: true } ], [ "scrub", { scrub: true } ] ];
+
+    for(const [ flag, values ] of table) {
+
+      assert.throws(() => refuseDocumentFlags(values, { ...opts, changing: true }), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
+        (error.message === "A rule change prints a confirmation rather than a document, so --" + flag + " applies to the rule read only."), flag);
+    }
+  });
+
+  test("a change arm given both document-only flags names the JSON form, the order the rule reads them in", () => {
+
+    assert.throws(() => refuseDocumentFlags({ json: true, scrub: true }, { ...opts, changing: true }), (error: unknown) => (error instanceof CliError) &&
+      (error.message === "A rule change prints a confirmation rather than a document, so --json applies to the rule read only."));
   });
 });
 
@@ -320,6 +365,27 @@ describe("credential loading", () => {
     await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", password: "p", tokens: { access: "t" }, username: "u" }));
 
     assert.deepEqual(await loadCredentials({ cwd, home: cwd }), { host: "10.0.0.1", identity: { password: "p", token: "t", username: "u" } });
+  });
+
+  test("the strict-TLS opt-in is carried as the file states it, and left absent when the file is silent", async () => {
+
+    const cwd = await mkdtemp(path.join(tmpdir(), "ufa-tls-"));
+    const identity = { password: "p", username: "u" };
+
+    await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", ...identity, verifyTls: true }));
+
+    assert.deepEqual(await loadCredentials({ cwd, home: cwd }), { host: "10.0.0.1", identity, verifyTls: true });
+
+    // A stated false is carried as stated rather than folded into silence: the two ask the library for the same thing, and only one of them asks on purpose.
+    await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", ...identity, verifyTls: false }));
+
+    assert.deepEqual(await loadCredentials({ cwd, home: cwd }), { host: "10.0.0.1", identity, verifyTls: false });
+
+    // Silence leaves the key off the result entirely rather than carrying an undefined one, which is what lets the connect path's conditional spread mean "not
+    // asked for" rather than "asked for nothing".
+    await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", ...identity }));
+
+    assert.deepEqual(Object.keys(await loadCredentials({ cwd, home: cwd })), [ "host", "identity" ]);
   });
 
   test("no configuration at all names both locations and the identity forms", async () => {
@@ -443,27 +509,6 @@ describe("credential loading", () => {
       (error: unknown) => (error instanceof CliError) && error.message.includes("must carry an identity") && error.message.includes("\"tokens.access\""));
   });
 
-  test("the strict-TLS opt-in is carried as the file states it, and left absent when the file is silent", async () => {
-
-    const cwd = await mkdtemp(path.join(tmpdir(), "ufa-tls-"));
-    const identity = { password: "p", username: "u" };
-
-    await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", ...identity, verifyTls: true }));
-
-    assert.deepEqual(await loadCredentials({ cwd, home: cwd }), { host: "10.0.0.1", identity, verifyTls: true });
-
-    // A stated false is carried as stated rather than folded into silence: the two ask the library for the same thing, and only one of them asks on purpose.
-    await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", ...identity, verifyTls: false }));
-
-    assert.deepEqual(await loadCredentials({ cwd, home: cwd }), { host: "10.0.0.1", identity, verifyTls: false });
-
-    // Silence leaves the key off the result entirely rather than carrying an undefined one, which is what lets the connect path's conditional spread mean "not
-    // asked for" rather than "asked for nothing".
-    await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", ...identity }));
-
-    assert.deepEqual(Object.keys(await loadCredentials({ cwd, home: cwd })), [ "host", "identity" ]);
-  });
-
   test("a non-boolean strict-TLS value is refused rather than coerced", async () => {
 
     const cwd = await mkdtemp(path.join(tmpdir(), "ufa-tls-bad-"));
@@ -504,12 +549,12 @@ describe("the surface gates", () => {
 
     const folded = makeFakeClient({ capabilities: { mode: "dual", official: false, override: "auto" } });
 
-    assert.throws(() => requireOfficial(folded.client as never, "user commands"),
+    assert.throws(() => requireOfficial(asAccessClient(folded.client), "user commands"),
       (error: unknown) => (error instanceof CliError) && error.message.includes("user commands") && error.message.includes("official API"));
 
     const up = makeFakeClient({ official: {} });
 
-    assert.equal(requireOfficial(up.client as never, "user commands"), (up.client as { official: unknown }).official);
+    assert.equal(requireOfficial(asAccessClient(up.client), "user commands"), asAccessClient(up.client).official);
   });
 
   test("the opener refuses an api override the identities contradict, before anything connects", async () => {
@@ -519,6 +564,55 @@ describe("the surface gates", () => {
 
     await assert.rejects(async () => openClient({ api: "official-only", credentials: CREDENTIALS_PAIR }),
       (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("official-only"));
+  });
+
+  test("the identity loader hands back what credential discovery finds", async () => {
+
+    const cwd = await mkdtemp(path.join(tmpdir(), "ufa-identity-"));
+    const home = await mkdtemp(path.join(tmpdir(), "ufa-identity-home-"));
+
+    await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", tokens: { access: "t" } }));
+
+    // The loader is what the CLI's own entry into credential discovery hands its callers, so what it answers is the composed identity rather than the file.
+    assert.deepEqual(await loadUfaIdentity({ cwd, home }), { host: "10.0.0.1", identity: { token: "t" } });
+  });
+
+  test("the opener discovers the identity file when the caller supplies no credentials", async () => {
+
+    const tokenCwd = await mkdtemp(path.join(tmpdir(), "ufa-open-token-"));
+    const tokenHome = await mkdtemp(path.join(tmpdir(), "ufa-open-token-home-"));
+
+    await writeFile(path.join(tokenCwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", tokens: { access: "t" } }));
+
+    /* Each refusal names the identity the discovered file carried, which is what tells discovery apart from a caller-supplied pair: the opener was handed no
+     * credentials, so the only way it can refuse on the file's contents is by having read the file itself. Both land before anything connects.
+     */
+    await assert.rejects(async () => openClient({ api: "direct-only", cwd: tokenCwd, home: tokenHome }),
+      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
+        (error.message === "The --api direct-only pin requires credentials, and the ufa.json configuration carries only a token."));
+
+    const pairCwd = await mkdtemp(path.join(tmpdir(), "ufa-open-pair-"));
+    const pairHome = await mkdtemp(path.join(tmpdir(), "ufa-open-pair-home-"));
+
+    await writeFile(path.join(pairHome, ".ufa.json"), JSON.stringify({ controller: "10.0.0.2", password: "p", username: "u" }));
+
+    await assert.rejects(async () => openClient({ api: "official-only", cwd: pairCwd, home: pairHome }),
+      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
+        (error.message === "The --api official-only pin requires a token, and the ufa.json configuration carries only credentials."));
+  });
+
+  test("the opener builds the standard logger when the caller supplies none", async () => {
+
+    const controller = new AbortController();
+
+    controller.abort();
+
+    /* The opener builds its own stderr logger when the caller names none, and the connect it hands that logger to refuses a signal already aborted at its
+     * pre-flight - so the branch runs, the rejection is the library's typed abort, and no transport is ever built. The credentials are stated inline rather
+     * than taken from the shared fixture, whose host is a stand-in the transport's URL construction refuses before any signal is consulted.
+     */
+    await assert.rejects(async () => openClient({ credentials: { host: "10.0.0.1", identity: { token: "t" } }, signal: controller.signal }),
+      AccessAbortedError);
   });
 });
 
@@ -596,7 +690,7 @@ describe("the read commands", () => {
 
     await info.run(ctx);
 
-    const printed = JSON.parse(rendered(lines)[0] ?? "[]") as { unique_id: string }[];
+    const printed = parsedJson<{ unique_id: string }[]>(lines);
 
     // The port is listed alongside the devices: an Enterprise hub's ports each drive their own door, and a listing that omitted them would name doors the other
     // commands can act on but this one cannot show.
@@ -611,13 +705,13 @@ describe("the read commands", () => {
 
     await info.run(hubsRun.ctx);
 
-    assert.deepEqual((JSON.parse(rendered(hubsRun.lines)[0] ?? "[]") as { unique_id: string }[]).map((record) => record.unique_id), ["hub-1"]);
+    assert.deepEqual(parsedJson<{ unique_id: string }[]>(hubsRun.lines).map((record) => record.unique_id), ["hub-1"]);
 
     const portsRun = makeCommandContext({ args: [ "access-points", "--json" ], calls, client });
 
     await info.run(portsRun.ctx);
 
-    assert.deepEqual((JSON.parse(rendered(portsRun.lines)[0] ?? "[]") as { unique_id: string }[]).map((record) => record.unique_id), ["port-1"]);
+    assert.deepEqual(parsedJson<{ unique_id: string }[]>(portsRun.lines).map((record) => record.unique_id), ["port-1"]);
   });
 
   test("the doors category flattens the document's floors and the floors category prints them whole", async () => {
@@ -689,6 +783,20 @@ describe("the read commands", () => {
       (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("access-points"));
 
     assert.equal(calls.opens.length, 0, "a category refusal never opens a client");
+    assert.equal(calls.credentialLoads, 0, "a category refusal never reaches for the identity file");
+  });
+
+  test("two categories are a usage error", async () => {
+
+    const { calls, client } = makeFakeClient();
+    const { ctx } = makeCommandContext({ args: [ "doors", "hubs" ], calls, client });
+
+    await assert.rejects(async () => info.run(ctx),
+      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
+        (error.message === "Specify at most one category. Run \"ufa info --help\" for usage."));
+
+    assert.equal(calls.opens.length, 0, "an arity refusal never opens a client");
+    assert.equal(calls.credentialLoads, 0, "an arity refusal never reaches for the identity file");
   });
 
   test("info and bootstrap refuse a token-only identity before connecting", async () => {
@@ -704,6 +812,7 @@ describe("the read commands", () => {
         (error: unknown) => (error instanceof CliError) && error.message.includes("door group") && error.message.includes("api hatch"));
 
       assert.equal(calls.opens.length, 0, "the refusal happens before anything connects");
+      assert.equal(calls.credentialLoads, 1, "the refusal is thrown from the identity file, read once");
     }
   });
 
@@ -716,6 +825,7 @@ describe("the read commands", () => {
 
     assert.equal(calls.opens[0]?.refreshIntervalMs, false);
     assert.equal(calls.disposals, 1);
+    assert.equal(calls.credentialLoads, 1, "the identity file is read once");
   });
 });
 
@@ -727,17 +837,6 @@ describe("the capture scrub wiring", () => {
     "host": { "ip": "10.13.0.42", "shortname": "Acme Holdings HQ" } };
   const envelope = { code: 200, codeS: "SUCCESS", data: [identity] };
   const planted = [ "10.13.0.42", "Acme Holdings HQ", "AABBCC000002", "Loading Dock", "Third Floor" ];
-
-  // Every value the fixture plants, absent from what a command wrote.
-  function assertNothingPlantedSurvives(lines: string[], label: string): void {
-
-    const text = lines.join("");
-
-    for(const value of planted) {
-
-      assert.ok(!text.includes(value), label + " carries no \"" + value + "\"");
-    }
-  }
 
   test("bootstrap prints the document verbatim without the flag and pseudonymized with it, in both formats", async () => {
 
@@ -758,7 +857,7 @@ describe("the capture scrub wiring", () => {
       // eslint-disable-next-line no-await-in-loop
       await bootstrap.run(scrubbedRun.ctx);
 
-      assertNothingPlantedSurvives(scrubbedRun.lines, "bootstrap " + (format[0] ?? "default"));
+      assertNothingPlantedSurvives(scrubbedRun.lines, planted, "bootstrap " + (format[0] ?? "default"));
       assert.match(scrubbedRun.lines.join(""), /Test Name \d+/, "the document still reads as a topology");
     }
 
@@ -768,7 +867,7 @@ describe("the capture scrub wiring", () => {
 
     await bootstrap.run(shapedRun.ctx);
 
-    assert.deepEqual(Object.keys(JSON.parse(rendered(shapedRun.lines)[0] ?? "{}") as object), Object.keys(identity));
+    assert.deepEqual(Object.keys(parsedJson<object>(shapedRun.lines)), Object.keys(identity));
   });
 
   test("info scrubs the controller document and an inventory category alike", async () => {
@@ -780,7 +879,7 @@ describe("the capture scrub wiring", () => {
 
     await info.run(bareRun.ctx);
 
-    assertNothingPlantedSurvives(bareRun.lines, "info");
+    assertNothingPlantedSurvives(bareRun.lines, planted, "info");
 
     const spec = { devices: [{ config: { "mac": "AABBCC000002" }, id: "hub-1", name: "Loading Dock" }] };
     const plain = makeFakeClient(spec);
@@ -795,7 +894,7 @@ describe("the capture scrub wiring", () => {
 
     await info.run(scrubbedRun.ctx);
 
-    assertNothingPlantedSurvives(scrubbedRun.lines, "info devices");
+    assertNothingPlantedSurvives(scrubbedRun.lines, planted, "info devices");
   });
 
   test("the scrub never modifies the state the projections read through to", async () => {
@@ -927,7 +1026,7 @@ describe("the entry point", () => {
   interface EntryModule {
 
     main(): Promise<void>;
-    readVersion(): string;
+    readVersion(packageUrl?: URL): string;
     renderError(error: unknown): void;
   }
 
@@ -969,6 +1068,45 @@ describe("the entry point", () => {
     const pkg = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version: string };
 
     assert.equal(entry.readVersion(), pkg.version);
+  });
+
+  test("the version reads as unknown when the package file cannot be read", async () => {
+
+    const entry = await loadEntry();
+
+    assert.equal(entry.readVersion(new URL("file:///nonexistent/package.json")), "unknown");
+  });
+
+  test("a closed pipe ends the process cleanly and any other stream error is left alone", async () => {
+
+    await loadEntry();
+
+    /* The handler the module registered is looked up on each stream and called directly. Emitting an error event on the real stdout would unpipe the runner's
+     * reporter and truncate the run, where calling the registered function drives the production code itself; a function declaration keeps its name, which is
+     * what makes the lookup exact.
+     */
+    const onStdout = process.stdout.listeners("error").find((candidate) => candidate.name === "onPipeError");
+    const onStderr = process.stderr.listeners("error").find((candidate) => candidate.name === "onPipeError");
+
+    assert.equal(typeof onStdout, "function", "the entry point registers its handler on stdout");
+    assert.equal(typeof onStderr, "function", "the entry point registers its handler on stderr");
+
+    const exit = mock.method(process, "exit", (): never => undefined as never);
+
+    try {
+
+      onStdout?.(errnoError("write EPIPE", "EPIPE"));
+
+      assert.equal(exit.mock.callCount(), 1, "a closed pipe ends the process");
+      assert.deepEqual(exit.mock.calls[0]?.arguments, [0], "a closed pipe is a clean end, not a failure");
+
+      onStdout?.(errnoError("write ENOSPC", "ENOSPC"));
+
+      assert.equal(exit.mock.callCount(), 1, "any other stream error is left for the stream to report");
+    } finally {
+
+      exit.mock.restore();
+    }
   });
 
   test("the version flag prints it", async () => {
@@ -1113,17 +1251,17 @@ describe("the entry point", () => {
     const cli = await withStderr(() => entry.renderError(new CliError("no such door", { exitCode: 2 })));
 
     assert.equal(cli.code, 2);
-    assert.equal(cli.text, "ufa: no such door\n");
+    assert.equal(cli.text, "ufa: no such door.\n");
 
     // A library failure: one calm line, exit 1.
     const library = await withStderr(() => entry.renderError(new AccessRequestError("the controller refused the door command",
       { body: "", headers: {}, statusCode: 400 })));
 
     assert.equal(library.code, 1);
-    assert.equal(library.text, "ufa: the controller refused the door command\n");
+    assert.equal(library.text, "ufa: the controller refused the door command.\n");
 
     // A parse failure: one calm line, and the usage exit code.
-    const parseError: NodeJS.ErrnoException = Object.assign(new Error("Unknown option '--nope'"), { code: "ERR_PARSE_ARGS_UNKNOWN_OPTION" });
+    const parseError = errnoError("Unknown option '--nope'", "ERR_PARSE_ARGS_UNKNOWN_OPTION");
     const parsed = await withStderr(() => entry.renderError(parseError));
 
     assert.equal(parsed.code, 2);
@@ -1134,5 +1272,30 @@ describe("the entry point", () => {
 
     assert.equal(unexpected.code, 1);
     assert.match(unexpected.text, /^ufa: TypeError: undefined is not a function\n {4}at /);
+  });
+
+  test("a rendered failure carries the diagnosis its cause held, and one terminal period", async () => {
+
+    const entry = await loadEntry();
+    const { AccessApiError, AccessBootstrapError } = await import("../../index.ts");
+
+    /* The shape a refused connect actually takes: the bootstrap failure names the stage that broke and the controller's own sentence sits one link below it. A
+     * line printing the top message alone tells an operator nothing about why the controller said no.
+     */
+    const refused = new AccessBootstrapError("Unable to fetch the UniFi Access bootstrap document.",
+      { cause: new AccessApiError("The controller refused the request.", { code: "CODE_SYSTEM_ERROR" }), stage: "fetch" });
+    const library = await withStderr(() => entry.renderError(refused));
+
+    assert.equal(library.code, 1);
+    assert.equal(library.text, "ufa: Unable to fetch the UniFi Access bootstrap document: The controller refused the request.\n",
+      "both sentences reach the operator, and the line ends in exactly one period");
+
+    // The CLI's own failures chain the same way, and the rendering leaves the exit code the error carries alone.
+    const cli = await withStderr(() => entry.renderError(new CliError("no such door",
+      { cause: new Error("the topology names none by that name"), exitCode: 2 })));
+
+    assert.equal(cli.code, 2);
+    assert.equal(cli.text, "ufa: no such door: the topology names none by that name.\n",
+      "a message carrying no period of its own still ends the line with one");
   });
 });

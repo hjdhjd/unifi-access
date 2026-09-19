@@ -57,7 +57,7 @@ function emitResult(output: Output, result: AccessOfficialResult<unknown>, scrub
 }
 
 /**
- * `ufa api`. Maps the verb onto the facade's three arms: a get goes through `request` (or `download` with --out), and a mutation goes through `command` - success
+ * `ufa api`. Maps the verb onto the facade's generic arms: a get goes through `request` (or `download` with --out), and a mutation goes through `command` - success
  * with nothing worth reading - unless --print asks for the echoed payload through `request`. The path is taken verbatim below the application prefix, and the
  * controller is the validator of everything beyond its shape.
  *

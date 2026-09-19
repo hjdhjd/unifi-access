@@ -4,12 +4,11 @@
  */
 import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand } from "../shared.ts";
 import type { CommandContext, CommandSpec } from "../shared.ts";
+import { alignedList, renderDocument } from "../output/format.ts";
 import { openOfficialClient, requireOfficial } from "../client.ts";
 import type { AccessOfficialVisitor } from "../../../index.ts";
-import { alignedList } from "../output/format.ts";
-import { findOfficialRecord } from "../lookup.ts";
 import { parseArgs } from "node:util";
-import { renderDocument } from "../output/format.ts";
+import { resolveOfficialRecord } from "../lookup.ts";
 
 // What the refusal wording names this group's operations.
 const OPERATION = "visitor commands";
@@ -51,7 +50,7 @@ const listHandler = async (ctx: CommandContext): Promise<void> => {
 
   // The records are scrubbed where they arrive rather than where they render, so the aligned listing below and the JSON view carry exactly the same stand-ins.
   const scrubDocument = createDocumentScrubber(values.scrub === true);
-  const records = scrubDocument((await requireOfficial(client, OPERATION).visitors.fetchAll({}, { signal: ctx.signal })).data);
+  const records = scrubDocument(await Array.fromAsync(requireOfficial(client, OPERATION).visitors.iterateAll({}, { signal: ctx.signal })));
 
   if(values.json === true) {
 
@@ -103,10 +102,14 @@ const showHandler = async (ctx: CommandContext): Promise<void> => {
   await using client = await openOfficialClient(ctx, OPERATION, { debug: values.debug === true });
 
   const visitors = requireOfficial(client, OPERATION).visitors;
-  const record = findOfficialRecord((await visitors.fetchAll({}, { signal: ctx.signal })).data, target, { kind: "visitor", name: visitorName });
+
+  // No search arm here: the visitor keyword prefix-matches the first and the last name by the documentation, so a first-plus-last token could never hit it and the
+  // request could not help. A name therefore costs the refused fetch and the walk, and the walk sees every visitor the listing holds.
+  const record = await resolveOfficialRecord(target, { fetch: (id) => visitors.fetch(id, { signal: ctx.signal }), kind: "visitor", name: visitorName,
+    walk: () => visitors.iterateAll({}, { signal: ctx.signal }) });
   const scrubDocument = createDocumentScrubber(values.scrub === true);
 
-  renderDocument(ctx.output, scrubDocument(await visitors.fetch(record.id, { signal: ctx.signal })), (values.json === true) ? "json" : "default");
+  renderDocument(ctx.output, scrubDocument(record), (values.json === true) ? "json" : "default");
 };
 
 // The visitor subcommand table. The dispatcher, the usage text, and the unknown-subcommand diagnostic all derive from it through the shared group composer.

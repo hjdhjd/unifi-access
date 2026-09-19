@@ -6,7 +6,8 @@
 
 # Interface: AccessOfficialSystemLogExportOptions
 
-Export the system log as CSV. The window between `since` and `until` cannot exceed one month, and `timezone` is an IANA zone name such as `America/New_York`.
+Export the system log as CSV. `since` and `until` are unix epoch seconds, as with [AccessOfficialSystemLogFetchOptions](AccessOfficialSystemLogFetchOptions.md); the window between them cannot exceed
+one month, and `timezone` is an IANA zone name such as `America/New_York`.
 
 ## Properties
 
