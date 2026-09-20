@@ -41,7 +41,7 @@ for(const device of client.devices) {
   console.log(device.name, device.isOnline ? "online" : "offline");
 }
 
-// Hubs drive doors, so the door commands live on them. Each port of a multi-door Enterprise Access Hub is its own hub handle.
+// Hubs drive doors, so the door commands live on them. Each door-serving port of an Enterprise Access Hub is its own handle on client.accessPoints.
 await client.hubs[0]?.unlock();
 ```
 
@@ -112,7 +112,7 @@ try {
 }
 ```
 
-`RecoverableError` (throttle, timeout, network, abort, stall) means "you may retry or defer"; `FatalError` (auth, authorization, request, protocol, bootstrap) means "propagate". Connection health, including throttling, controller reboots, and automatic recovery after an outage, is observable on `client.connection`.
+`RecoverableError` (throttle, timeout, network, abort, stall) means "you may retry or defer"; `FatalError` (auth, authorization, request, protocol, bootstrap, capability, API refusal) means "propagate". Connection health, including throttling, controller reboots, and automatic recovery after an outage, is observable on `client.connection`.
 
 ## The ufa command-line client
 
@@ -196,5 +196,5 @@ This is mostly of interest to the true developer nerds amongst us.
 
 [![License](https://img.shields.io/npm/l/unifi-access?color=%230559C9&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/unifi-access/blob/main/LICENSE.md)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/hjdhjd/unifi-access/ci.yml?branch=main&color=%230559C9&logo=github-actions&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/unifi-access/actions?query=workflow%3A%22Continuous+Integration%22)
-[![Dependencies](https://img.shields.io/librariesio/release/npm/unifi-access?color=%230559C9&logo=dependabot&style=for-the-badge)](https://libraries.io/npm/uniti-access)
+[![Dependencies](https://img.shields.io/librariesio/release/npm/unifi-access?color=%230559C9&logo=dependabot&style=for-the-badge)](https://libraries.io/npm/unifi-access)
 [![GitHub commits since latest release (by SemVer)](https://img.shields.io/github/commits-since/hjdhjd/unifi-access/latest?color=%230559C9&logo=github&sort=semver&style=for-the-badge)](https://github.com/hjdhjd/unifi-access/commits/main)
