@@ -4,9 +4,10 @@
  * FatalError) for policy and on the concrete class for handling, so these tests assert the instanceof relationships for the classes listed below, that each one reports
  * its own class name and chains its cause, that the typed fields are carried, and that the errno resolution behaves across the shapes undici and Node produce.
  */
-import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError, AccessError,
-  AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError, AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError,
-  assertNever, formatErrorChain, isExpectedWsDisconnect, isPrivilegeRefusal, resolveErrnoCause } from "./errors.ts";
+import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
+  AccessCertificateError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError, AccessThrottledError,
+  AccessTimeoutError, FatalError, RecoverableError, assertNever, formatErrorChain, isCertificateVerificationFailure, isExpectedWsDisconnect,
+  isPrivilegeRefusal, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { errnoError } from "./testing.helpers.ts";
@@ -16,6 +17,7 @@ describe("AccessError hierarchy", () => {
   const recoverable = [
 
     new AccessAbortedError("aborted"),
+    new AccessCertificateError({ cause: errnoError("self-signed certificate", "DEPTH_ZERO_SELF_SIGNED_CERT"), host: "hub.example", identity: "credentials" }),
     new AccessNetworkError("net", { code: "ECONNREFUSED" }),
     new AccessStallError("stall", { silentForMs: 10000 }),
     new AccessThrottledError("throttle", { cooldownMs: 300000 }),
@@ -162,6 +164,90 @@ describe("typed error fields and cause chaining", () => {
     assert.equal(new AccessNetworkError("m", { cause: errno }).code, "ENOTFOUND");
     assert.equal(new AccessNetworkError("m", { code: "ECONNREFUSED" }).code, "ECONNREFUSED", "an explicit code wins over the cause chain");
     assert.equal(new AccessNetworkError("m").code, undefined, "no code and no resolvable cause yields undefined");
+  });
+});
+
+describe("AccessCertificateError", () => {
+
+  const selfSigned = errnoError("self-signed certificate", "DEPTH_ZERO_SELF_SIGNED_CERT");
+
+  test("is an AccessNetworkError, so every reading that already treats a reachability failure as recoverable covers it", () => {
+
+    const error = new AccessCertificateError({ cause: selfSigned, host: "hub.example", identity: "credentials" });
+
+    assert.ok(error instanceof AccessNetworkError, "a certificate refusal is a network failure with a name");
+    assert.ok(error instanceof RecoverableError, "an operator installing a certificate fixes it while the process runs");
+    assert.ok(!(error instanceof FatalError), "a fatal classification would stop the connection monitor trying again");
+  });
+
+  test("names the console, the address dialed, the reason, and the code on the credentials leg", () => {
+
+    const error = new AccessCertificateError({ cause: selfSigned, host: "hub.example", identity: "credentials" });
+
+    assert.equal(error.message, "The UniFi console at hub.example presented a certificate that could not be verified: self-signed certificate " +
+      "(DEPTH_ZERO_SELF_SIGNED_CERT).");
+    assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT", "the code lifts from the very cause the sentence was composed from");
+    assert.equal(error.host, "hub.example");
+    assert.equal(error.identity, "credentials");
+  });
+
+  test("names the developer API and its separate certificate on the token leg", () => {
+
+    const error = new AccessCertificateError({ cause: selfSigned, host: "hub.example:12445", identity: "token" });
+
+    // The closing sentence is the whole remedy a token identity needs: the certificate that fixes the console is not the one this listener presents.
+    assert.equal(error.message, "The UniFi Access developer API at hub.example:12445 presented a certificate that could not be verified: self-signed " +
+      "certificate (DEPTH_ZERO_SELF_SIGNED_CERT). The developer API presents its own certificate, separate from the console's.");
+    assert.equal(error.host, "hub.example:12445");
+    assert.equal(error.identity, "token");
+  });
+
+  test("drops the reason clause when the platform supplied no words", () => {
+
+    const error = new AccessCertificateError({ cause: errnoError("", "DEPTH_ZERO_SELF_SIGNED_CERT"), host: "hub.example", identity: "credentials" });
+
+    assert.equal(error.message, "The UniFi console at hub.example presented a certificate that could not be verified (DEPTH_ZERO_SELF_SIGNED_CERT).",
+      "a sentence with nothing to introduce carries no colon to introduce it with");
+  });
+
+  test("states the refusal alone when the cause carries no errno to read", () => {
+
+    // The class is public, so a caller can construct it around a cause the errno resolution cannot read. There is then neither a reason nor a code to report,
+    // and the sentence says the one thing still known.
+    const error = new AccessCertificateError({ cause: new TypeError("terminated"), host: "hub.example", identity: "credentials" });
+
+    assert.equal(error.message, "The UniFi console at hub.example presented a certificate that could not be verified.");
+    assert.equal(error.code, undefined, "there was no errno to lift one from");
+  });
+
+  test("trims the platform's own padding out of the reason clause", () => {
+
+    const error = new AccessCertificateError({ cause: errnoError("  self-signed certificate \n", "DEPTH_ZERO_SELF_SIGNED_CERT"), host: "hub.example",
+      identity: "credentials" });
+
+    assert.ok(error.message.includes(": self-signed certificate ("), "the reason reads as one clause rather than carrying the platform's whitespace");
+  });
+});
+
+describe("isCertificateVerificationFailure", () => {
+
+  test("reads the verifier's verdict off the errno, bare or one hop down the cause chain", () => {
+
+    assert.equal(isCertificateVerificationFailure(errnoError("unable to verify the first certificate", "UNABLE_TO_VERIFY_LEAF_SIGNATURE")), true);
+    assert.equal(isCertificateVerificationFailure(errnoError("hostname mismatch", "ERR_TLS_CERT_ALTNAME_INVALID")), true,
+      "the hostname check Node runs itself is a verdict about the certificate too");
+
+    const expired = errnoError("certificate has expired", "CERT_HAS_EXPIRED");
+
+    assert.equal(isCertificateVerificationFailure(new Error("fetch failed", { cause: expired })), true, "the wrapped shape undici raises resolves as well");
+  });
+
+  test("answers false for every failure that is not a verdict about a certificate", () => {
+
+    assert.equal(isCertificateVerificationFailure(errnoError("connect ECONNREFUSED", "ECONNREFUSED")), false, "a host that refused presented nothing");
+    assert.equal(isCertificateVerificationFailure(errnoError("out of memory", "OUT_OF_MEM")), false, "the verifier running out of room is not a verdict");
+    assert.equal(isCertificateVerificationFailure(new TypeError("terminated")), false, "a content-free socket failure carries no errno at all");
+    assert.equal(isCertificateVerificationFailure(undefined), false);
   });
 });
 

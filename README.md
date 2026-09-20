@@ -145,7 +145,7 @@ ufa doctor                                    # health-check every subsystem aga
 }
 ```
 
-`tokens` is keyed by the UniFi application a token was issued for, so a token for a sibling application sits beside the Access one without the file changing shape. `verifyTls` asks for strict TLS certificate verification, and defaults to `false` because controllers ship self-signed certificates that no verification chain accepts - turn it on where a trusted certificate has been installed on the controller.
+`tokens` is keyed by the UniFi application a token was issued for, so a token for a sibling application sits beside the Access one without the file changing shape. `verifyTls` asks for strict TLS certificate verification, and defaults to `false` because controllers ship self-signed certificates that no verification chain accepts. Verification covers both listeners the CLI can reach: the console, which the credential pair uses, and the Access developer API on port 12445, which the token uses. The developer API presents its own certificate, separate from the console's, so a token needs a certificate installed there before verification succeeds on that leg. A certificate that does not verify fails with a message naming the listener it came from.
 
 Run `ufa --help` for the full command list, or `ufa <command> --help` for one command's options. `ufa doctor` is the quickest "is my install healthy?" probe, `ufa watch events` carries a filter grammar rich enough to follow one door, one device type, or one event name through the firehose, and `ufa api` reaches any official endpoint, documented or not.
 

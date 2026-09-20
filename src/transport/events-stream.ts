@@ -28,13 +28,14 @@
  * @module AccessEventStream
  */
 import { ACCESS_API_PATH_PREFIX, ACCESS_EVENTS_HEARTBEAT_TIMEOUT } from "../settings.ts";
-import { AccessAbortedError, AccessNetworkError, AccessProtocolError, AccessStallError, assertNever, isExpectedWsDisconnect } from "../errors.ts";
+import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessStallError, assertNever,
+  isCertificateVerificationFailure, isExpectedWsDisconnect } from "../errors.ts";
+import type { AccessError, AccessIdentityLeg } from "../errors.ts";
 import type { AccessEventPacket, Nullable } from "../types/index.ts";
 import type { AccessEventsClosedPayload, AccessEventsPacketPayload } from "../diagnostics.ts";
 import type { AccessWebSocket, AccessWebSocketCloseEvent, AccessWebSocketErrorEvent, AccessWebSocketMessageEvent } from "./ws.ts";
 import { Agent, WebSocket } from "undici";
 import { classifyPacket, isAccessEventPacket } from "../protocol/events.ts";
-import type { AccessError } from "../errors.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
 import type { Clock } from "../clock.ts";
@@ -68,6 +69,9 @@ export const HEARTBEAT_FRAME = "\"Hello\"\n";
  * - `endpoint` is a complete `wss://` URL that replaces the derived one. It pairs with `getAuthHeaders`: a stream against the controller's official notification
  *   socket supplies both, the endpoint naming that socket and the headers stamping the bearer token it authenticates with, and the composition root is the one
  *   caller that supplies either.
+ * - `identity` names which identity the upgrade authenticates with, and therefore which listener this stream dials: `"credentials"` the UniFi console,
+ *   `"token"` the Access developer API on its own port. It defaults to `"credentials"` exactly as the {@link Transport}'s does, and it is what a certificate the
+ *   listener presents that does not verify is reported through - the failure names the listener rather than the address alone.
  * - `getAuthHeaders` supplies the headers the upgrade request carries, wired to a session at the composition root - the same dependency inversion the
  *   {@link Transport} uses, and the same closure shape, so one session type serves the request path and the socket alike. Omitting it stamps an empty session
  *   cookie, which is what an upgrade with no credentials in hand carries.
@@ -86,6 +90,7 @@ export interface EventStreamOptions {
   endpoint?: string;
   getAuthHeaders?: () => Record<string, string>;
   host: string;
+  identity?: AccessIdentityLeg;
   log?: AccessLogging;
   signal?: AbortSignal;
   verifyTls?: boolean;
@@ -170,12 +175,19 @@ function closeFrameText(code: number, reason: string): string {
  */
 export class EventStream implements AsyncDisposable {
 
+  /* The address this stream dials, which is what a certificate failure reports the peer as. It is read from the URL rather than from `host`, because an endpoint
+   * override names its own port and the address a user is told about has to be the one that was actually dialed.
+   */
+  readonly #address: string;
   readonly #bus = new EventBus<EventStreamEvents>();
   readonly #clock: Clock;
   // One AbortController governs the watchdog loop and the binding to the caller's signal, so a single abort() ends them together. The socket's own listeners are
   // not among what it governs: the stream holds them and takes them off itself.
   readonly #controller = new AbortController();
   readonly #host: string;
+  // Which identity the upgrade authenticates with, and so which of the controller's two listeners this stream reaches - the one fact that names the listener a
+  // certificate came from.
+  readonly #identity: AccessIdentityLeg;
   readonly #log: AccessLogging;
   /* What we own when we built the default WebSocket ourselves, and null when a factory was injected - its owner manages the transport underneath it, and we never
    * destroy what we did not create, exactly as Transport treats its dispatcher. The agent and the connector travel as one value so the two cannot disagree about
@@ -211,12 +223,17 @@ export class EventStream implements AsyncDisposable {
 
     this.#clock = options.clock ?? wallClock;
     this.#host = options.host;
+    this.#identity = options.identity ?? "credentials";
     this.#log = options.log ?? noopLog;
     this.#lastMessageAt = this.#clock.now();
 
     // The notification endpoint takes no parameters. The controller has no replay mechanism to ask for, so there is nothing to carry in a query string. An endpoint
     // override names a whole URL rather than adjusting this one, because the socket it addresses differs in port and path alike.
     const url = options.endpoint ?? ("wss://" + options.host + ACCESS_API_PATH_PREFIX + "/ws/notification");
+
+    // Read from the URL the socket opens, so the address reported and the address dialed are one value. `#host` stays the stream's identity in its logs and on
+    // its diagnostics channels; this carries the port as well whenever the endpoint names one.
+    this.#address = new URL(url).host;
 
     /* The headers the upgrade carries, built once here and handed to whichever branch below builds the socket - so a test that injects a factory receives exactly
      * what undici would have been given. Without a session wired in, the upgrade carries an empty session cookie: the header is what the Access application's
@@ -520,18 +537,28 @@ export class EventStream implements AsyncDisposable {
     this.#bus.emit("packet", event);
   }
 
-  /* The socket reported an error. Suppress the expected-disconnect noise, then carry the typed failure into the teardown as the cause of it: the teardown is what
-   * decides where the failure is reported, on the rail when the stream had opened and on the handshake rejection when it had not, and it has run to completion
-   * before any listener hears of it...so a listener that refuses the fault cannot cancel a close that has already finished.
+  /* The socket reported an error. The cause is taken from the connector ahead of the event, because a WebSocket upgrade that fails reports a content-free
+   * `TypeError` on this event while the connector that vended the socket still holds the dial's own error - so reading the event alone would throw away every
+   * errno the platform gave, the certificate verdict among them. An injected socket has no connector of ours, and there its event error is the whole account.
+   *
+   * The error-level line belongs to a stream that had opened. A failure before the open reaches its caller through the handshake rejection, and the coordinator
+   * reports it from there, so a line here as well would put one failure in the log twice.
+   *
+   * Either way the typed failure is carried into the teardown as the cause of it: the teardown decides where it is reported, on the rail when the stream had
+   * opened and on the handshake rejection when it had not, and it has run to completion before any listener hears of it...so a listener that refuses the fault
+   * cannot cancel a close that has already finished.
    */
   #onError(event: AccessWebSocketErrorEvent): void {
 
-    if(!isExpectedWsDisconnect(event.error)) {
+    const cause = this.#owned?.connector.lastDialFailure ?? event.error;
 
-      this.#log.error("The UniFi Access realtime notification API reported an error.", event.error ?? event.message);
+    if((this.#phase.kind === "open") && !isExpectedWsDisconnect(cause)) {
+
+      this.#log.error("The UniFi Access realtime notification API reported an error.", cause ?? event.message);
     }
 
-    const fault = new AccessNetworkError("The UniFi Access realtime notification API connection failed.", { cause: event.error });
+    const fault = isCertificateVerificationFailure(cause) ? new AccessCertificateError({ cause, host: this.#address, identity: this.#identity }) :
+      new AccessNetworkError("The UniFi Access realtime notification API connection failed.", { cause });
 
     this.#shutdown({ error: fault, kind: "fault" }, 1006, "the notification stream connection errored");
   }

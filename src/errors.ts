@@ -108,6 +108,65 @@ export class AccessNetworkError extends RecoverableError {
   }
 }
 
+/* The sentence an {@link AccessCertificateError} carries, composed here from the leg, the address, and what the platform said about the certificate. Every site
+ * that raises the class wants the same words, so the composition lives in one place rather than at any of them, and a reader who wants to know exactly what a
+ * user is told reads this function.
+ *
+ * The reason clause is the platform's own message verbatim, because the platform owns that text: a hand-kept map from code to prose would be a second source of
+ * truth, and it would drift from Node's the moment the verifier's wording moved. A cause the errno resolution cannot read carries neither a reason nor a code,
+ * and the sentence simply states the refusal - which is what a caller constructing this class outside the transport sites still gets.
+ */
+function certificateFailureText(options: { cause: unknown; host: string; identity: AccessIdentityLeg }): string {
+
+  const errno = resolveErrnoCause(options.cause);
+  const code = errno?.code ?? "";
+  const listener = (options.identity === "token") ? "The UniFi Access developer API at " : "The UniFi console at ";
+  const reason = errno?.message.trim() ?? "";
+  const remedy = (options.identity === "token") ? " The developer API presents its own certificate, separate from the console's." : "";
+
+  return listener + options.host + " presented a certificate that could not be verified" + ((reason.length > 0) ? (": " + reason) : "") +
+    ((code.length > 0) ? (" (" + code + ")") : "") + "." + remedy;
+}
+
+/**
+ * A listener presented a certificate the platform's verification refused. The request path and the notification socket both raise it, so a caller reads one class
+ * whichever channel met the refusal, and the sentence names the listener that presented the certificate, the address it was dialed at, and the verifier's own
+ * reason.
+ *
+ * Recoverable, and deliberately so: an operator who installs a certificate the verifier accepts fixes this while the process runs, so the connection monitor
+ * keeps trying on its own cadence and finds the listener answering rather than stopping on a fault it would never retry. Subclassing {@link AccessNetworkError}
+ * is what keeps that true without any policy being restated - every reading that treats a reachability failure as recoverable treats this one the same way, and
+ * a caller that wants the certificate case in particular branches on this class.
+ *
+ * @category Errors
+ */
+export class AccessCertificateError extends AccessNetworkError {
+
+  /**
+   * The address the listener was dialed at, exactly as the transport or the stream dialed it: the bare host for the console, and `host:port` for the developer
+   * API, which answers on a port of its own.
+   */
+  readonly host: string;
+
+  /**
+   * Which listener presented the certificate, named by the identity that reaches it - `"credentials"` is the UniFi console, `"token"` is the Access developer
+   * API. The leg names the listener here because each identity reaches exactly one of them, so nothing further has to be threaded through the transports to say
+   * which certificate a user is being told about.
+   *
+   * The remedy follows from the leg. A certificate installed on the console never reaches the developer API, which presents one of its own, so a token identity
+   * is fixed by a certificate installed on the developer API itself - {@link OfficialApiServer.uploadCertificate} is the surface that installs one.
+   */
+  readonly identity: AccessIdentityLeg;
+
+  constructor(options: { cause: unknown; host: string; identity: AccessIdentityLeg }) {
+
+    super(certificateFailureText(options), { cause: options.cause });
+
+    this.host = options.host;
+    this.identity = options.identity;
+  }
+}
+
 /**
  * The caller's `AbortSignal` fired. The operation was cancelled by the consumer, not by the library's own deadline. Recoverable in the sense that the caller chose
  * to stop - re-issuing the operation with a fresh signal is valid.
@@ -500,6 +559,45 @@ export function formatErrorChain(error: unknown): string {
   }
 
   return rendered;
+}
+
+/* The verdicts the platform's certificate verification can return, each spelled as Node spells it on the error's `code`: the OpenSSL X509 verification family Node
+ * maps by name, together with the hostname check Node runs itself.
+ *
+ * Neighbors from that same table are left out on purpose. `OUT_OF_MEM` is the verifier running out of room rather than a verdict about the certificate, so a
+ * failure carrying it tells a user nothing that installing a certificate would fix. `CERT_DIR`, `CERT_FILE`, `CERT_STORE`, `CERT_ALTNAME_FORMAT`,
+ * `UNABLE_TO_CHECK_GENERATOR`, and `UNABLE_TO_PIPE` are not verification verdicts at all - they are store locations and unrelated failures that share the
+ * library's naming.
+ */
+const CERTIFICATE_VERIFICATION_CODES: ReadonlySet<string> = new Set([ "CERT_CHAIN_TOO_LONG", "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID", "CERT_REJECTED",
+  "CERT_REVOKED", "CERT_SIGNATURE_FAILURE", "CERT_UNTRUSTED", "CRL_HAS_EXPIRED", "CRL_NOT_YET_VALID", "CRL_SIGNATURE_FAILURE", "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "ERR_TLS_CERT_ALTNAME_INVALID", "ERROR_IN_CERT_NOT_AFTER_FIELD", "ERROR_IN_CERT_NOT_BEFORE_FIELD", "ERROR_IN_CRL_LAST_UPDATE_FIELD",
+  "ERROR_IN_CRL_NEXT_UPDATE_FIELD", "HOSTNAME_MISMATCH", "INVALID_CA", "INVALID_PURPOSE", "PATH_LENGTH_EXCEEDED", "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY", "UNABLE_TO_DECRYPT_CERT_SIGNATURE", "UNABLE_TO_DECRYPT_CRL_SIGNATURE", "UNABLE_TO_GET_CRL",
+  "UNABLE_TO_GET_ISSUER_CERT", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ]);
+
+/**
+ * Whether a failure is the platform's certificate verification refusing the peer. The verdict is read from the errno the cause chain carries, which is where both
+ * channels put it: the request path wraps the platform's error as undici hands it over, and the notification socket reads the dial's own error from the connector
+ * that vended the socket.
+ *
+ * What this answers is a verdict about a certificate and nothing else. A connection that never reached a handshake carries a different errno and answers false,
+ * which is what keeps the generic network sentence serving every failure that is not about a certificate.
+ *
+ * It is deliberately not published from the library's public surface. Its consumers are the transport sites that raise {@link AccessCertificateError} from it,
+ * and a consumer branches on that class - which carries the listener and the address the bare question could not.
+ *
+ * @param error - The error value to classify. Typed `unknown` because catch bindings, socket callbacks, and rejected promises all deliver untyped values.
+ *
+ * @returns `true` when the platform's certificate verification refused the peer; `false` for every other failure, and for an error carrying no errno at all.
+ *
+ * @category Utilities
+ */
+export function isCertificateVerificationFailure(error: unknown): boolean {
+
+  const code = resolveErrnoCause(error)?.code;
+
+  return (code !== undefined) && CERTIFICATE_VERIFICATION_CODES.has(code);
 }
 
 /**

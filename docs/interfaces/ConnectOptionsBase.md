@@ -15,9 +15,12 @@ The options common to every way of connecting: the controller address, and the i
 - `refreshIntervalMs` sets the store's refresh cadence; passing `false` disables the failsafe entirely, leaving the consumer on the realtime channel alone. Every
   mode re-seeds on that cadence from whatever it seeded from at connect.
 - `signal` cancels the initial connect. It binds only to connect, never to a later recovery relaunch.
-- `verifyTls` requires the controller to present a certificate that verifies, on the request path and the notification socket alike. It defaults to `false`,
-  because a controller presents a self-signed certificate that no verification chain accepts - turn it on where a trusted certificate has been installed on the
-  controller and a connection to an impostor should fail rather than proceed.
+- `verifyTls` requires a certificate that verifies from every listener this client dials, on the request path and the notification socket alike. It defaults
+  to `false`, because a controller presents a self-signed certificate that no verification chain accepts. There are two listeners: the UniFi console, which
+  the credentials identity reaches, and the Access developer API on its own port, which the token identity reaches. A certificate installed on the console
+  never reaches the developer API, which presents one of its own, so a token identity needs a certificate installed there - through
+  [OfficialApiServer.uploadCertificate](OfficialApiServer.md#uploadcertificate) - before verification succeeds on that leg. A certificate that does not verify raises
+  [AccessCertificateError](../classes/AccessCertificateError.md), which names the listener it came from and the reason the verifier gave.
 - `webSocket` is the notification socket factory, defaulting to a real socket and injected in tests. It receives the upgrade's URL and the headers it carries.
 
 ## Properties

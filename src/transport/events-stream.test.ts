@@ -7,9 +7,9 @@
  * The frames these tests feed are text, because the Access notification wire is JSON text. That is the detail a port of a binary-protocol stream gets wrong
  * silently - a normalizer written for bytes discards every string frame and the stream simply goes quiet - so the ordinary decode cases here drive strings.
  */
-import { AccessAbortedError, AccessNetworkError, AccessProtocolError, AccessStallError, formatErrorChain } from "../errors.ts";
+import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessStallError, formatErrorChain } from "../errors.ts";
 import type { AccessEventsClosedPayload, AccessEventsPacketPayload } from "../diagnostics.ts";
-import { DIAL_CUT_BOUND_MS, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
+import { DIAL_CUT_BOUND_MS, createSilentLoopback, elapsedSince, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
 import { EventStream, HEARTBEAT_FRAME } from "./events-stream.ts";
 import { FakeWebSocket, createLoopbackServer } from "./events-stream.helpers.ts";
 import { TestClock, assertNoUnhandledRejections, capturingLog, settle, silentLog, waitUntil } from "homebridge-plugin-utils/testing";
@@ -23,6 +23,7 @@ import type { AccessWireEvent } from "../protocol/events.ts";
 import type { EventStreamEvents } from "./events-stream.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
+import { createServer as createTcpServer } from "node:net";
 import { findPacket } from "../protocol/capture.helpers.ts";
 
 const HOST = "10.0.0.1";
@@ -75,6 +76,18 @@ function railOrder(stream: EventStream): ("closed" | "error")[] {
 function loopbackHost(port: number): string {
 
   return "127.0.0.1:" + port.toString();
+}
+
+// A loopback port nothing is listening on, obtained by binding one and letting it go: the kernel hands out a free port, and releasing it leaves an address that
+// refuses at once rather than one a firewall might silently drop.
+async function vacantPort(): Promise<number> {
+
+  const server = createTcpServer();
+  const port = await listenOnLoopback(server);
+
+  await stopListening(server);
+
+  return port;
 }
 
 // What a captured upgrade reports: the address the socket factory was given, the headers it was given alongside it, and the stream those built - which the caller
@@ -1462,10 +1475,68 @@ describe("EventStream", () => {
 
       const verified = new EventStream({ clock: new TestClock(), host: loopbackHost(server.port), log: silentLog(), verifyTls: true });
 
-      // The same peer and the same upgrade, one option apart. Asking for verification against a certificate that cannot provide it fails the connect, and a
-      // pre-open failure reaches the caller on the handshake rejection exactly as every other one does.
-      await assert.rejects(async () => verified.opened, AccessNetworkError);
+      /* The same peer and the same upgrade, one option apart. Asking for verification against a certificate that cannot provide it fails the connect, and the
+       * pre-open failure reaches the caller on the handshake rejection exactly as every other one does - naming the listener, the address dialed, and the
+       * verifier's own code, which the socket's own error event never carried at all.
+       */
+      const failure = await verified.opened.catch((error: unknown) => error);
+
+      assert.ok(failure instanceof AccessCertificateError, "a certificate the verifier refused reaches the caller as the refusal it is");
+      assert.equal(failure.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
+      assert.equal(failure.host, loopbackHost(server.port), "the address reported is the one the stream dialed");
+      assert.equal(failure.identity, "credentials");
+
       await verified.close();
+    });
+
+    test("a stream carrying the token identity names the developer API as the listener that presented the certificate", async () => {
+
+      await using server = await createLoopbackServer("ignoresClose");
+
+      const endpoint = "wss://" + loopbackHost(server.port) + "/api/v1/developer/devices/notifications";
+      const stream = new EventStream({ clock: new TestClock(), endpoint, host: HOST, identity: "token", log: silentLog(), verifyTls: true });
+
+      /* The official socket answers on the developer API's own port, which an endpoint override is what names. The address reported is therefore read from the
+       * endpoint rather than from `host`, which stays the controller this stream is an identity for.
+       */
+      const failure = await stream.opened.catch((error: unknown) => error);
+
+      assert.ok(failure instanceof AccessCertificateError);
+      assert.equal(failure.identity, "token");
+      assert.equal(failure.host, loopbackHost(server.port), "the endpoint's own host and port is what was dialed");
+      assert.ok(failure.message.startsWith("The UniFi Access developer API at "), "the token leg names the listener a certificate has to be installed on");
+
+      await stream.close();
+    });
+
+    test("a dial nothing is listening for carries the platform's own errno to the caller", async () => {
+
+      const stream = new EventStream({ clock: new TestClock(), host: loopbackHost(await vacantPort()), log: silentLog() });
+
+      /* Every dial failure loses its errno on the way to the socket's error event, not a certificate refusal alone, so a refused port arrives as an empty failure
+       * unless the connector's record is read first. This is the row that says the record serves the whole class rather than the certificate case.
+       */
+      const failure = await stream.opened.catch((error: unknown) => error);
+
+      assert.ok(failure instanceof AccessNetworkError, "a refused dial is a reachability failure");
+      assert.ok(!(failure instanceof AccessCertificateError), "and nothing about a certificate, since no handshake was reached to present one");
+      assert.equal(failure.code, "ECONNREFUSED");
+
+      await stream.close();
+    });
+
+    test("a failure before the open leaves no error-level line from the stream itself", async () => {
+
+      const log = capturingLog();
+      const stream = new EventStream({ clock: new TestClock(), host: loopbackHost(await vacantPort()), log });
+
+      await assert.rejects(async () => stream.opened, AccessNetworkError);
+
+      // A stream that never opened reports through its handshake rejection, and the coordinator waiting on that rejection logs what it got. A line here as well
+      // would put one failure in the log twice.
+      assert.equal(log.entries.some((entry) => entry.level === "error"), false);
+
+      await stream.close();
     });
   });
 });

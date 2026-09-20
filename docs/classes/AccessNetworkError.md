@@ -14,6 +14,10 @@ this class as well: a pool reset under the request, and a connection attempt cut
 
 - [`RecoverableError`](RecoverableError.md)
 
+## Extended by
+
+- [`AccessCertificateError`](AccessCertificateError.md)
+
 ## Constructors
 
 ### Constructor

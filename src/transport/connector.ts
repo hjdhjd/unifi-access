@@ -36,6 +36,9 @@ export interface OwnedConnectorOptions {
  *   fresh `RequestAbortedError`, which is undici's own class for a signal aborted without a reason and what undici rejects a live-socket request with in that
  *   case. Destroying with an error is what makes undici's pending request reject with that very object - a socket destroyed with no error emits nothing the
  *   connector listens for, and the request would hang until undici's own connect timer. Sockets that have finished connecting are left alone.
+ * - `lastDialFailure` is the error the most recent dial vended: `undefined` before any dial, and `undefined` again after one that succeeded, so it describes the
+ *   most recent dial and nothing older. Its reader is the notification stream, whose WebSocket implementation discards the dial's error before the socket's own
+ *   error event is built - which leaves this the one place the failure is still readable.
  * - `release()` destroys every socket still held: a connecting one with a fresh `ClientDestroyedError`, so a request cut this way classifies exactly as a pool
  *   reset already does, and an established one with a bare destroy, because nothing is pending on the connector's side of an established socket - a request in
  *   flight on one meets the dispatcher's own destroy instead.
@@ -44,6 +47,7 @@ export interface OwnedConnector {
 
   readonly connect: buildConnector.connector;
   cutDials(reason: unknown): void;
+  readonly lastDialFailure: Error | undefined;
   release(): void;
 }
 
@@ -70,6 +74,8 @@ export function createOwnedConnector(options: OwnedConnectorOptions): OwnedConne
   const established = new Set<Socket>();
   const dial = buildConnector({ allowH2: options.allowH2, keepAlive: true, rejectUnauthorized: options.verifyTls }) as unknown as DialingConnector;
 
+  let lastDialFailure: Error | undefined;
+
   return {
 
     connect: (connectOptions, callback): void => {
@@ -83,6 +89,12 @@ export function createOwnedConnector(options: OwnedConnectorOptions): OwnedConne
         const [ error, vendedSocket ] = vended;
 
         dialing.delete(socket);
+
+        /* Record what this dial vended, for a reader that cannot get at it any other way. Observed on 2026-09-19: undici's WebSocket delivered an empty
+         * `TypeError` for every opening-handshake failure - a self-signed peer, a hostname mismatch, and a refused port alike - while this callback received the
+         * real error, with its errno, about a millisecond earlier. The record is what carries that error across to the stream's own error handling.
+         */
+        lastDialFailure = error ?? undefined;
 
         if(error === null) {
 
@@ -102,6 +114,11 @@ export function createOwnedConnector(options: OwnedConnectorOptions): OwnedConne
 
         socket.destroy((reason instanceof Error) ? reason : new errors.RequestAbortedError());
       }
+    },
+
+    get lastDialFailure(): Error | undefined {
+
+      return lastDialFailure;
     },
 
     release: (): void => {

@@ -8,11 +8,13 @@
  * test needs it, and the https responder is what supplies an established one.
  */
 import { Agent, errors, request } from "undici";
-import { DIAL_CUT_BOUND_MS, createHttpsLoopback, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
+import { DIAL_CUT_BOUND_MS, createHttpsLoopback, createSilentLoopback, elapsedSince, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createLoopbackServer } from "./events-stream.helpers.ts";
 import { createOwnedConnector } from "./connector.ts";
+import { createServer as createTcpServer } from "node:net";
+import { resolveErrnoCause } from "../errors.ts";
 import { settle } from "homebridge-plugin-utils/testing";
 
 // What the https responder answers every request with. The body is never read for its content - what these tests need from it is a request that completes, which
@@ -131,6 +133,44 @@ describe("createOwnedConnector", () => {
     await connection.closed;
 
     await agent.destroy();
+  });
+
+  test("lastDialFailure describes the most recent dial and nothing older", async () => {
+
+    /* A port that was listening and is not any more, so a dial against it is refused at once rather than left hanging. The connector's record is the only place
+     * that error survives for a WebSocket caller, which is what this row is about.
+     */
+    const vacant = createTcpServer();
+    const vacantPort = await listenOnLoopback(vacant);
+
+    await stopListening(vacant);
+
+    const connector = createOwnedConnector({ allowH2: false, verifyTls: false });
+    const refusingAgent = new Agent({ connect: connector.connect });
+
+    assert.equal(connector.lastDialFailure, undefined, "a connector that has dialed nothing has nothing to report");
+
+    await assert.rejects(request("https://127.0.0.1:" + vacantPort.toString() + "/x", { dispatcher: refusingAgent }));
+
+    const refusal = connector.lastDialFailure;
+
+    assert.ok(refusal !== undefined, "a refused dial leaves the platform's own error behind");
+    assert.equal(resolveErrnoCause(refusal)?.code, "ECONNREFUSED", "and what it left is the platform's error, errno and all");
+
+    await refusingAgent.destroy();
+
+    await using peer = await createHttpsLoopback(() => OK_RESPONSE);
+
+    const succeedingAgent = new Agent({ connect: connector.connect });
+    const response = await request(peer.origin + "/one", { dispatcher: succeedingAgent });
+
+    await response.body.text();
+
+    // The record describes the dial that just happened, so a connector whose latest dial connected reports no failure at all - which is what keeps a later
+    // socket error from being read against a dial that is long over.
+    assert.equal(connector.lastDialFailure, undefined, "a dial that succeeded clears what the failed one left");
+
+    await succeedingAgent.destroy();
   });
 
   test("the ALPN offer follows allowH2 in both directions", async () => {

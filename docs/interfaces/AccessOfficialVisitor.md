@@ -43,7 +43,7 @@ Live-verified.
 | <a id="schedule"></a> `schedule?` | `readonly` | [`AccessOfficialVisitorSchedule`](AccessOfficialVisitorSchedule.md) |
 | <a id="schedule_id"></a> `schedule_id` | `readonly` | `string` |
 | <a id="start_time"></a> `start_time` | `readonly` | `number` |
-| <a id="status"></a> `status` | `readonly` | \| `5` \| `2` \| `1` \| `number` & \{ \} \| `3` \| `4` \| `6` |
+| <a id="status"></a> `status` | `readonly` | \| `2` \| `1` \| `5` \| `number` & \{ \} \| `3` \| `4` \| `6` |
 | <a id="timezone"></a> `timezone?` | `readonly` | `string` |
 | <a id="visit_reason"></a> `visit_reason` | `readonly` | \| `string` & \{ \} \| `"Business"` \| `"Cooperation"` \| `"Interview"` \| `"Others"` |
 | <a id="visitor_company"></a> `visitor_company` | `readonly` | `string` |

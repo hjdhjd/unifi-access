@@ -9,8 +9,8 @@
  * contract - exactly and without flakiness.
  */
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT } from "../settings.ts";
-import { AccessAbortedError, AccessAuthError, AccessAuthorizationError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessThrottledError,
-  AccessTimeoutError } from "../errors.ts";
+import { AccessAbortedError, AccessAuthError, AccessAuthorizationError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessRequestError,
+  AccessThrottledError, AccessTimeoutError } from "../errors.ts";
 import type { AccessHttpRequestEndPayload, AccessHttpRequestStartPayload, AccessHttpThrottleEnteredPayload,
   AccessHttpThrottleExitedPayload } from "../diagnostics.ts";
 import { DIAL_CUT_BOUND_MS, createHttpsLoopback, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
@@ -1097,13 +1097,35 @@ describe("Transport", () => {
       await using peer = await createHttpsLoopback(() => ({ body: "{\"ok\":true}", contentType: "application/json", status: 200 }));
       await using transport = new Transport({ host: peer.host, verifyTls: true });
 
-      /* The same peer and the same request as above, one option apart. A handshake the client will not complete is a connect-phase failure, which the transport
-       * classifies as the reachability fault it is, and the errno lifted from the cause chain is what says the refusal was about the certificate rather than about
-       * reaching the host at all.
+      /* The same peer and the same request as above, one option apart. A handshake the client will not complete is a connect-phase failure, and the transport
+       * reports it as the certificate refusal it is: the sentence names the listener that presented the certificate, the address that was dialed, and the
+       * verifier's own words and code, so a user reads which of the controller's two listeners to go fix rather than that the host was unreachable.
        */
-      await assertRejectsWith(async () => transport.send(url(peer.host, "/ok")), AccessNetworkError, { check: (error) => {
+      await assertRejectsWith(async () => transport.send(url(peer.host, "/ok")), AccessCertificateError, { check: (error) => {
 
         assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
+        assert.equal(error.host, peer.host, "the address reported is the one this transport dials");
+        assert.equal(error.identity, "credentials");
+        assert.ok(error.message.startsWith("The UniFi console at " + peer.host + " presented a certificate that could not be verified: "),
+          "the sentence opens by naming the console and the address");
+        assert.ok(error.message.endsWith("(DEPTH_ZERO_SELF_SIGNED_CERT)."), "and closes with the verifier's own code");
+      } });
+    });
+
+    test("names the developer API when the transport that met the certificate carries the token identity", async () => {
+
+      await using peer = await createHttpsLoopback(() => ({ body: "{\"ok\":true}", contentType: "application/json", status: 200 }));
+      await using transport = new Transport({ host: peer.host, identity: "token", verifyTls: true });
+
+      // The identity leg is what fixes the listener: a token transport is built against the developer API's own address, so its refusal says so and tells the
+      // user that installing a certificate on the console would not have reached this one.
+      await assertRejectsWith(async () => transport.send(url(peer.host, "/ok")), AccessCertificateError, { check: (error) => {
+
+        assert.equal(error.identity, "token");
+        assert.ok(error.message.startsWith("The UniFi Access developer API at " + peer.host + " presented a certificate that could not be verified: "),
+          "the sentence opens by naming the developer API");
+        assert.ok(error.message.endsWith(" The developer API presents its own certificate, separate from the console's."),
+          "and the token leg is told where the certificate it needs actually goes");
       } });
     });
   });

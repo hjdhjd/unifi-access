@@ -20,9 +20,9 @@
 // contract rather than whatever each module happens to export.
 
 // Errors - the typed hierarchy. Consumers branch on these with `instanceof`, so they are value exports; the bootstrap-stage and identity-leg tags are types.
-export { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError, AccessError,
-  AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError, AccessThrottledError, AccessTimeoutError, FatalError,
-  RecoverableError } from "./errors.ts";
+export { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
+  AccessCertificateError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError, AccessThrottledError,
+  AccessTimeoutError, FatalError, RecoverableError } from "./errors.ts";
 export type { AccessApiCode, AccessBootstrapStage, AccessIdentityLeg } from "./errors.ts";
 
 // The rendering a consumer logs a failure through, so the diagnosis a wrapped error carries below the sentence that was caught reaches an operator.

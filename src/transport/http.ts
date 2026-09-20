@@ -3,8 +3,8 @@
  * http.ts: The HTTP transport for the UniFi Access library - undici pooling, signal composition, typed-error classification, and the throttle circuit breaker.
  */
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT } from "../settings.ts";
-import { AccessAbortedError, AccessAuthError, AccessAuthorizationError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessThrottledError,
-  AccessTimeoutError } from "../errors.ts";
+import { AccessAbortedError, AccessAuthError, AccessAuthorizationError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessRequestError,
+  AccessThrottledError, AccessTimeoutError, isCertificateVerificationFailure } from "../errors.ts";
 import type { AccessHttpRequestCommon, AccessHttpRequestEndOutcome, AccessHttpRequestEndPayload, AccessHttpRequestStartPayload } from "../diagnostics.ts";
 import type { AccessIdentityLeg, FatalError } from "../errors.ts";
 import { Pool, errors, interceptors, request } from "undici";
@@ -755,7 +755,15 @@ export class Transport implements AsyncDisposable {
       return new AccessTimeoutError("The connection to the UniFi Access controller timed out.", { cause: error, elapsedMs });
     }
 
-    // Everything else is a connect/DNS/TLS/socket failure; AccessNetworkError lifts the errno from the cause chain.
+    /* The peer's certificate failed the platform's verification, so the failure names the listener it came from rather than reporting an unreachable host. Which
+     * listener that is comes from the identity this transport was built with, because each identity addresses exactly one of them.
+     */
+    if(isCertificateVerificationFailure(error)) {
+
+      return new AccessCertificateError({ cause: error, host: this.#host, identity: this.#identity });
+    }
+
+    // Everything else is a connect/DNS/socket failure; AccessNetworkError lifts the errno from the cause chain.
     return new AccessNetworkError("A network error occurred communicating with the UniFi Access controller.", { cause: error });
   }
 
