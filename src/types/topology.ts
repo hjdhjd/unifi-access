@@ -121,7 +121,8 @@ export interface AccessDoorConfigInterface {
  */
 export interface AccessFloorConfigInterface {
 
-  doors: AccessDoorConfigInterface[];
+  // Optional because the controller omits the key entirely on a floor with no doors, observed on Access 4.3.12.
+  doors?: AccessDoorConfigInterface[];
   extra_type: string;
   extras: AccessLocationExtrasConfig;
   full_name: string;

@@ -393,7 +393,7 @@ describe("the webhook payload model", () => {
      * device and location identifiers have to resolve in the same spaces the other two use - otherwise a receiver could not join a delivery to the state model.
      */
     const deviceIds = new Set(topologyDevices(accessBootstrap2026Fixture).map((device) => device.unique_id));
-    const doorIds = new Set((accessBootstrap2026Fixture.floors ?? []).flatMap((floor) => floor.doors.map((door) => door.unique_id)));
+    const doorIds = new Set((accessBootstrap2026Fixture.floors ?? []).flatMap((floor) => (floor.doors ?? []).map((door) => door.unique_id)));
     let checked = 0;
 
     for(const delivery of accessWebhookDeliveriesFixture) {

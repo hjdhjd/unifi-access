@@ -543,5 +543,5 @@ when the options ask for a path the supplied identities cannot take - a token-on
 #### Throws
 
 [AccessAuthError](AccessAuthError.md) when an identity is refused, its `identity` field naming whether the credentials or the API token were the rejected one,
-  [AccessNetworkError](AccessNetworkError.md) when the controller cannot be reached, [AccessBootstrapError](AccessBootstrapError.md) when its configuration cannot be fetched or parsed, or any
-  other typed `FatalError` those stages surface. No partial client escapes a failure.
+  [AccessNetworkError](AccessNetworkError.md) when the controller cannot be reached, [AccessBootstrapError](AccessBootstrapError.md) when its configuration cannot be fetched, parsed, or
+  applied, or any other typed `FatalError` those stages surface. No partial client escapes a failure.

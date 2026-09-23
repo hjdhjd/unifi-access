@@ -194,6 +194,25 @@ describe("applyBootstrap flattening", () => {
     assert.equal(state.devices.get(HUB_ID)?.unique_id, HUB_ID);
     assert.equal(state.devices.get(HUB_ID)?.device_type, "UAH");
   });
+
+  test("stores a floor the controller sent with no doors key, contributing no doors and no hardware", () => {
+
+    /* An Access 4.3.12 controller omits the key outright on a floor that has no doors rather than sending an empty array. The 2026 document carries no
+     * building-hosted hardware, so with its floor's doors gone the floor itself is the only thing left for the maps to hold.
+     */
+    const doorless = structuredClone(accessBootstrap2026Fixture);
+    const floor = present(doorless.floors?.[0], "the first floor");
+
+    delete floor.doors;
+
+    const state = stateFrom(doorless);
+    const stored = present(state.floors.get(FLOOR_2026), "the doorless floor");
+
+    assert.equal(Object.hasOwn(stored, "doors"), false, "the stored floor carries no doors key");
+    assert.equal(state.doors.size, 0, "a floor with no doors contributes none");
+    assert.equal(state.devices.size, 0, "and none of the hardware its doors would have carried");
+    assert.equal(state.doorStates.size, 0, "and so no door is seeded");
+  });
 });
 
 describe("applyBootstrap door-state seeding", () => {
@@ -264,7 +283,7 @@ describe("applyBootstrap door-state seeding", () => {
     const readersOnly = structuredClone(accessBootstrap2026Fixture);
     const floor = present(readersOnly.floors?.[0], "the first floor");
 
-    floor.doors = floor.doors.map((door) => ({ ...door, "device_groups": [] }));
+    floor.doors = (floor.doors ?? []).map((door) => ({ ...door, "device_groups": [] }));
 
     assert.equal(stateFrom(readersOnly).doorStates.size, 0, "a door with no serving hardware establishes nothing");
   });
@@ -275,7 +294,7 @@ describe("applyBootstrap door-state seeding", () => {
     const withoutMini = structuredClone(accessBootstrap2026Fixture);
     const floor = present(withoutMini.floors?.[0], "the first floor");
 
-    floor.doors = floor.doors.filter((door) => door.unique_id !== DOOR_MINI_DOOR);
+    floor.doors = (floor.doors ?? []).filter((door) => door.unique_id !== DOOR_MINI_DOOR);
 
     const state = stateFrom(withoutMini);
 
@@ -1240,7 +1259,7 @@ describe("doorStateChanged", () => {
     const reduced = structuredClone(accessBootstrap2026Fixture);
     const floor = present(reduced.floors?.[0], "the first floor");
 
-    floor.doors = floor.doors.filter((door) => door.unique_id !== DOOR_MINI_DOOR);
+    floor.doors = (floor.doors ?? []).filter((door) => door.unique_id !== DOOR_MINI_DOOR);
 
     const pruned = reduce(state, bootstrapEvent(reduced));
 

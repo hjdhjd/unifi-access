@@ -110,6 +110,7 @@ describe("typed error fields and cause chaining", () => {
 
   test("AccessBootstrapError carries its stage tag", () => {
 
+    assert.equal(new AccessBootstrapError("m", { stage: "apply" }).stage, "apply");
     assert.equal(new AccessBootstrapError("m", { stage: "fetch" }).stage, "fetch");
     assert.equal(new AccessBootstrapError("m", { stage: "parse" }).stage, "parse");
   });

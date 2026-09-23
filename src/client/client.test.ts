@@ -8,7 +8,7 @@ import { AccessApiError, AccessAuthError, AccessBootstrapError, AccessProtocolEr
 import type { AccessConnectionTransitionPayload, AccessStoreDispatchPayload } from "../diagnostics.ts";
 import { CONTROLLER_PATH, DOOR_HUB, HOST, HUB, LOGIN_PATH, SELF_PATH, TOPOLOGY_PATH, mockController } from "./client-modes.helpers.ts";
 import type { Interceptable, MockAgent } from "undici";
-import { TestClock, settle, silentLog } from "homebridge-plugin-utils/testing";
+import { TestClock, capturingLog, settle, silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { assertRejectsWith, present, settleUntil, subscribeTo } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
@@ -25,6 +25,18 @@ const controllerBody = (uptime?: number): string => JSON.stringify({ code: 200, 
   error: "", msg: "" });
 const topologyBody = (documents: unknown[] = [accessBootstrap2026Fixture]): string => JSON.stringify({ code: 200, codeS: "SUCCESS", data: documents,
   error: "", msg: "" });
+
+/* A topology document the reducer cannot fold: its first floor leads with a null door, which the floor walk cannot destructure. The fetch accepts it, because it
+ * reads nothing deeper than the collection's first element, so the throw comes from applying the document rather than from reading it.
+ */
+const poisonedTopology = (): unknown => {
+
+  const document = JSON.parse(JSON.stringify(accessBootstrap2026Fixture)) as { floors: { doors: unknown[] }[] };
+
+  present(document.floors[0], "the first floor").doors.unshift(null);
+
+  return document;
+};
 
 /* Two envelopes a bootstrap read can meet inside a 200. The first is the refusal a door hub answered a close command with on 2026-09-16, carried verbatim, standing
  * here for the controller declining to hand a document over; the second reports success and then carries no document at all.
@@ -382,6 +394,40 @@ describe("AccessClient.connect", () => {
           return ws;
         } }));
     });
+
+    test("a topology document the store cannot apply rejects at the apply stage and stops the refresh failsafe it started", async () => {
+
+      const { agent, pool } = mockController();
+      const clock = new TestClock();
+
+      /* The store and its failsafe exist by the time the document is applied, so the throw is what proves the seed runs under the connect's teardown. Every response
+       * persists, so a refresh pass that survived the rejection would be served rather than failing for want of an interceptor, which is what makes the count below
+       * a real measurement.
+       */
+      const poisoned = poisonedTopology();
+      let topologyRequests = 0;
+
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, () => controllerBody()).persist();
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, () => {
+
+        topologyRequests++;
+
+        return topologyBody([poisoned]);
+      }).persist();
+
+      await assertRejectsWith(connect(agent, { clock, refreshIntervalMs: 1000 }), AccessBootstrapError, { check: (error) => {
+
+        assert.equal(error.stage, "apply");
+        assert.ok(error.cause instanceof TypeError, "the reducer's own throw is the cause rather than a message this layer composed");
+      } });
+      assert.equal(topologyRequests, 1, "the connect read the topology once");
+
+      clock.advance(5000);
+      await settle();
+
+      assert.equal(topologyRequests, 1, "the failsafe was disposed with the store, so no refresh pass followed the rejection");
+    });
   });
 
   describe("the single-flight document fetch", () => {
@@ -511,6 +557,37 @@ describe("AccessClient.connect", () => {
 
       await settleUntil(() => client.controllerInfo?.host.uptime === (accessControllerInfoFixture.host.uptime + 3600),
         { message: "the second pass's documents reached the state model" });
+    });
+
+    test("a refreshed topology the store cannot apply is reported at the apply stage, and the client carries on", async () => {
+
+      const { agent, pool } = mockController();
+      const clock = new TestClock();
+      const log = capturingLog();
+
+      interceptLogin(pool);
+      interceptPass(pool);
+
+      // The pass after connect serves a document the reducer cannot fold. The failsafe absorbs every failure into a debug line, so that line is where the stage
+      // shows, and the state the connect seeded is what the client keeps.
+      pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody());
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody([poisonedTopology()]));
+
+      await using client = await AccessClient.connect({ clock, dispatcher: agent, host: HOST, log, password: "p", refreshIntervalMs: 1000, username: "u",
+        webSocket: () => new FakeWebSocket() });
+
+      clock.advance(1000);
+
+      const failure = (): unknown => log.entries.find((entry) => (entry.level === "debug") && entry.message.startsWith("Bootstrap refresh failed"))?.params[0];
+
+      await settleUntil(() => failure() !== undefined, { message: "expected the refresh pass to report its failure" });
+
+      const error = failure();
+
+      assert.ok(error instanceof AccessBootstrapError, "the failure is reported as a bootstrap error");
+      assert.equal(error.stage, "apply");
+      assert.ok(error.cause instanceof TypeError, "with the reducer's own throw as the cause");
+      assert.equal(client.state.snapshot().doors.size, 3, "and the state the connect seeded stands");
     });
 
     test("a pass still in flight at disposal neither hangs nor dispatches into the disposed store", async () => {

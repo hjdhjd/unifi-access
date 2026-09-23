@@ -169,13 +169,15 @@ function controllerUrl(host: string): string {
   return "https://" + host + ACCESS_API_PATH_PREFIX + "/access/info";
 }
 
-/* The sentences a bootstrap read speaks, each held once. The two subjects are the tail every message reporting a failure to read a document ends in, whichever
- * stage it failed at; the refusal sentences are what a refused read falls back to when the controller sent no message of its own, each naming the read that drew
- * it; and the absent-document sentences say the controller reported success and then sent nothing to read.
+/* The sentences a bootstrap read speaks, each held once. The configuration and topology subjects are the tail every message reporting a failure to read a document
+ * ends in, whichever stage it failed at, and the documents subject is the tail of the message reporting a pair that was read and could not be applied; the refusal
+ * sentences are what a refused read falls back to when the controller sent no message of its own, each naming the read that drew it; and the absent-document
+ * sentences say the controller reported success and then sent nothing to read.
  */
 const CONFIGURATION_SUBJECT = "the UniFi Access controller configuration.";
 const CONTROLLER_DOCUMENT_ABSENT = "The controller information endpoint answered with no document.";
 const CONTROLLER_READ_REFUSED = "The UniFi Access controller refused the controller information read.";
+const DOCUMENTS_SUBJECT = "the UniFi Access controller documents to the state model.";
 const TOPOLOGY_DOCUMENT_ABSENT = "The topology endpoint answered with no document.";
 const TOPOLOGY_READ_REFUSED = "The UniFi Access controller refused the topology read.";
 const TOPOLOGY_SUBJECT = "the UniFi Access controller topology.";
@@ -193,6 +195,23 @@ function bootstrapFailure(error: unknown, subject: string): AccessBootstrapError
   }
 
   return new AccessBootstrapError("Unable to parse " + subject, { cause: error, stage: "parse" });
+}
+
+/* Apply a fetched document pair to the store, classifying a failure to fold it as the apply stage. The documents arrived and decoded, so neither the fetch nor the
+ * parse stage describes what went wrong: a throw here is a wire shape the reducer does not model or a fault in the reducer itself, and naming it apart is what points
+ * a report at the right fix. The read classification above is deliberately not reused, because it would report a reducer throw as a body that failed to parse.
+ * Every site that applies the pair goes through here - the connect seed, the refresh failsafe, and a recovery re-bootstrap - so the stage reads the same wherever
+ * the fold fails.
+ */
+function applyBootstrapDocuments(store: StateStore, documents: AccessRefreshDocuments): void {
+
+  try {
+
+    store.applyRefreshDocuments(documents);
+  } catch(error) {
+
+    throw new AccessBootstrapError("Unable to apply " + DOCUMENTS_SUBJECT, { cause: error, stage: "apply" });
+  }
 }
 
 /* Fetch both of the controller's documents concurrently and unwrap them. They are independent requests describing independent things, so fetching them in sequence
@@ -366,8 +385,8 @@ export class AccessClient implements AsyncDisposable {
    * @throws {TypeError} when the options ask for a path the supplied identities cannot take - a token-only client held to the direct API, or a credential-only client
    *   held to the official one. Caller misuse, raised before anything is sent.
    * @throws {@link AccessAuthError} when an identity is refused, its `identity` field naming whether the credentials or the API token were the rejected one,
-   *   {@link AccessNetworkError} when the controller cannot be reached, {@link AccessBootstrapError} when its configuration cannot be fetched or parsed, or any
-   *   other typed `FatalError` those stages surface. No partial client escapes a failure.
+   *   {@link AccessNetworkError} when the controller cannot be reached, {@link AccessBootstrapError} when its configuration cannot be fetched, parsed, or
+   *   applied, or any other typed `FatalError` those stages surface. No partial client escapes a failure.
    */
   static async connect(opts: ConnectOptions): Promise<AccessClient> {
 
@@ -569,7 +588,7 @@ export class AccessClient implements AsyncDisposable {
       store.applyCensus({ devices, doorStates: doors.map(doorStateEntry), doors: doors.map(officialDoorRecord) }, { complete: true });
     });
 
-    // Stage 3: build the store and seed it through the one method that owns the order the two documents are applied in.
+    // Stage 3: build the store. Its refresh failsafe starts with it, so from here on a failure has the store to tear down as well as the transports.
     const store = new StateStore({
 
       clock,
@@ -584,25 +603,28 @@ export class AccessClient implements AsyncDisposable {
       /* The failsafe re-seeds each mode from what it seeded from in the first place - the document pair where there are credentials, the official listings where
        * there are not - so the loop runs on the caller's own cadence in every mode rather than being switched off for one of them.
        */
-      refresh: (direct !== null) ? async (signal?: AbortSignal): Promise<void> => store.applyRefreshDocuments(await fetchPair(direct.transport,
+      refresh: (direct !== null) ? async (signal?: AbortSignal): Promise<void> => applyBootstrapDocuments(store, await fetchPair(direct.transport,
         { ...((signal !== undefined) && { signal }) })) : seedFromOfficial,
       ...((opts.refreshIntervalMs !== undefined) && { refreshIntervalMs: opts.refreshIntervalMs })
     });
 
-    if(documents !== null) {
-
-      store.applyRefreshDocuments(documents);
-    }
-
-    // Stage 3b: run that seed, which is where a token is verified.
+    /* Stage 3b: seed the store, first from the document pair through the one method that owns the order the two documents are applied in, and then from the
+     * official listings, which is where a token is verified. Both seeds run under one teardown, because the failsafe is already running by the time either can
+     * fail, and a store left standing behind a rejected connect would keep re-fetching for a client that never existed.
+     */
     try {
+
+      if(documents !== null) {
+
+        applyBootstrapDocuments(store, documents);
+      }
 
       await seedFromOfficial(opts.signal);
     } catch(error) {
 
-      /* This is fatal in some cases and not in others. Anything but the Identity Enterprise code is a genuine failure about this request; that code on a client
-       * with no other identity leaves nothing to fall back to; and that code on a client that also holds credentials is simply the news that this controller has
-       * no official API, which the map records and the client carries on without.
+      /* This is fatal in some cases and not in others. Anything but the Identity Enterprise code is a genuine failure of the seed; that code on a client with no
+       * other identity leaves nothing to fall back to; and that code on a client that also holds credentials is simply the news that this controller has no
+       * official API, which the map records and the client carries on without.
        */
       const folded = (error instanceof AccessApiError) && (error.code === "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED") && hasCredentials;
 
@@ -698,7 +720,7 @@ export class AccessClient implements AsyncDisposable {
 
       reBootstrap: async (signal?: AbortSignal): Promise<void> => {
 
-        store.applyRefreshDocuments(await fetchPair(direct.transport, { probe: true, ...((signal !== undefined) && { signal }) }));
+        applyBootstrapDocuments(store, await fetchPair(direct.transport, { probe: true, ...((signal !== undefined) && { signal }) }));
       },
       throttleSource: direct.transport,
       verify: async (signal?: AbortSignal): Promise<void> => {

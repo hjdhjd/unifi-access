@@ -18,7 +18,7 @@ A description of the UniFi Access floor JSON: the level of the hierarchy between
 
 | Property | Type |
 | ------ | ------ |
-| <a id="doors"></a> `doors` | [`AccessDoorConfigInterface`](AccessDoorConfigInterface.md)[] |
+| <a id="doors"></a> `doors?` | [`AccessDoorConfigInterface`](AccessDoorConfigInterface.md)[] |
 | <a id="extra_type"></a> `extra_type` | `string` |
 | <a id="extras"></a> `extras` | [`AccessLocationExtrasConfig`](../type-aliases/AccessLocationExtrasConfig.md) |
 | <a id="full_name"></a> `full_name` | `string` |

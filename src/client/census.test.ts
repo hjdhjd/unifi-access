@@ -45,7 +45,7 @@ function listedDoor(id: string): AccessOfficialDoor {
 }
 
 const topologyRecords = topologyDevices(accessBootstrap2026Fixture);
-const topologyDoorIds = (accessBootstrap2026Fixture.floors ?? []).flatMap((floor) => floor.doors.map((door) => door.unique_id));
+const topologyDoorIds = (accessBootstrap2026Fixture.floors ?? []).flatMap((floor) => (floor.doors ?? []).map((door) => door.unique_id));
 
 describe("officialDeviceRecord", () => {
 

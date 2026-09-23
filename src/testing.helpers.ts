@@ -99,7 +99,7 @@ export async function settleUntil(predicate: () => boolean | Promise<boolean>, o
  */
 export function topologyDevices(bootstrap: AccessBootstrapConfig): AccessDeviceConfig[] {
 
-  return [ ...(bootstrap.device_groups ?? []).flat(), ...(bootstrap.floors ?? []).flatMap((floor) => floor.doors.flatMap((door) => door.device_groups.flat())) ];
+  return [ ...(bootstrap.device_groups ?? []).flat(), ...(bootstrap.floors ?? []).flatMap((floor) => (floor.doors ?? []).flatMap((door) => door.device_groups.flat())) ];
 }
 
 /**

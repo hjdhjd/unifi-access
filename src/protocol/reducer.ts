@@ -254,7 +254,7 @@ export function applyBootstrap(state: AccessState, bootstrap: AccessBootstrapCon
 
     nextFloors.push(storedFloor);
 
-    for(const door of doors) {
+    for(const door of (doors ?? [])) {
 
       const { device_groups: doorDeviceGroups, ...storedDoor } = door;
       const doorDevices: AccessDeviceConfig[] = [];

@@ -81,7 +81,7 @@ export const withDuty = (id: string, duty: string | undefined, document: AccessB
 export const documentWith = (document: AccessBootstrapConfig, device: AccessDeviceConfig): AccessBootstrapConfig => {
 
   const next = JSON.parse(JSON.stringify(document)) as AccessBootstrapConfig;
-  const groups = [ ...(next.device_groups ?? []), ...(next.floors ?? []).flatMap((floor) => floor.doors.flatMap((door) => door.device_groups)) ];
+  const groups = [ ...(next.device_groups ?? []), ...(next.floors ?? []).flatMap((floor) => (floor.doors ?? []).flatMap((door) => door.device_groups)) ];
   let replaced = false;
 
   for(const group of groups) {
