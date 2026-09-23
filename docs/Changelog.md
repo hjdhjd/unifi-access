@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 2.0.1 (2026-09-22)
+  * Fix: a floor sent without a doors key, as UniFi Access 4.3.12 does for a floor with no doors, no longer fails the connect.
+  * Fix: a bootstrap document the state model cannot apply raises `AccessBootstrapError` at a new `"apply"` stage, and a connect that fails there releases the store and connection pools.
+  * Housekeeping.
+
 ## 2.0.0 (2026-09-19)
 
 v2 is a ground-up rewrite around a single model: the controller's state is a reducer over a typed realtime notification stream, with a periodic re-bootstrap as a permanent failsafe. The entry point, error handling, resource lifetimes, event model, and device surface are all new, and the API is not source-compatible with 1.x.

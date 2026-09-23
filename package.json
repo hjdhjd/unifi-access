@@ -1,7 +1,7 @@
 {
   "name": "unifi-access",
   "type": "module",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "displayName": "UniFi Access API",
   "description": "A complete UniFi Access API implementation - the native interface and the published developer API, with realtime events and typed door control.",
   "author": {
@@ -79,9 +79,9 @@
     "typedoc": "0.28.20",
     "typedoc-plugin-markdown": "4.13.1",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.70.0"
+    "typescript-eslint": "8.70.1"
   },
   "dependencies": {
-    "undici": "8.10.2"
+    "undici": "8.11.0"
   }
 }
