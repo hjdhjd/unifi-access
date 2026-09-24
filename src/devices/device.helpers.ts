@@ -76,7 +76,7 @@ export function deviceFixture(bootstrap: AccessBootstrapConfig): DeviceFixture {
    * direct path these tests are about. That means the direct-path assertions below run through the genuine routing decision rather than around it, and a routing
    * change that broke the fallback would fail here rather than only in the routed suites.
    */
-  const routing = new AccessRoutingService({ capabilities: { mode: "credential", official: false, override: "auto" }, official: null, store });
+  const routing = new AccessRoutingService({ capabilities: { mode: "credential", official: false, override: "auto" }, log: silentLog(), official: null, store });
   const ctx: AccessDeviceContext = { host: mock.host, log: silentLog(), routing, store, transport: mock.transport };
 
   return { captured: [], ctx, mock, registry: new AccessDeviceRegistry(ctx), store };

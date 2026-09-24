@@ -4,10 +4,12 @@
  * matters here is WHICH path each command takes and what the two runtime capability verdicts do to that choice over a client's life - questions that are about the
  * decision rather than about anything on the wire.
  */
-import { AccessAbortedError, AccessApiError, AccessCapabilityError } from "../errors.ts";
+import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessCapabilityError } from "../errors.ts";
 import type { AccessCapabilities, AccessOfficialDoorSurface } from "./routing.ts";
-import { TestClock, silentLog } from "homebridge-plugin-utils/testing";
+import type { CapturingLog, TestLogEntry } from "homebridge-plugin-utils/testing";
+import { TestClock, capturingLog, loggedAt, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
+import type { AccessLogging } from "../logging.ts";
 import type { AccessOfficialCallOptions } from "../official/dispatch.ts";
 import type { AccessOfficialDoorUnlockOptions } from "../official/spaces.ts";
 import { AccessRoutingService } from "./routing.ts";
@@ -18,6 +20,10 @@ import { assertRejectsWith } from "../testing.helpers.ts";
 
 const HUB = "aabbcc000001";
 const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
+
+// The transport's own sentence for each refusal of the token, which the closure's warning carries as it stands.
+const TOKEN_REJECTED = "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.";
+const TOKEN_FORBIDDEN = "The configured API token lacks the permissions this operation requires on the UniFi Access controller.";
 
 // What each side of a routed decision recorded, so a test asserts the path taken rather than inferring it.
 interface RecordedCalls {
@@ -77,12 +83,12 @@ function storeWith(bootstrap = accessBootstrap2026Fixture): StateStore {
   return store;
 }
 
-function makeService(options: { calls: RecordedCalls; capabilities?: Partial<AccessCapabilities>; official?: boolean;
+function makeService(options: { calls: RecordedCalls; capabilities?: Partial<AccessCapabilities>; log?: AccessLogging; official?: boolean;
   refuse?: (attempt: OfficialAttempt) => Error | undefined; store?: StateStore; }): { service: AccessRoutingService; store: StateStore } {
 
   const store = options.store ?? storeWith();
   const capabilities: AccessCapabilities = { mode: "dual", official: true, override: "auto", ...options.capabilities };
-  const service = new AccessRoutingService({ capabilities,
+  const service = new AccessRoutingService({ capabilities, log: options.log ?? silentLog(),
     official: ((options.official ?? true) ? officialSurface(options.calls, options.refuse) : null), store });
 
   return { service, store };
@@ -90,6 +96,7 @@ function makeService(options: { calls: RecordedCalls; capabilities?: Partial<Acc
 
 const newCalls = (): RecordedCalls => ({ direct: [], lockRules: [], unlocks: [] });
 const direct = (calls: RecordedCalls, label: string) => async (): Promise<void> => void calls.direct.push(label);
+const warnings = (log: CapturingLog): TestLogEntry[] => log.entries.filter((entry) => (entry.level === "warn"));
 
 describe("the routing decision", () => {
 
@@ -568,11 +575,12 @@ describe("the gate stop", () => {
 
 describe("the session revocation latch", () => {
 
-  test("latches on the Identity Enterprise refusal and skips the official path thereafter", async () => {
+  test("latches on the Identity Enterprise refusal, reports it once, and skips the official path thereafter", async () => {
 
     let attempts = 0;
     const calls = newCalls();
-    const { service } = makeService({ calls, refuse: () => {
+    const log = capturingLog();
+    const { service } = makeService({ calls, log, refuse: () => {
 
       attempts++;
 
@@ -585,6 +593,188 @@ describe("the session revocation latch", () => {
     // Unlike the floor, this is about the session rather than a device, so it holds for every device from the moment it is seen.
     assert.equal(attempts, 1);
     assert.deepEqual(calls.direct, [ "first", "second" ]);
+    assert.deepEqual(warnings(log).map((entry) => entry.params), [[{ code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }]],
+      "the closure is reported once, carrying the code, however many commands follow it");
+    assert.ok(loggedAt(log.entries, "warn", "own endpoints"), "and the report tells the reader the commands take the direct path");
+  });
+
+  test("latches on a rejected token where the direct path can carry the command, and reports it once", async () => {
+
+    /* The token passed the read that verified it at connect and is rejected on the command itself, which is a verdict on the token rather than on the request. A
+     * client holding credentials has somewhere else to go, so the command completes there, and every command after it goes straight there on every device.
+     */
+    let attempts = 0;
+    const calls = newCalls();
+    const log = capturingLog();
+    const { service } = makeService({ calls, log, refuse: () => {
+
+      attempts++;
+
+      return new AccessAuthError(TOKEN_REJECTED, { identity: "token", statusCode: 401 });
+    } });
+
+    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+
+    assert.equal(attempts, 1, "the rejected token is asked once, and the latch answers every command after it");
+    assert.deepEqual(calls.direct, [ "first", "second" ], "each unlock completed on the direct path");
+    assert.deepEqual(warnings(log).map((entry) => entry.params), [[{ identity: "token", statusCode: 401 }]],
+      "the closure is reported once, however many commands follow it");
+    assert.ok(loggedAt(log.entries, "warn", "rejected the configured API token"), "the report carries the transport's own sentence, which sends the reader to the token");
+    assert.ok(loggedAt(log.entries, "warn", "own endpoints"), "and tells the reader the commands take the direct path");
+  });
+
+  test("latches on a token refused a permission where the direct path can carry the command, and reports it once", async () => {
+
+    /* The token authenticated and was refused this operation. Its permissions were fixed when it was issued, so the refusal is a fact about this client rather than
+     * about the moment it asked, and a client holding credentials takes the direct path for this command and every one after it.
+     */
+    let attempts = 0;
+    const calls = newCalls();
+    const log = capturingLog();
+    const { service } = makeService({ calls, log, refuse: () => {
+
+      attempts++;
+
+      return new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 });
+    } });
+
+    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+
+    assert.equal(attempts, 1, "the refused permission is asked once, and the latch answers every command after it");
+    assert.deepEqual(calls.direct, [ "first", "second" ], "each unlock completed on the direct path");
+    assert.deepEqual(warnings(log).map((entry) => entry.params), [[{ identity: "token", statusCode: 403 }]],
+      "the closure is reported once, however many commands follow it");
+    assert.ok(loggedAt(log.entries, "warn", "lacks the permissions"), "the report carries the transport's own sentence for the refused permission");
+    assert.ok(loggedAt(log.entries, "warn", "own endpoints"), "and tells the reader the commands take the direct path");
+  });
+
+  test("reports the closure once when commands already in flight are refused together", async () => {
+
+    /* Routed commands issued together each take the official path before any refusal arrives, so each refusal reaches the closure. The latch records that the
+     * closure was reported, so the first refusal to arrive is the one that speaks and the rest close nothing new.
+     */
+    const refusals = [ { error: new AccessAuthError(TOKEN_REJECTED, { identity: "token", statusCode: 401 }), label: "a rejected token" },
+      { error: new AccessApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }), label: "the Identity Enterprise code" } ];
+
+    for(const refusal of refusals) {
+
+      let attempts = 0;
+      const calls = newCalls();
+      const log = capturingLog();
+      const { service } = makeService({ calls, log, refuse: () => {
+
+        attempts++;
+
+        return refusal.error;
+      } });
+
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.all([ service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB }),
+        service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" }) ]);
+
+      assert.equal(attempts, 2, refusal.label + ": each command reached the official path before any refusal arrived");
+      assert.deepEqual(calls.direct, [ "first", "second" ], refusal.label + ": each command completed on the direct path");
+      assert.equal(warnings(log).length, 1, refusal.label + ": the closure is reported once");
+    }
+  });
+
+  test("propagates an authentication refusal that names the credentials rather than the token", async () => {
+
+    // Only a refused token speaks about the official path. A refusal naming the credentials is about the other identity, and folding it would send the command to
+    // the very path whose identity was just refused.
+    const calls = newCalls();
+    const log = capturingLog();
+    const { service } = makeService({ calls, log, refuse: () => new AccessAuthError("rejected", { identity: "credentials", statusCode: 401 }) });
+
+    await assertRejectsWith(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), AccessAuthError,
+      { check: (error) => {
+
+        assert.equal(error.identity, "credentials");
+      } });
+
+    assert.deepEqual(calls.direct, [], "the refusal reached the caller rather than a second attempt on the other path");
+    assert.deepEqual(warnings(log), [], "and nothing was closed, so nothing was reported");
+  });
+
+  test("propagates a privilege refusal that names the credentials rather than the token", async () => {
+
+    // A permission refused to the account is about the other identity, so it says nothing about the official path, and the direct path is where that same account
+    // would be refused again.
+    const calls = newCalls();
+    const log = capturingLog();
+    const { service } = makeService({ calls, log, refuse: () => new AccessAuthorizationError("forbidden", { identity: "credentials", statusCode: 403 }) });
+
+    await assertRejectsWith(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), AccessAuthorizationError,
+      { check: (error) => {
+
+        assert.equal(error.identity, "credentials");
+      } });
+
+    assert.deepEqual(calls.direct, [], "the refusal reached the caller rather than a second attempt on the other path");
+    assert.deepEqual(warnings(log), [], "and nothing was closed, so nothing was reported");
+  });
+
+  test("keeps a rejected token as itself on every call from a client with no direct path", async () => {
+
+    /* With nowhere else to go, the token is the one thing to fix, and the authentication error is what says so. Latching here would turn every call after the first
+     * into a capability error that does not name the token.
+     */
+    let attempts = 0;
+    const calls = newCalls();
+    const log = capturingLog();
+    const { service } = makeService({ calls, capabilities: { mode: "token" }, log, refuse: () => {
+
+      attempts++;
+
+      return new AccessAuthError("rejected", { identity: "token", statusCode: 401 });
+    } });
+
+    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB }), AccessAuthError);
+    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "second"), doorId: DOOR_HUB }), AccessAuthError);
+
+    assert.equal(attempts, 2, "nothing was latched, so the second call asked the controller again");
+    assert.deepEqual(calls.direct, [], "a token client holds no direct path to take");
+    assert.deepEqual(warnings(log), [], "and nothing was closed, so nothing was reported");
+  });
+
+  test("keeps a token refused a permission as itself on every call from a client with no direct path", async () => {
+
+    // The same reasoning for the other refusal of the token: the privilege error names the permission to reissue the token with, where a capability error would not.
+    let attempts = 0;
+    const calls = newCalls();
+    const log = capturingLog();
+    const { service } = makeService({ calls, capabilities: { mode: "token" }, log, refuse: () => {
+
+      attempts++;
+
+      return new AccessAuthorizationError("forbidden", { identity: "token", statusCode: 403 });
+    } });
+
+    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB }), AccessAuthorizationError);
+    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "second"), doorId: DOOR_HUB }), AccessAuthorizationError);
+
+    assert.equal(attempts, 2, "nothing was latched, so the second call asked the controller again");
+    assert.deepEqual(calls.direct, [], "a token client holds no direct path to take");
+    assert.deepEqual(warnings(log), [], "and nothing was closed, so nothing was reported");
+  });
+
+  test("keeps a rejected token as itself on a client held to the official API", async () => {
+
+    const calls = newCalls();
+    const log = capturingLog();
+    const { service } = makeService({ calls, capabilities: { override: "official-only" }, log,
+      refuse: () => new AccessAuthError("rejected", { identity: "token", statusCode: 401 }) });
+
+    await assertRejectsWith(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), AccessAuthError,
+      { check: (error) => {
+
+        assert.equal(error.identity, "token");
+      } });
+
+    assert.deepEqual(calls.direct, [], "the override is what leaves the credentials unused");
+    assert.deepEqual(warnings(log), [], "and nothing was closed, so nothing was reported");
   });
 
   test("refuses an operation with no fallback once the latch has tripped", async () => {
@@ -603,8 +793,8 @@ describe("what is not a capability verdict", () => {
 
   test("propagates an ordinary official refusal as itself rather than falling back", async () => {
 
-    /* The negative control, and the one that matters most: only the two capability codes are folded. Anything else is a genuine statement about this request, and
-     * swallowing it into a silent retry on the other path would hide a real failure and issue the command twice.
+    /* The negative control, and the one that matters most: only the capability codes and a refused token are folded. Anything else is a genuine statement about this
+     * request, and swallowing it into a silent retry on the other path would hide a real failure and issue the command twice.
      */
     const calls = newCalls();
     const { service } = makeService({ calls, refuse: () => new AccessApiError("the door is busy", { code: "CODE_DEVICE_DEVICE_BUSY" }) });
@@ -714,11 +904,16 @@ describe("a command only the direct path can carry", () => {
      * a verdict the controller handed down, where holding no credentials is merely what this client always was.
      */
     const calls = newCalls();
-    const { service } = makeService({ calls, capabilities: { mode: "token" },
+    const log = capturingLog();
+    const { service } = makeService({ calls, capabilities: { mode: "token" }, log,
       refuse: () => new AccessApiError("refused", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) });
 
     // The first routed unlock is what teaches the service the session is revoked; its own refusal is not what this row is about.
     await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), AccessCapabilityError);
+
+    // The closure's warning states what closing means for a client with no direct path: the commands only the official API carries are refused.
+    assert.ok(loggedAt(log.entries, "warn", "will be refused for the life of this connection"), "the warning names the refusal that follows");
+    assert.equal(loggedAt(log.entries, "warn", "own endpoints"), false, "and promises no direct path this client does not hold");
 
     await assertRejectsWith(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }),
       AccessCapabilityError, { check: (error) => {
@@ -810,8 +1005,8 @@ describe("the caller's abort signal", () => {
 
   test("an abort from the official half propagates as itself and teaches the memo nothing", async () => {
 
-    /* A cancelled request is not a capability verdict. Only the two capability codes fold, so the abort reaches the caller as itself; the direct path is not
-     * tried, because issuing the command anyway is the one thing the caller just asked not to happen; and the memo files nothing, because an abort says
+    /* A cancelled request is not a capability verdict. Only the capability codes and a refused token fold, so the abort reaches the caller as itself; the direct
+     * path is not tried, because issuing the command anyway is the one thing the caller just asked not to happen; and the memo files nothing, because an abort says
      * something about the caller rather than about the device or the session.
      */
     let attempts = 0;

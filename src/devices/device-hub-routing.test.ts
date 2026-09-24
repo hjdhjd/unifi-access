@@ -15,6 +15,7 @@ import type { AccessOfficialDoorUnlockOptions } from "../official/spaces.ts";
 import { AccessRoutingService } from "../client/routing.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
+import { silentLog } from "homebridge-plugin-utils/testing";
 
 describe("the hub commands under routing", () => {
 
@@ -40,6 +41,7 @@ describe("the hub commands under routing", () => {
     const routing = new AccessRoutingService({
 
       capabilities: { mode: "dual", official: true, override: options.override ?? "auto" },
+      log: silentLog(),
       official: {
 
         spaces: {

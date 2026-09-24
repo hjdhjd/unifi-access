@@ -57,7 +57,7 @@ describe("a projection over a token-only client's census", () => {
     store.applyCensus({ devices: accessOfficialDevicesFixture.flat().map(officialDeviceRecord), doorStates: accessOfficialDoorsFixture.map(doorStateEntry),
       doors: accessOfficialDoorsFixture.map(officialDoorRecord) }, { complete: true });
 
-    const routing = new AccessRoutingService({ capabilities: { mode: "token", official: true, override: "auto" }, official: null, store });
+    const routing = new AccessRoutingService({ capabilities: { mode: "token", official: true, override: "auto" }, log: silentLog(), official: null, store });
     const ctx: AccessDeviceContext = { host: "10.0.0.1", log: silentLog(), routing, store, transport: null };
 
     return { registry: new AccessDeviceRegistry(ctx), store };

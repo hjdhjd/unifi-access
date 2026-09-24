@@ -13,14 +13,16 @@
  *
  * So the decision lives here, split into the two things it actually is. The CAPABILITY MAP is a connect-time snapshot of what this client can do at all, published
  * to consumers as {@link AccessClient.capabilities}. The ROUTING SERVICE is the live decision, and it owns the two verdicts that can only be learned by trying: the
- * per-device firmware floor, and the session revocation that an Identity Enterprise controller reports the first time a routed command reaches it. Keeping the
- * snapshot and the live verdicts apart is what lets the map be a stable, readable statement of the client's shape rather than something that mutates underfoot.
+ * per-device firmware floor, and the session revocation that closes the official path the first time a routed command draws an Identity Enterprise controller's
+ * report that it has no official API or, on a client with a direct path to fall back to, the token rejected or refused a permission. Keeping the snapshot and the
+ * live verdicts apart is what lets the map be a stable, readable statement of the client's shape rather than something that mutates underfoot.
  *
  * @module AccessRouting
  */
-import { AccessApiError, AccessCapabilityError } from "../errors.ts";
+import { AccessApiError, AccessAuthError, AccessAuthorizationError, AccessCapabilityError } from "../errors.ts";
 import type { AccessOfficialDoorEntryMethod, AccessOfficialDoorUnlockActor, AccessOfficialDoorUnlockOptions,
   AccessOfficialLockRuleSet } from "../official/spaces.ts";
+import type { AccessLogging } from "../logging.ts";
 import type { AccessOfficialCallOptions } from "../official/dispatch.ts";
 import type { Nullable } from "../types/index.ts";
 import type { StateReader } from "../devices/context.ts";
@@ -58,9 +60,10 @@ export type AccessApiOverride = "auto" | "direct-only" | "official-only";
  * What a client can do, as established at connect.
  *
  * This is a SNAPSHOT rather than a live reading, and the distinction matters. `official` says the official path was present and working when the client connected -
- * a token was supplied and the controller did not refuse it as an Identity Enterprise deployment does. It deliberately does not move afterward: a session revoked
- * mid-life, or a device found to sit below a firmware floor, changes what the routing service will attempt without rewriting the client's own description of itself.
- * A consumer reading this is asking what kind of client it holds, which is a question with a stable answer.
+ * a token was supplied and the controller did not refuse it as an Identity Enterprise deployment does. It deliberately does not move afterward: an official path
+ * closed mid-life, whether by an Identity Enterprise controller's report or by the token rejected or refused a permission on a client that can fall back to its
+ * credentials, or a device found to sit below a firmware floor, changes what the routing service will attempt without rewriting the client's own description of
+ * itself. A consumer reading this is asking what kind of client it holds, which is a question with a stable answer.
  *
  * @category Client
  */
@@ -194,10 +197,14 @@ export interface AccessOfficialDoorSurface {
   };
 }
 
-/** Construction options for {@link AccessRoutingService}: the connect-time map, the official surface when there is one, and the state to read device firmware from. */
+/**
+ * Construction options for {@link AccessRoutingService}: the connect-time map, the logger that reports the official path closing, the official surface when there
+ * is one, and the state to read device firmware from.
+ */
 export interface AccessRoutingServiceOptions {
 
   capabilities: AccessCapabilities;
+  log: AccessLogging;
   official: Nullable<AccessOfficialDoorSurface>;
   store: StateReader;
 }
@@ -252,8 +259,10 @@ type RoutedOperation = RoutedDirectOperation | RoutedOfficialOperation;
  * projections carry no firmware at all, a recorded refusal holds for that client's life and a fresh connect is what re-derives it.
  *
  * **The session revocation.** An Identity Enterprise controller has no official API at all, and reports that as a refusal on the first routed call that reaches it.
- * Once seen, it holds for this client's life - a revocation does not un-revoke partway through - so it is latched rather than re-probed on every command, and a
- * fresh connect is what re-derives it.
+ * A controller can also refuse the token on a routed call after accepting it at connect, rejecting it outright or refusing it a permission, and on a client with a
+ * direct path to fall back to, either refusal closes the official path the same way; a client with nowhere else to go keeps the refusal as the error it arrived as,
+ * because the token is then the one thing to fix. Once seen, it holds for this client's life - a revocation does not un-revoke partway through - so it is latched
+ * rather than re-probed on every command, and a fresh connect is what re-derives it.
  *
  * Both verdicts govern ROUTED commands only. A consumer calling the facade directly gets that channel's own typed errors, which is that channel's contract and not
  * something this should reach into.
@@ -269,14 +278,17 @@ export class AccessRoutingService implements AccessRoutingView {
   // as far as the refusals themselves reach: a code such as `CODE_DEVICE_API_NOT_SUPPORTED` speaks about the device and names no door, so filing one by door would
   // claim a distinction the wire never drew.
   readonly #floorRefusals = new Map<string, string>();
+  readonly #log: AccessLogging;
   readonly #official: Nullable<AccessOfficialDoorSurface>;
-  // Latched on the first Identity Enterprise refusal and never cleared, because nothing within one client's life makes it false again.
+  // Latched on the first Identity Enterprise refusal, or the first time the token is rejected or refused a permission where the direct path can carry the command
+  // instead, and never cleared, because nothing within one client's life makes it false again.
   #revoked = false;
   readonly #store: StateReader;
 
   constructor(options: AccessRoutingServiceOptions) {
 
     this.#capabilities = options.capabilities;
+    this.#log = options.log;
     this.#official = options.official;
     this.#store = options.store;
   }
@@ -331,9 +343,7 @@ export class AccessRoutingService implements AccessRoutingView {
    */
   async routedClose(request: AccessRoutedCloseRequest): Promise<void> {
 
-    const directServes = (this.#capabilities.mode !== "token") && (this.#capabilities.override !== "official-only");
-
-    if(directServes) {
+    if(this.#directServes) {
 
       await this.#route({ deviceId: request.deviceId, direct: request.direct, doorId: request.doorId, operation: "a close" });
 
@@ -416,9 +426,10 @@ export class AccessRoutingService implements AccessRoutingView {
   /* The one routing decision every routed command passes through.
    *
    * Official first where the map, the latch, the override, and the floor recorded for this command on this device all allow it; the direct path where the command has
-   * one and the client is not held away from it; and the capability error where neither is left. The two capability refusals are caught here and nowhere else, which
-   * is what keeps a raw result code from ever reaching a consumer as the answer to a routed call - any other official failure is a genuine fault about this request
-   * and propagates as itself.
+   * one and the client is not held away from it; and the capability error where neither is left. The capability refusals are caught here and nowhere else, and so is
+   * the token rejected or refused a permission on a client the direct path can serve, which keeps a raw result code from ever reaching a consumer as the answer to a
+   * routed call, and a refused token from failing a command the credentials could have carried - any other official failure is a genuine fault about this request and
+   * propagates as itself.
    *
    * An operation reaching here with no official half is not a special case, merely one whose official half is absent for this client: it reaches the direct path
    * or the capability error by the same two steps everything else does.
@@ -448,7 +459,7 @@ export class AccessRoutingService implements AccessRoutingView {
      * handed expresses a path that does not exist, and declining to call it is what keeps the refusal's reason the routing decision's own rather than whatever the
      * transport would have said.
      */
-    if((operation.direct !== undefined) && (this.#capabilities.override !== "official-only") && (this.#capabilities.mode !== "token")) {
+    if((operation.direct !== undefined) && this.#directServes) {
 
       await operation.direct();
 
@@ -476,11 +487,35 @@ export class AccessRoutingService implements AccessRoutingView {
     return (this.#floorRefusals.get(kind + ":" + deviceId) === this.#firmwareOf(deviceId)) ? null : this.#official;
   }
 
-  /* Fold an official refusal that is a capability verdict, reporting whether it was one. A revocation latches for the client's life; a floor refusal is recorded
-   * against the command that drew it, the device, and the firmware that device is running now, so the entry speaks for that one command and stops matching the
-   * moment the device is upgraded.
+  /* Whether the Access application's own endpoints can carry a command for this client: it holds credentials, and it is not held to the official API. Each is a
+   * connect-time fact, so the answer holds for the client's life, and reading it from one place is what keeps a close's choice of path, the routing decision's
+   * fallback, and the fold of a refused token from disagreeing about whether a direct path exists.
+   */
+  get #directServes(): boolean {
+
+    return (this.#capabilities.mode !== "token") && (this.#capabilities.override !== "official-only");
+  }
+
+  /* Fold an official refusal that is a capability verdict, reporting whether it was one. An Identity Enterprise refusal, or the token rejected or refused a
+   * permission on a client the direct path can serve, closes the official path for the client's life; a floor refusal is recorded against the command that drew it,
+   * the device, and the firmware that device is running now, so the entry speaks for that one command and stops matching the moment the device is upgraded.
    */
   #foldCapabilitySignal(error: unknown, deviceId: string, kind: RoutedCommandKind): boolean {
+
+    /* Either refusal of the token is a verdict learned by trying on the official path: the controller rejecting the token outright, or authenticating it and refusing
+     * it this operation. A token is granted its permissions when it is issued and keeps them for its life, so either refusal is a fact about this client rather than
+     * about the moment it asked. On a client that holds another path, this command and every routed command after it take that path. The latch closes the whole
+     * official path rather than the one endpoint a 403 spoke about, because the direct path carries every routed command that has a direct expression, so what a dual
+     * client gives up is only what the official API alone can express - an attributed unlock, an entry direction, a gate stop - and because one latch is the single
+     * record of the path being closed, where a per-endpoint memo would be another mechanism recording the same verdict. A client with nowhere else to go keeps the
+     * refusal as the error it arrived as, whose own sentence names the token remedy, rather than reading a capability error on every call after it.
+     */
+    if(((error instanceof AccessAuthError) || (error instanceof AccessAuthorizationError)) && (error.identity === "token") && this.#directServes) {
+
+      this.#closeOfficialPath(error.message, { identity: error.identity, statusCode: error.statusCode });
+
+      return true;
+    }
 
     if(!(error instanceof AccessApiError)) {
 
@@ -491,7 +526,7 @@ export class AccessRoutingService implements AccessRoutingView {
 
       case CODE_SESSION_REVOKED:
 
-        this.#revoked = true;
+        this.#closeOfficialPath("The UniFi Access controller reports that the official API is not available on this controller.", { code: error.code });
 
         return true;
 
@@ -505,6 +540,27 @@ export class AccessRoutingService implements AccessRoutingView {
 
         return false;
     }
+  }
+
+  /* Close the official path for the rest of this client's life, and say so once at warn, because a consumer whose commands keep succeeding has no other way to learn
+   * they are taking the other channel. Commands already in flight when the path closes each took the facade before it closed, so each can reach this; the latch is
+   * what records that the closure was reported, and the first refusal to arrive is the one that speaks. The warning is the refusal as the caller words it, followed
+   * by what closing means for this client, composed here from `#directServes` so every cause states its consequence in the same words: on a client that holds a
+   * direct path its commands take it, and on one that does not, the commands only the official API can carry are refused.
+   */
+  #closeOfficialPath(refusal: string, context: Record<string, unknown>): void {
+
+    if(this.#revoked) {
+
+      return;
+    }
+
+    this.#revoked = true;
+
+    const consequence = this.#directServes ? "This client's commands will use the Access application's own endpoints for the life of this connection." :
+      "The commands only the official API can carry will be refused for the life of this connection.";
+
+    this.#log.warn(refusal + " " + consequence, context);
   }
 
   /* The firmware a device is running right now, read through the state rather than captured anywhere, which is what makes the memo key move when the device is

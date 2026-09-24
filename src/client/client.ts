@@ -640,7 +640,7 @@ export class AccessClient implements AsyncDisposable {
     }
 
     const capabilities: AccessCapabilities = { mode, official: officialCapable, override };
-    const routing = new AccessRoutingService({ capabilities, official: officialCapable ? official : null, store });
+    const routing = new AccessRoutingService({ capabilities, log, official: officialCapable ? official : null, store });
 
     // Stage 4: build the injected functions the connection monitor drives. The stream factory is the single construction path for the initial socket and every
     // relaunch, and its optional signal binds only to the initial connect. The re-bootstrap and the reachability probe both dispatch as recovery trials.

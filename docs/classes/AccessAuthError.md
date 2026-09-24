@@ -8,7 +8,8 @@
 
 Authentication failed: invalid credentials, an expired session that could not be renewed, a CSRF-token rotation that did not complete, or an API token the
 controller refused. Fatal because retrying with the same identity reproduces the failure. [AccessAuthError.identity](#identity) names which identity was the refused
-one, so a caller reporting the failure can point at the right one.
+one, so a caller reporting the failure can point at the right one. On a routed command, the routing service folds a refused token into its revocation latch when
+the client holds a direct path to carry the command instead...so a consumer of a dual client sees the command succeed and a warning logged, rather than this error.
 
 ## Extends
 
