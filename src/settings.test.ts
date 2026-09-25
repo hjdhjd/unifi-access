@@ -5,7 +5,7 @@
  * realtime channel is declared dead. Asserting them prevents an accidental edit (a misplaced zero, a unit confusion) from silently changing behavior on every
  * consumer.
  */
-import { ACCESS_API_ERROR_LIMIT, ACCESS_API_PATH_PREFIX, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT, ACCESS_BOOTSTRAP_REFRESH_INTERVAL,
+import { ACCESS_API_ERROR_LIMIT, ACCESS_API_PATH_PREFIX, ACCESS_API_RETRY_INTERVAL, ACCESS_API_RETRY_PROFILE, ACCESS_API_TIMEOUT, ACCESS_BOOTSTRAP_REFRESH_INTERVAL,
   ACCESS_EVENTS_HEARTBEAT_TIMEOUT, ACCESS_OFFICIAL_API_PATH_PREFIX, ACCESS_OFFICIAL_API_PORT, ACCESS_REBOOT_UPTIME_DROP_MINIMUM,
   ACCESS_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
 import { describe, test } from "node:test";
@@ -22,6 +22,21 @@ describe("settings", () => {
   test("ACCESS_API_RETRY_INTERVAL is 300 seconds", () => {
 
     assert.equal(ACCESS_API_RETRY_INTERVAL, 300, "retry interval must be 300 seconds to match the documented backoff contract");
+  });
+
+  // The pool's retry profile is asserted whole, so a status code dropped, a verb added, or a backoff retuned fails here rather than silently changing how every
+  // request is retried.
+  test("ACCESS_API_RETRY_PROFILE is the documented retry profile", () => {
+
+    assert.deepEqual(ACCESS_API_RETRY_PROFILE, {
+
+      maxRetries: 5,
+      maxTimeout: 1500,
+      methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ],
+      minTimeout: 100,
+      statusCodes: [ 400, 404, 429, 500, 502, 503, 504 ],
+      timeoutFactor: 2
+    }, "the retry profile must match the documented verbs, transient statuses, and backoff");
   });
 
   // The API timeout is documented as "should never be greater than 5000 ms" - we lock both the value and the upper bound so future tuning can change the value but a

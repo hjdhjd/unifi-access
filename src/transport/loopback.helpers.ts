@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * loopback.helpers.ts: The loopback peers these suites drive real sockets against - a recording https responder and a silent peer that answers nothing - plus the
- * accept-order ledger and the listen-and-stop lifecycle every loopback server here shares.
+ * loopback.helpers.ts: The loopback peers these suites drive real sockets against - a recording https responder, a silent peer that answers nothing, and a silent
+ * peer that resets every connection it accepts - plus the accept-order ledger and the listen-and-stop lifecycle every loopback server here shares.
  *
  * A peer lives here when more than one suite needs it, or when its lifecycle is the plumbing rather than the point. The notification stream's hand-rolled
  * WebSocket upgrade stays beside its own tests instead: it speaks raw TLS sockets and shares no server shape with an https responder, so only its listen and stop
@@ -11,12 +11,23 @@ import type { Server, Socket } from "node:net";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
 import { createServer } from "node:https";
 import { createServer as createTcpServer } from "node:net";
+import { setTimeout as setTimeoutAsync } from "node:timers/promises";
 
-/* How long a cut connection attempt may take to settle, in milliseconds, before a test calls it a failure. The measured cut of a socket held mid-handshake lands
- * at around 305 to 309 milliseconds, so this bound sits an order of magnitude above what a working cut costs and an order of magnitude below undici's own
- * ten-second connect timer - which is what a cut that silently did nothing would fall through to, and is what makes the bound tell the two apart.
+/* The real-time bound, in milliseconds, within which a cancelled or expired request settles and within which a reset or a disposal releases a connection attempt,
+ * before a test calls it a failure. It sits more than an order of magnitude above what either costs and an order of magnitude below undici's own ten-second
+ * connect timer - which is what a settlement or a release that silently did nothing would fall through to, and is what makes the bound tell the two apart.
  */
-export const DIAL_CUT_BOUND_MS = 1000;
+export const DIAL_SETTLE_BOUND_MS = 1000;
+
+/* How long a dial test waits on real time before it reads what a cancel left alone: that no second connection attempt reached the peer, that a connection attempt
+ * left to the pool is still open, and that a request waiting on it is still pending. A re-dial is a connect syscall and an accept event, a couple of milliseconds
+ * on loopback, which a single macrotask turn does not reliably span; this wait spans it more than an order of magnitude over.
+ */
+export const REDIAL_WAIT_MS = 50;
+
+// How long the resetting peer holds a connection before it resets it. The accept and a test's own reaction to it share one turn of the event loop, so any delay
+// orders the reset after whatever the test does to the connection attempt; this one also gives the client time to send the opening of its handshake.
+const HANDSHAKE_RESET_DELAY_MS = 50;
 
 // Nanoseconds per millisecond, which is the unit `process.hrtime.bigint()` answers in and the one the bound above is written in.
 const NANOSECONDS_PER_MILLISECOND = 1000000;
@@ -24,8 +35,8 @@ const NANOSECONDS_PER_MILLISECOND = 1000000;
 /**
  * Real elapsed milliseconds since a `process.hrtime.bigint()` reading.
  *
- * A settlement has to be bounded on real time whatever clock its subject is driven by: a virtual clock cannot tell a cut connection attempt from undici's own
- * connect timer, because the two end a request the same way and a `TestClock` reports whatever elapsed time its advance says.
+ * A settlement has to be bounded on real time whatever clock its subject is driven by: a virtual clock cannot tell a prompt settlement from undici's own connect
+ * timer, because the two end a request the same way and a `TestClock` reports whatever elapsed time its advance says.
  *
  * @param startedAt - The reading to measure from.
  *
@@ -37,12 +48,27 @@ export function elapsedSince(startedAt: bigint): number {
 }
 
 /**
+ * Wait out {@link REDIAL_WAIT_MS} on real time, and report whether every promise given was still pending when it elapsed.
+ *
+ * A promise that settles inside the wait - a rejection as much as a resolution - ends the wait early and answers `false`, so a test that expects something to stay
+ * open learns at once when it did not.
+ *
+ * @param promises - What has to stay pending: a request, an accepted connection's `closed`, or a connection the peer has yet to accept.
+ *
+ * @returns Whether the wait elapsed with every one of them still pending.
+ */
+export async function pendingThroughRedialWait(...promises: Promise<unknown>[]): Promise<boolean> {
+
+  return Promise.race([ setTimeoutAsync(REDIAL_WAIT_MS, true), ...promises.map(async (promise) => promise.then(() => false, () => false)) ]);
+}
+
+/**
  * The accept-order bookkeeping every loopback peer here shares: connections recorded in the order they arrive, and an accessor that resolves with the one at a
  * given position whether it has already arrived or is still to come.
  *
  * Arming against a connection before the client makes it is what these tests need, because severance lands within milliseconds of a teardown and a listener
- * attached after the fact would miss the very event it exists to observe. `accepted` reads the count so far, which is how a test proves that a cut request was
- * never re-dialed.
+ * attached after the fact would miss the very event it exists to observe. `accepted` reads the count so far, which is how a test proves that a settled request
+ * was never re-dialed.
  */
 export interface ConnectionLedger<T> {
 
@@ -117,12 +143,40 @@ export interface SilentLoopback extends AsyncDisposable {
  * A peer on loopback that accepts every connection and then says nothing at all.
  *
  * A TLS client dialing it completes TCP and waits forever in the handshake, which is the one peer behavior that leaves a connection attempt in flight for as long
- * as a test needs it - a black hole at a loopback address, with none of a routed black hole's dependence on the network. Every accepted socket is put in flowing
- * mode, because a socket that is never read may never emit `close` once its peer severs it, and `close` is the event these tests wait on.
+ * as a test needs it - a black hole at a loopback address, with none of a routed black hole's dependence on the network.
  *
  * @returns The listening peer. Dispose it to sever every connection and stop listening.
  */
 export async function createSilentLoopback(): Promise<SilentLoopback> {
+
+  return createQuietLoopback(() => undefined);
+}
+
+/**
+ * A peer on loopback that accepts every connection, says nothing, and resets it a short while later.
+ *
+ * A TLS client dialing it completes TCP and then has its handshake reset under it, reported as `ECONNRESET` - a connection fault undici's retry interceptor treats
+ * as retryable, so this is the peer that asks whether a failed connection attempt is dialed again. The delay before the reset is the window a test acts in while
+ * the attempt is still in flight, and the accepted connection's `closed` is how a test knows the reset has landed.
+ *
+ * @returns The listening peer. Dispose it to sever every connection and stop listening.
+ */
+export async function createResettingLoopback(): Promise<SilentLoopback> {
+
+  return createQuietLoopback((socket) => {
+
+    const reset = setTimeout(() => socket.resetAndDestroy(), HANDSHAKE_RESET_DELAY_MS);
+
+    // A connection that ends before its reset is due, severed by the client or by disposal, has nothing left to reset.
+    socket.once("close", () => clearTimeout(reset));
+  });
+}
+
+/* The body every silent peer here shares: accept each connection, say nothing, record it in accept order, and sever everything on disposal. `onAccept` is what a
+ * particular peer does with a connection beyond that. Every accepted socket is put in flowing mode, because a socket that is never read may never emit `close` once
+ * its peer severs it, and `close` is the event these tests wait on.
+ */
+async function createQuietLoopback(onAccept: (socket: Socket) => void): Promise<SilentLoopback> {
 
   const ledger = createConnectionLedger<AcceptedConnection>();
   const sockets: Socket[] = [];
@@ -137,6 +191,7 @@ export async function createSilentLoopback(): Promise<SilentLoopback> {
     // A client severing its end of the connection is the very thing these tests arrange, so the reset it raises here is expected rather than a fault.
     socket.on("error", () => undefined);
 
+    onAccept(socket);
     ledger.record({ closed: closed.promise });
   });
 

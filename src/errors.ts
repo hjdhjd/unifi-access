@@ -90,8 +90,8 @@ export class AccessTimeoutError extends RecoverableError {
 
 /**
  * A connect, DNS, TLS, or socket-level failure reaching the controller. The originating Node `ErrnoException` is preserved on the `cause` chain (the shape undici raises
- * as `TypeError("fetch failed", { cause: errnoError })`); `code` lifts the errno string out for convenient branching. The transport reports two interruptions through
- * this class as well: a pool reset under the request, and a connection attempt cut for another request's cancellation or deadline.
+ * as `TypeError("fetch failed", { cause: errnoError })`); `code` lifts the errno string out for convenient branching. The transport reports a pool reset under the
+ * request through this class as well.
  *
  * @category Errors
  */

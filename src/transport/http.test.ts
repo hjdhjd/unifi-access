@@ -8,12 +8,12 @@
  * without real-time waits. The injected dispatcher and clock let these tests assert the controller's throttle and retry behavior - the established behavioral
  * contract - exactly and without flakiness.
  */
-import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT } from "../settings.ts";
+import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_RETRY_PROFILE, ACCESS_API_TIMEOUT } from "../settings.ts";
 import { AccessAbortedError, AccessAuthError, AccessAuthorizationError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessRequestError,
   AccessThrottledError, AccessTimeoutError } from "../errors.ts";
 import type { AccessHttpRequestEndPayload, AccessHttpRequestStartPayload, AccessHttpThrottleEnteredPayload,
   AccessHttpThrottleExitedPayload } from "../diagnostics.ts";
-import { DIAL_CUT_BOUND_MS, createHttpsLoopback, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
+import { DIAL_SETTLE_BOUND_MS, createHttpsLoopback, createResettingLoopback, createSilentLoopback, elapsedSince, pendingThroughRedialWait } from "./loopback.helpers.ts";
 import { TestClock, capturingLog, settle, silentLog } from "homebridge-plugin-utils/testing";
 import { Transport, controllerReachable, responseOk } from "./http.ts";
 import { assertRejectsWith, errnoError, present, subscribeTo } from "../testing.helpers.ts";
@@ -22,6 +22,7 @@ import { makeMockTransport, url } from "./mock-controller.helpers.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { errors } from "undici";
+import { setTimeout as setTimeoutAsync } from "node:timers/promises";
 
 // The breaker cooldown in milliseconds, mirroring the transport's own derivation, so the fake-clock advances line up with the gate math.
 const COOLDOWN_MS = ACCESS_API_RETRY_INTERVAL * 1000;
@@ -410,9 +411,10 @@ describe("Transport", () => {
 
       const { clock, host, pool, transport } = makeMockTransport();
 
-      /* undici installs a request's abort hook at dispatch, so a reply the mock holds open by its own delay is what stays in flight long enough for the deadline
-       * to end it; a reply the test releases by hand would sit ahead of that hook and never be reached by an abort at all. The deadline is the injected clock's,
-       * so firing it is an advance rather than a real wait.
+      /* The mock holds its reply open by its own delay, so the exchange is still in flight when the deadline fires rather than answered ahead of it. The transport
+       * settles the request itself the moment the deadline fires, and undici's own abort hook - what ends a request on a live socket, in place here from the mock's
+       * request start - ends the held reply on undici's side and clears the mock's timer with it. The deadline is the injected clock's, so firing it is an advance
+       * rather than a real wait.
        */
       pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
 
@@ -501,20 +503,21 @@ describe("Transport", () => {
     });
   });
 
-  /* What a connection attempt still in flight does when something ends it.
+  /* What a request settles as, and what happens to its connection attempt, when something ends it while that attempt is still in flight.
    *
    * Every test here builds its transport WITHOUT an injected dispatcher, exactly as the certificate-verification tests below do, because the owned pool and the
    * connector beside it are the whole subject: a MockAgent replaces undici's dispatch wholesale, and everything beneath it - the connect phase included - is
    * permanently out of a mocked test's reach. The peer is a silent one, which accepts a connection and then answers nothing, so the TLS handshake stays in flight
-   * for as long as a test needs it.
+   * for as long as a test needs it; the test about a connection attempt that fails uses a silent peer that resets the handshake instead.
    *
-   * Each settlement is bounded on REAL wall-clock even where the deadline itself runs on virtual time, because a virtual clock cannot tell a cut from undici's own
-   * ten-second connect timer: both end the request as the same class, and a `TestClock` reports whatever elapsed time its advance says. A cut that quietly did
-   * nothing therefore fails these tests by blowing the bound rather than by changing a class.
+   * Each settlement is bounded on REAL wall-clock even where the deadline itself runs on virtual time, because a virtual clock cannot tell a prompt settlement from
+   * undici's own ten-second connect timer: both end the request as the same class, and a `TestClock` reports whatever elapsed time its advance says. A settlement
+   * that quietly did nothing therefore fails these tests by blowing the bound rather than by changing a class. What a cancel leaves alone - the connection attempt,
+   * a request still waiting on it, and the peer's count of connections - is read after the re-dial wait, on real time as well.
    */
   describe("the connection dial", () => {
 
-    test("a caller abort during the dial rejects at once with AccessAbortedError and releases the socket", async () => {
+    test("a caller abort during the dial rejects at once with AccessAbortedError and leaves the connection attempt to the pool", async () => {
 
       await using peer = await createSilentLoopback();
       await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
@@ -528,17 +531,16 @@ describe("Transport", () => {
       controller.abort();
 
       await assert.rejects(pending, AccessAbortedError);
-      await connection.closed;
 
-      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "a cancelled connection attempt ends at once rather than running on to undici's own connect timer");
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "a cancel settles its request at once rather than waiting on undici's own connect timer");
 
-      // The retry interceptor must not put the cut request back on the wire, and the count of connections the peer accepted is what says it did not.
-      await settle();
-
-      assert.equal(peer.accepted, 1, "a request whose connection attempt was cut must not be re-dialed");
+      // The silent peer never completes the handshake, so the attempt the cancel left behind stays open until the transport is disposed, and the count of
+      // connections the peer accepted is what says nothing was dialed again on the settled request's behalf.
+      assert.ok(await pendingThroughRedialWait(connection.closed), "a cancel leaves the connection attempt to the pool rather than cutting it");
+      assert.equal(peer.accepted, 1, "a settled request must not be dialed again");
     });
 
-    test("the deadline during the dial rejects with AccessTimeoutError on virtual time and releases the socket", async () => {
+    test("the deadline during the dial rejects with AccessTimeoutError on virtual time and leaves the connection attempt to the pool", async () => {
 
       await using peer = await createSilentLoopback();
 
@@ -554,9 +556,10 @@ describe("Transport", () => {
       clock.advance(ACCESS_API_TIMEOUT);
 
       await assert.rejects(pending, (error: unknown) => (error instanceof AccessTimeoutError) && (error.elapsedMs === ACCESS_API_TIMEOUT));
-      await connection.closed;
 
-      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "an expired connection attempt ends at once rather than running on to undici's own connect timer");
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "an expired request settles at once rather than waiting on undici's own connect timer");
+      assert.ok(await pendingThroughRedialWait(connection.closed), "a deadline leaves the connection attempt to the pool rather than cutting it");
+      assert.equal(peer.accepted, 1, "an expired request must not be dialed again");
     });
 
     test("a signal already aborted when the request is dispatched rejects at once and opens no connection", async () => {
@@ -570,76 +573,132 @@ describe("Transport", () => {
 
       const startedAt = process.hrtime.bigint();
 
-      // A listener attached to a signal that has already fired never runs, and undici acts on one only after the connect, so the check that catches this has to sit
-      // ahead of the dispatch itself. What proves the check is there is that the peer never sees a connection at all.
+      /* A listener attached to a signal that has already fired never runs, and undici acts on one only after the connect, so the check that catches this has to sit
+       * ahead of the dispatch itself. The class is what proves the check is there: without it the pool's signal gate still refuses the attempt, but as a network
+       * failure rather than as the caller's abort. The peer never seeing a connection at all is what proves nothing was dialed on the way.
+       */
       await assert.rejects(transport.send(url(peer.host, "/x"), { signal: controller.signal }), AccessAbortedError);
 
-      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "a request whose signal had already fired ends at once");
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "a request whose signal had already fired ends at once");
 
       await settle();
 
       assert.equal(peer.accepted, 0, "a request whose signal had already fired must never open a connection");
     });
 
-    test("a concurrent dial for another caller is cut as a recoverable network interruption", async () => {
+    test("a cancel while a request waits behind the first connection attempt rejects it at once and leaves that attempt to the request waiting on it", async () => {
 
       await using peer = await createSilentLoopback();
-      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
 
-      const cancelled = new AbortController();
-      const bystander = new AbortController();
-      const arriving = Promise.all([ peer.connection(0), peer.connection(1) ]);
-      const pendingCancelled = transport.send(url(peer.host, "/one"), { signal: cancelled.signal });
-      const pendingBystander = transport.send(url(peer.host, "/two"), { signal: bystander.signal });
-      const connections = await arriving;
+      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      const first = new AbortController();
+      const second = new AbortController();
+      const arriving = peer.connection(0);
+      const pendingFirst = transport.send(url(peer.host, "/one"), { signal: first.signal });
+      const pendingSecond = transport.send(url(peer.host, "/two"), { signal: second.signal });
+      const connection = await arriving;
+      const startedAt = process.hrtime.bigint();
 
-      /* A pool's connection attempts are shared while a signal is per request, so one caller's cancel reaches a connection attempt another caller was waiting on.
-       * That is the accepted collateral, and what matters is that the bystander is told the truth about it rather than told it was cancelled.
+      /* The pool opens a single connection attempt while it learns whether the controller speaks HTTP/2 and queues every later request behind it, so the second
+       * request has no connection attempt of its own. Its cancel is a fact about it alone: it settles at once, and the attempt the first request is waiting on goes
+       * on untouched.
        */
-      cancelled.abort();
+      second.abort();
 
-      await assert.rejects(pendingCancelled, AccessAbortedError);
-      await assert.rejects(pendingBystander, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("cut for another request"));
-      await Promise.all(connections.map(async (connection) => connection.closed));
+      await assert.rejects(pendingSecond, AccessAbortedError);
+
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "a queued request's cancel settles it at once rather than waiting on the connection attempt ahead of it");
+      assert.ok(await pendingThroughRedialWait(pendingFirst, connection.closed), "the request waiting on the connection attempt keeps it, untouched by another's cancel");
+      assert.equal(peer.accepted, 1, "a cancel opens no connection of its own");
+
+      // The rejection is claimed before the disposal that causes it, so it is never a rejection nobody is waiting on.
+      const failing = assert.rejects(pendingFirst, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("connection pool was reset"));
+
+      await transport[Symbol.asyncDispose]();
+      await failing;
     });
 
-    test("two requests sharing one caller signal both report the cancel", async () => {
+    test("a cancel of the request that owns the connection attempt rejects it at once and the request waiting behind it keeps the attempt", async () => {
+
+      await using peer = await createSilentLoopback();
+
+      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      const first = new AbortController();
+      const second = new AbortController();
+      const arriving = peer.connection(0);
+      const pendingFirst = transport.send(url(peer.host, "/one"), { signal: first.signal });
+      const pendingSecond = transport.send(url(peer.host, "/two"), { signal: second.signal });
+      const connection = await arriving;
+      const startedAt = process.hrtime.bigint();
+
+      // The same pool in the other order: the request whose dispatch opened the connection attempt is the one cancelled, and the attempt belongs to the pool
+      // rather than to it, so the request queued behind it still has an attempt to wait on.
+      first.abort();
+
+      await assert.rejects(pendingFirst, AccessAbortedError);
+
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "the cancelled owner settles at once rather than waiting on undici's own connect timer");
+      assert.ok(await pendingThroughRedialWait(pendingSecond, connection.closed), "the request queued behind the cancelled one keeps the connection attempt");
+      assert.equal(peer.accepted, 1, "a cancel opens no connection of its own");
+
+      // The rejection is claimed before the disposal that causes it, so it is never a rejection nobody is waiting on.
+      const failing = assert.rejects(pendingSecond, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("connection pool was reset"));
+
+      await transport[Symbol.asyncDispose]();
+      await failing;
+    });
+
+    test("two requests sharing one caller signal both report the cancel at once", async () => {
 
       await using peer = await createSilentLoopback();
       await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
 
       const controller = new AbortController();
-      const arriving = Promise.all([ peer.connection(0), peer.connection(1) ]);
+      const arriving = peer.connection(0);
       const first = transport.send(url(peer.host, "/one"), { signal: controller.signal });
       const second = transport.send(url(peer.host, "/two"), { signal: controller.signal });
-      const connections = await arriving;
+      const connection = await arriving;
+      const startedAt = process.hrtime.bigint();
 
       controller.abort();
 
-      // Both requests carry the signal that fired, so identity names the caller's cancel for each of them rather than making one of them a bystander.
+      // Both requests carry the signal that fired, so identity names the caller's cancel for each of them, the one whose dispatch opened the connection attempt
+      // and the one queued behind it alike.
       await assert.rejects(first, AccessAbortedError);
       await assert.rejects(second, AccessAbortedError);
-      await Promise.all(connections.map(async (connection) => connection.closed));
+
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "both requests settle at once rather than waiting on undici's own connect timer");
+      assert.ok(await pendingThroughRedialWait(connection.closed), "a cancel leaves the connection attempt to the pool rather than cutting it");
+      assert.equal(peer.accepted, 1, "a cancel opens no connection of its own");
     });
 
-    test("a cut names the request whose signal fired, whichever was dialed first", async () => {
+    test("a cancelled request whose connection attempt then fails with a retryable fault is not dialed again", async () => {
 
-      await using peer = await createSilentLoopback();
+      await using peer = await createResettingLoopback();
       await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
 
-      const bystander = new AbortController();
-      const cancelled = new AbortController();
-      const arriving = Promise.all([ peer.connection(0), peer.connection(1) ]);
-      const pendingBystander = transport.send(url(peer.host, "/one"), { signal: bystander.signal });
-      const pendingCancelled = transport.send(url(peer.host, "/two"), { signal: cancelled.signal });
-      const connections = await arriving;
+      const controller = new AbortController();
+      const arriving = peer.connection(0);
+      const pending = transport.send(url(peer.host, "/x"), { signal: controller.signal });
+      const connection = await arriving;
+      const startedAt = process.hrtime.bigint();
 
-      // The same collateral in the other order, which is what says the naming follows the signal that fired rather than the order the connections were opened in.
-      cancelled.abort();
+      controller.abort();
 
-      await assert.rejects(pendingCancelled, AccessAbortedError);
-      await assert.rejects(pendingBystander, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("cut for another request"));
-      await Promise.all(connections.map(async (connection) => connection.closed));
+      await assert.rejects(pending, AccessAbortedError);
+
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "a cancel settles its request at once, ahead of the fault");
+
+      /* The peer then resets the handshake the cancel left in flight, a fault the retry interceptor retries after its backoff. Its handler cannot see a signal
+       * until a request has started on a connection, so what keeps the settled request off the wire is the pool's signal gate, and the peer's count of
+       * connections once the first retry would have dialed is what says the gate held. The wait is that first backoff read from the pool's own retry profile rather
+       * than a copy of it, so the test and the pool agree on when a retry would dial, and a change to the profile carries the test with it.
+       */
+      await connection.closed;
+      await setTimeoutAsync(ACCESS_API_RETRY_PROFILE.minTimeout);
+
+      assert.ok(await pendingThroughRedialWait(peer.connection(1)), "no retry dials again for a request the transport has already settled");
+      assert.equal(peer.accepted, 1, "a settled request must not be dialed again after a retryable fault");
     });
 
     test("reset() during a dial fails the request as the pool-reset interruption and releases the socket", async () => {
@@ -658,7 +717,7 @@ describe("Transport", () => {
       await assert.rejects(pending, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("connection pool was reset"));
       await connection.closed;
 
-      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "a reset releases a connection attempt rather than leaving it to undici's own connect timer");
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "a reset releases a connection attempt rather than leaving it to undici's own connect timer");
     });
 
     test("disposal during a dial releases the socket and does not wait on it", async () => {
@@ -676,12 +735,12 @@ describe("Transport", () => {
 
       await transport[Symbol.asyncDispose]();
 
-      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "disposal must not wait out the connection attempt it severed");
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "disposal must not wait out the connection attempt it severed");
 
       await failing;
       await connection.closed;
 
-      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "the severed connection attempt ends within the same bound");
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "the severed connection attempt ends within the same bound");
     });
   });
 

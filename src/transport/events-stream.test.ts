@@ -9,7 +9,7 @@
  */
 import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessStallError, formatErrorChain } from "../errors.ts";
 import type { AccessEventsClosedPayload, AccessEventsPacketPayload } from "../diagnostics.ts";
-import { DIAL_CUT_BOUND_MS, createSilentLoopback, elapsedSince, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
+import { DIAL_SETTLE_BOUND_MS, createSilentLoopback, elapsedSince, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
 import { EventStream, HEARTBEAT_FRAME } from "./events-stream.ts";
 import { FakeWebSocket, createLoopbackServer } from "./events-stream.helpers.ts";
 import { TestClock, assertNoUnhandledRejections, capturingLog, settle, silentLog, waitUntil } from "homebridge-plugin-utils/testing";
@@ -1270,10 +1270,10 @@ describe("EventStream", () => {
       await assert.rejects(stream.close(), { message: "the closed listener refused the close" });
 
       /* The peer holds its own end of the connection open, so nothing but this stream's release can sever it - which makes the peer's close the one observer of
-       * the release in this harness, and the reason this row cannot use the fake socket. DIAL_CUT_BOUND_MS was measured against a socket cut mid-handshake; this
-       * row cuts an established one and reuses the constant as a generous ceiling.
+       * the release in this harness, and the reason this row cannot use the fake socket. DIAL_SETTLE_BOUND_MS bounds a settlement or the release of a connection
+       * attempt, an order of magnitude under undici's own connect timer; this row releases an established connection and reuses the constant as a generous ceiling.
        */
-      await waitUntil(() => severed, { description: "the peer's end of the connection to be severed", timeoutMs: DIAL_CUT_BOUND_MS });
+      await waitUntil(() => severed, { description: "the peer's end of the connection to be severed", timeoutMs: DIAL_SETTLE_BOUND_MS });
     });
 
     test("an error listener that throws on a stall does not leave the connection held", async () => {
@@ -1311,7 +1311,7 @@ describe("EventStream", () => {
       /* The peer holds its own end of the connection open, so nothing but this stream's release can sever it - which makes the peer's close the one observer of
        * the release in this harness, exactly as it is for the throwing closed listener above.
        */
-      await waitUntil(() => severed, { description: "the peer's end of the connection to be severed", timeoutMs: DIAL_CUT_BOUND_MS });
+      await waitUntil(() => severed, { description: "the peer's end of the connection to be severed", timeoutMs: DIAL_SETTLE_BOUND_MS });
       await stream.close();
     });
 
@@ -1350,7 +1350,7 @@ describe("EventStream", () => {
       assert.equal(closed.length, 1, "closed fires once whatever a listener does from inside it");
       assert.equal(errors.length, 0, "a teardown the caller asked for is not a fault, re-entered or not");
 
-      await waitUntil(() => severed, { description: "the peer's end of the connection to be severed", timeoutMs: DIAL_CUT_BOUND_MS });
+      await waitUntil(() => severed, { description: "the peer's end of the connection to be severed", timeoutMs: DIAL_SETTLE_BOUND_MS });
     });
 
     test("close() over a peer that answers the close frame ends without a fault", async () => {
@@ -1410,7 +1410,7 @@ describe("EventStream", () => {
       await assert.rejects(async () => stream.opened, AccessAbortedError);
       await connection.closed;
 
-      assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "a cancelled connection attempt is released at once rather than lingering to undici's own timer");
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "a cancelled connection attempt is released at once rather than lingering to undici's own timer");
 
       await stream.close();
 

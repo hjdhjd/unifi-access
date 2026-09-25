@@ -1,70 +1,26 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * connector.test.ts: Tests for the owned connector - cutting a connection attempt still in flight, releasing what is held, leaving an established connection
- * alone, and the ALPN offer a function connector has to restate for itself.
+ * connector.test.ts: Tests for the owned connector - releasing what is held, a connection attempt still in flight and an established connection alike, and the
+ * ALPN offer a function connector has to restate for itself.
  *
  * These drive the helper directly through an undici `Agent`, because the whole subject is what undici does with a socket the helper destroyed under it: the
  * rejection a pending request gets, and whether the peer sees the connection end. A silent loopback peer is what holds a connection attempt open for as long as a
  * test needs it, and the https responder is what supplies an established one.
  */
 import { Agent, errors, request } from "undici";
-import { DIAL_CUT_BOUND_MS, createHttpsLoopback, createSilentLoopback, elapsedSince, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
+import { DIAL_SETTLE_BOUND_MS, createHttpsLoopback, createSilentLoopback, elapsedSince, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createLoopbackServer } from "./events-stream.helpers.ts";
 import { createOwnedConnector } from "./connector.ts";
 import { createServer as createTcpServer } from "node:net";
 import { resolveErrnoCause } from "../errors.ts";
-import { settle } from "homebridge-plugin-utils/testing";
 
 // What the https responder answers every request with. The body is never read for its content - what these tests need from it is a request that completes, which
 // is what moves a socket out of the connecting set and into the established one.
 const OK_RESPONSE = { body: "{\"ok\":true}", contentType: "application/json", status: 200 };
 
 describe("createOwnedConnector", () => {
-
-  test("cutDials rejects a pending request with the very reason it was cut with", async () => {
-
-    await using peer = await createSilentLoopback();
-
-    const connector = createOwnedConnector({ allowH2: false, verifyTls: false });
-    const agent = new Agent({ connect: connector.connect });
-    const reason = new DOMException("the cut this test asked for", "AbortError");
-    const arriving = peer.connection(0);
-    const pending = request("https://" + peer.host + "/x", { dispatcher: agent });
-    const connection = await arriving;
-    const startedAt = process.hrtime.bigint();
-
-    connector.cutDials(reason);
-
-    // Identity is the whole point: undici hands the destroy's error straight back to the pending request, which is what lets the transport name the cause by
-    // comparing against the reason of the signal that fired rather than by guessing from the error's shape.
-    await assert.rejects(pending, (error: unknown) => error === reason);
-    await connection.closed;
-
-    assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "a cut connection attempt settles at once rather than running on to undici's own connect timer");
-
-    await agent.destroy();
-  });
-
-  test("cutDials with a reason that is not an Error rejects the request with undici's own reasonless-abort class", async () => {
-
-    await using peer = await createSilentLoopback();
-
-    const connector = createOwnedConnector({ allowH2: false, verifyTls: false });
-    const agent = new Agent({ connect: connector.connect });
-    const arriving = peer.connection(0);
-    const pending = request("https://" + peer.host + "/x", { dispatcher: agent });
-    const connection = await arriving;
-
-    // A socket can only be destroyed with an error, so a reason that is not one becomes the class undici itself raises for a signal aborted without a reason.
-    connector.cutDials(null);
-
-    await assert.rejects(pending, errors.RequestAbortedError);
-    await connection.closed;
-
-    await agent.destroy();
-  });
 
   test("release cuts a connection attempt still in flight as the pool-reset interruption", async () => {
 
@@ -82,33 +38,7 @@ describe("createOwnedConnector", () => {
     await assert.rejects(pending, errors.ClientDestroyedError);
     await connection.closed;
 
-    assert.ok(elapsedSince(startedAt) < DIAL_CUT_BOUND_MS, "a released connection attempt settles at once rather than running on to undici's own connect timer");
-
-    await agent.destroy();
-  });
-
-  test("cutDials leaves an established connection alone", async () => {
-
-    await using peer = await createHttpsLoopback(() => OK_RESPONSE);
-
-    const connector = createOwnedConnector({ allowH2: false, verifyTls: false });
-    const agent = new Agent({ connect: connector.connect });
-    const first = await request(peer.origin + "/one", { dispatcher: agent });
-
-    await first.body.text();
-
-    // undici hands a drained socket back to its pool on a later turn of the queue, so the yield is what makes the second request able to reuse it at all - without
-    // it the agent opens a second connection and the count below would say nothing about the cut.
-    await settle();
-
-    connector.cutDials(new Error("a cut that must touch nothing"));
-
-    const second = await request(peer.origin + "/two", { dispatcher: agent });
-
-    await second.body.text();
-
-    assert.equal(peer.hits.length, 2, "a cut must not disturb a request on an established connection");
-    assert.equal(peer.accepted, 1, "the agent reused the very socket the cut left alone");
+    assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "a released connection attempt settles at once rather than running on to undici's own connect timer");
 
     await agent.destroy();
   });

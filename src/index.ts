@@ -171,7 +171,7 @@ export { deviceDisplayName, isEnterpriseHubRecord, isHub, isReader, isTamperCapa
   selectControllerUptime, selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState, terminalInput } from "./state/selectors.ts";
 
 // Settings - the externally observable timing and retry constants behind the library's defaults, exposed as documented reference values.
-export { ACCESS_API_ERROR_LIMIT, ACCESS_API_PATH_PREFIX, ACCESS_API_RETRY_INTERVAL, ACCESS_API_TIMEOUT, ACCESS_BOOTSTRAP_REFRESH_INTERVAL,
+export { ACCESS_API_ERROR_LIMIT, ACCESS_API_PATH_PREFIX, ACCESS_API_RETRY_INTERVAL, ACCESS_API_RETRY_PROFILE, ACCESS_API_TIMEOUT, ACCESS_BOOTSTRAP_REFRESH_INTERVAL,
   ACCESS_EVENTS_HEARTBEAT_TIMEOUT, ACCESS_OFFICIAL_API_PATH_PREFIX, ACCESS_OFFICIAL_API_PORT, ACCESS_REBOOT_UPTIME_DROP_MINIMUM, ACCESS_RECOVERY_BACKOFF_MS,
   ACCESS_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
 

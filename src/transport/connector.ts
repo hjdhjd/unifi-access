@@ -1,14 +1,14 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * connector.ts: The connector both dialers hand undici - the one place a socket is held from the moment it is vended, so a dial still connecting can be cut.
+ * connector.ts: The connector both dialers hand undici - the one place a socket is held from the moment it is vended, so a reset or a teardown can end a dial in flight.
  */
 import { buildConnector, errors } from "undici";
 import type { Socket } from "node:net";
 
 /* The connector's own runtime shape. undici's types declare the call as returning `void` (node_modules/undici/types/connector.d.ts:34-36) while the
  * implementation returns the socket it just created (node_modules/undici/lib/core/connect.js:163, `return socket`), which is what lets a wrapper hold a socket
- * before any event has fired on it. Naming the runtime return here is what the cast below spends, and the connector suite's cut of a dial in flight is the proof
- * that the return is real.
+ * before any event has fired on it. Naming the runtime return here is what the cast below spends, and the connector suite's release test, whose release reaches a
+ * connection attempt still in flight, is the proof that the return is real.
  */
 type DialingConnector = (options: buildConnector.Options, callback: buildConnector.Callback) => Socket;
 
@@ -29,24 +29,20 @@ export interface OwnedConnectorOptions {
 }
 
 /**
- * A connector that holds every socket it vends, and the two operations that let go of them.
+ * A connector that holds every socket it vends, and the operation that lets go of them.
  *
  * - `connect` is the connector to hand undici - a `Pool`'s or an `Agent`'s `connect` option.
- * - `cutDials(reason)` destroys every socket still connecting, with an error: `reason` itself when it is an `Error` (every `DOMException` is one), and otherwise a
- *   fresh `RequestAbortedError`, which is undici's own class for a signal aborted without a reason and what undici rejects a live-socket request with in that
- *   case. Destroying with an error is what makes undici's pending request reject with that very object - a socket destroyed with no error emits nothing the
- *   connector listens for, and the request would hang until undici's own connect timer. Sockets that have finished connecting are left alone.
  * - `lastDialFailure` is the error the most recent dial vended: `undefined` before any dial, and `undefined` again after one that succeeded, so it describes the
  *   most recent dial and nothing older. Its reader is the notification stream, whose WebSocket implementation discards the dial's error before the socket's own
  *   error event is built - which leaves this the one place the failure is still readable.
  * - `release()` destroys every socket still held: a connecting one with a fresh `ClientDestroyedError`, so a request cut this way classifies exactly as a pool
  *   reset already does, and an established one with a bare destroy, because nothing is pending on the connector's side of an established socket - a request in
- *   flight on one meets the dispatcher's own destroy instead.
+ *   flight on one meets the dispatcher's own destroy instead. Destroying a connecting socket with an error is what makes undici's pending request reject with that
+ *   very object - a socket destroyed with no error emits nothing the connector listens for, and the request would hang until undici's own connect timer.
  */
 export interface OwnedConnector {
 
   readonly connect: buildConnector.connector;
-  cutDials(reason: unknown): void;
   readonly lastDialFailure: Error | undefined;
   release(): void;
 }
@@ -56,17 +52,17 @@ export interface OwnedConnector {
  *
  * A dial is held from the vend rather than from the completed connect because nobody else can reach a socket mid-handshake: undici's client discards the
  * connector's return value and holds nothing of its own until the connect completes, so a socket that is still in its TCP or TLS handshake is reachable through
- * this helper alone. That is the whole reason the helper exists - a cancellation, a deadline, a pool reset, and a teardown all reduce to one operation, cut the
- * dials still in flight, and none of them could reach a connecting socket without it.
+ * this helper alone. That is the whole reason the helper exists - a pool reset and a teardown both have to end the dials still in flight, and neither could reach
+ * a connecting socket without it.
  *
- * The two sets are two because the operations differ: a cancellation must end a dial and must never touch a connection some other request is using, so a socket
- * moves out of the dialing set and into the established one the moment its connect completes. Neither operation clears a set itself - a destroyed dial leaves
- * through its own connector callback, and a destroyed established socket leaves through its close handler - which keeps each set the live picture of what is
- * actually held.
+ * The two sets are two because release treats them differently: a connecting socket is destroyed with a fresh `ClientDestroyedError` and an established one bare,
+ * so a socket moves out of the dialing set and into the established one the moment its connect completes. Release never clears a set itself - a destroyed dial
+ * leaves through its own connector callback, and a destroyed established socket leaves through its close handler - which keeps each set the live picture of what
+ * is actually held.
  *
  * @param options - Which ALPN offer to make, and whether to verify the peer's certificate.
  *
- * @returns The connector, and the operations that let its sockets go.
+ * @returns The connector, and the operation that lets its sockets go.
  */
 export function createOwnedConnector(options: OwnedConnectorOptions): OwnedConnector {
 
@@ -106,14 +102,6 @@ export function createOwnedConnector(options: OwnedConnectorOptions): OwnedConne
       });
 
       dialing.add(socket);
-    },
-
-    cutDials: (reason: unknown): void => {
-
-      for(const socket of dialing) {
-
-        socket.destroy((reason instanceof Error) ? reason : new errors.RequestAbortedError());
-      }
     },
 
     get lastDialFailure(): Error | undefined {
