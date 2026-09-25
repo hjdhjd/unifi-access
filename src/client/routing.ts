@@ -19,7 +19,7 @@
  *
  * @module AccessRouting
  */
-import { AccessApiError, AccessAuthError, AccessAuthorizationError, AccessCapabilityError } from "../errors.ts";
+import { AccessApiError, AccessCapabilityError, isIdentityRefusal, isPrivilegeRefusal } from "../errors.ts";
 import type { AccessOfficialDoorEntryMethod, AccessOfficialDoorUnlockActor, AccessOfficialDoorUnlockOptions,
   AccessOfficialLockRuleSet } from "../official/spaces.ts";
 import type { AccessLogging } from "../logging.ts";
@@ -34,6 +34,78 @@ import { deviceDisplayName } from "../state/selectors.ts";
  */
 const CODE_SESSION_REVOKED = "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED";
 const CODE_DEVICE_FLOOR = "CODE_DEVICE_API_NOT_SUPPORTED";
+
+// What a type guard narrows its argument to, read off the guard itself, so a reading composed from other readings narrows to exactly what they do with nothing
+// spelled a second time.
+type NarrowedBy<Guard> = Guard extends (error: unknown) => error is infer Narrowed ? Narrowed : never;
+
+/**
+ * Whether a failure is the Identity Enterprise verdict: the controller answering that it has no official API at all. It is a fact about the controller rather than
+ * about the request or the token, so the connect seed and the routing service both read it as the official path being unavailable for the client's life.
+ *
+ * @param error - The error value to classify.
+ *
+ * @returns `true` when the controller reported that it has no official API, narrowed to the error carrying that code; `false` for anything else.
+ *
+ * @category Client
+ */
+export function isOfficialApiAbsent(error: unknown): error is AccessApiError & { readonly code: typeof CODE_SESSION_REVOKED } {
+
+  return (error instanceof AccessApiError) && (error.code === CODE_SESSION_REVOKED);
+}
+
+/**
+ * Whether a failure the official surface answered is the controller refusing the token, in any spelling: rejecting it outright, or authenticating it and refusing
+ * it a permission.
+ *
+ * Either class is read as a refusal of the token without asking which identity it names, because the official surface is assembled over the token session at the
+ * composition root, so every refusal it answers is of the token. A token keeps the permissions it was issued with for its life, which makes a refused permission as
+ * much a fact about the client as a rejected token is, and is why both readings fold the same way.
+ *
+ * @param error - The error value to classify.
+ *
+ * @returns `true` when the failure refuses the token, narrowed to what either reading narrows to; `false` for anything else.
+ *
+ * @category Client
+ */
+export function isTokenRefusal(error: unknown): error is NarrowedBy<typeof isIdentityRefusal> | NarrowedBy<typeof isPrivilegeRefusal> {
+
+  return isIdentityRefusal(error) || isPrivilegeRefusal(error);
+}
+
+/**
+ * Whether the Access application's own endpoints can carry a command for a client: it holds credentials, and it is not held to the official API. Each is a
+ * connect-time fact, so the answer holds for the client's life, and reading it from one place is what keeps the connect seed, a close's choice of path, the routing
+ * decision's fallback, and the fold of a refused token from disagreeing about whether a direct path exists.
+ *
+ * @param capabilities - The identities the client holds and the override in force.
+ *
+ * @returns `true` when the client has a direct path to take; `false` when it holds no credentials or is held to the official API.
+ *
+ * @category Client
+ */
+export function directPathServes(capabilities: Pick<AccessCapabilities, "mode" | "override">): boolean {
+
+  return (capabilities.mode !== "token") && (capabilities.override !== "official-only");
+}
+
+/**
+ * The warning that reports the official path closing: the refusal that closed it, as its caller words it, followed by what closing means for the client. A client
+ * whose direct path serves takes that path for its commands; a client whose direct path does not has the commands only the official API can carry refused. Composing
+ * both halves here is what lets the connect seed and the routing service report a closure in the same words.
+ *
+ * @param refusal      - The refusal that closed the path, as a complete sentence.
+ * @param directServes - Whether the client's direct path can carry its commands.
+ *
+ * @returns The refusal followed by its consequence, as one message.
+ *
+ * @category Client
+ */
+export function officialPathClosureSentence(refusal: string, directServes: boolean): string {
+
+  return refusal + " " + (directServes ? "This client's commands will use the Access application's own endpoints for the life of this connection." :
+    "The commands only the official API can carry will be refused for the life of this connection.");
+}
 
 /**
  * Which identities a client holds, and therefore which of the controller's APIs it can reach.
@@ -60,10 +132,12 @@ export type AccessApiOverride = "auto" | "direct-only" | "official-only";
  * What a client can do, as established at connect.
  *
  * This is a SNAPSHOT rather than a live reading, and the distinction matters. `official` says the official path was present and working when the client connected -
- * a token was supplied and the controller did not refuse it as an Identity Enterprise deployment does. It deliberately does not move afterward: an official path
- * closed mid-life, whether by an Identity Enterprise controller's report or by the token rejected or refused a permission on a client that can fall back to its
- * credentials, or a device found to sit below a firmware floor, changes what the routing service will attempt without rewriting the client's own description of
- * itself. A consumer reading this is asking what kind of client it holds, which is a question with a stable answer.
+ * a token was supplied, and the read that verifies it succeeded. It reads `false` on a client with no token, and on one whose connect folded that read's failure: a
+ * client holding credentials whose controller answered as an Identity Enterprise deployment does, that it has no official API, or a client whose direct path can
+ * serve and whose token the controller refused. It deliberately does not move afterward: an official path closed mid-life, whether by an Identity Enterprise
+ * controller's report or by the token rejected or refused a permission on a client that can fall back to its credentials, or a device found to sit below a firmware
+ * floor, changes what the routing service will attempt without rewriting the client's own description of itself. A consumer reading this is asking what kind of
+ * client it holds, which is a question with a stable answer.
  *
  * @category Client
  */
@@ -487,13 +561,10 @@ export class AccessRoutingService implements AccessRoutingView {
     return (this.#floorRefusals.get(kind + ":" + deviceId) === this.#firmwareOf(deviceId)) ? null : this.#official;
   }
 
-  /* Whether the Access application's own endpoints can carry a command for this client: it holds credentials, and it is not held to the official API. Each is a
-   * connect-time fact, so the answer holds for the client's life, and reading it from one place is what keeps a close's choice of path, the routing decision's
-   * fallback, and the fold of a refused token from disagreeing about whether a direct path exists.
-   */
+  // Whether the Access application's own endpoints can carry a command for this client, read through the one answer the connect seed reads too.
   get #directServes(): boolean {
 
-    return (this.#capabilities.mode !== "token") && (this.#capabilities.override !== "official-only");
+    return directPathServes(this.#capabilities);
   }
 
   /* Fold an official refusal that is a capability verdict, reporting whether it was one. An Identity Enterprise refusal, or the token rejected or refused a
@@ -502,51 +573,50 @@ export class AccessRoutingService implements AccessRoutingView {
    */
   #foldCapabilitySignal(error: unknown, deviceId: string, kind: RoutedCommandKind): boolean {
 
-    /* Either refusal of the token is a verdict learned by trying on the official path: the controller rejecting the token outright, or authenticating it and refusing
-     * it this operation. A token is granted its permissions when it is issued and keeps them for its life, so either refusal is a fact about this client rather than
-     * about the moment it asked. On a client that holds another path, this command and every routed command after it take that path. The latch closes the whole
-     * official path rather than the one endpoint a 403 spoke about, because the direct path carries every routed command that has a direct expression, so what a dual
-     * client gives up is only what the official API alone can express - an attributed unlock, an entry direction, a gate stop - and because one latch is the single
-     * record of the path being closed, where a per-endpoint memo would be another mechanism recording the same verdict. A client with nowhere else to go keeps the
-     * refusal as the error it arrived as, whose own sentence names the token remedy, rather than reading a capability error on every call after it.
+    /* The readings run from the widest verdict to the narrowest. The Identity Enterprise verdict comes first and closes the official path on any client, because it
+     * is a fact about the controller that every later official call would meet again.
+     *
+     * Either refusal of the token comes next, and is a verdict learned by trying on the official path: the controller rejecting the token outright, or authenticating
+     * it and refusing it this operation, in whichever spelling it answered. A token is granted its permissions when it is issued and keeps them for its life, so either
+     * refusal is a fact about this client rather than about the moment it asked. The official surface is assembled over the token session at the composition root,
+     * so every refusal it answers is of the token and no identity check is needed. On a client that holds another path, this command and every routed command after
+     * it take that path. The latch closes the whole official path rather than the one endpoint a refusal spoke about, because the direct path carries every routed
+     * command that has a direct expression, so what a dual client gives up is only what the official API alone can express - an attributed unlock, an entry
+     * direction, a gate stop - and because one latch is the single record of the path being closed, where a per-endpoint memo would be another mechanism recording
+     * the same verdict. A client with nowhere else to go keeps the refusal as the error it arrived as, which points at the token as the thing to fix, rather than
+     * reading a capability error on every call after it.
+     *
+     * The firmware floor comes last, and speaks for one command on one device rather than for the path.
      */
-    if(((error instanceof AccessAuthError) || (error instanceof AccessAuthorizationError)) && (error.identity === "token") && this.#directServes) {
+    if(isOfficialApiAbsent(error)) {
 
-      this.#closeOfficialPath(error.message, { identity: error.identity, statusCode: error.statusCode });
+      this.#closeOfficialPath("The UniFi Access controller reports that the official API is not available on this controller.", { code: error.code });
 
       return true;
     }
 
-    if(!(error instanceof AccessApiError)) {
+    if(isTokenRefusal(error) && this.#directServes) {
 
-      return false;
+      this.#closeOfficialPath(error.message, (error instanceof AccessApiError) ? { code: error.code } : { identity: error.identity, statusCode: error.statusCode });
+
+      return true;
     }
 
-    switch(error.code) {
+    if((error instanceof AccessApiError) && (error.code === CODE_DEVICE_FLOOR)) {
 
-      case CODE_SESSION_REVOKED:
+      this.#floorRefusals.set(kind + ":" + deviceId, this.#firmwareOf(deviceId));
 
-        this.#closeOfficialPath("The UniFi Access controller reports that the official API is not available on this controller.", { code: error.code });
-
-        return true;
-
-      case CODE_DEVICE_FLOOR:
-
-        this.#floorRefusals.set(kind + ":" + deviceId, this.#firmwareOf(deviceId));
-
-        return true;
-
-      default:
-
-        return false;
+      return true;
     }
+
+    return false;
   }
 
   /* Close the official path for the rest of this client's life, and say so once at warn, because a consumer whose commands keep succeeding has no other way to learn
    * they are taking the other channel. Commands already in flight when the path closes each took the facade before it closed, so each can reach this; the latch is
    * what records that the closure was reported, and the first refusal to arrive is the one that speaks. The warning is the refusal as the caller words it, followed
-   * by what closing means for this client, composed here from `#directServes` so every cause states its consequence in the same words: on a client that holds a
-   * direct path its commands take it, and on one that does not, the commands only the official API can carry are refused.
+   * by what closing means for this client as `#directServes` answers it, composed by the same function the connect seed reports a refused token through, so every
+   * cause states its consequence in the same words wherever the closure is learned.
    */
   #closeOfficialPath(refusal: string, context: Record<string, unknown>): void {
 
@@ -557,10 +627,7 @@ export class AccessRoutingService implements AccessRoutingView {
 
     this.#revoked = true;
 
-    const consequence = this.#directServes ? "This client's commands will use the Access application's own endpoints for the life of this connection." :
-      "The commands only the official API can carry will be refused for the life of this connection.";
-
-    this.#log.warn(refusal + " " + consequence, context);
+    this.#log.warn(officialPathClosureSentence(refusal, this.#directServes), context);
   }
 
   /* The firmware a device is running right now, read through the state rather than captured anywhere, which is what makes the memo key move when the device is

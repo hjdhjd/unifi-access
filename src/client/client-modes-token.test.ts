@@ -401,7 +401,8 @@ describe("a token-only client", () => {
 
   test("propagates a failure that is not the capability signal as itself", async () => {
 
-    // The negative control at connect: only the one code is folded, and every other refusal is a real failure that must not be mistaken for a capability verdict.
+    // The negative control at connect: a token-only client has nothing to fall back to, so the controller's own refusal of the token is a real failure of the
+    // connect that must not be mistaken for a capability verdict, and it reaches the caller as itself.
     const { agent, official } = mockController();
 
     official.intercept({ method: "GET", path: DOORS_PATH }).reply(200, JSON.stringify({ code: "CODE_AUTH_FAILED", msg: "the token is not valid" }));

@@ -6,6 +6,7 @@
 import { CONTROLLER_PATH, DEVICES_PATH, DOORS_PATH, DOOR_HUB, DOOR_MINI, HUB, TOPOLOGY_PATH, connectCapturing, connectCapturingWithDispatch, controllerBody, devicesBody,
   doorsBody, identityEnterpriseBody, interceptCredentialPass, mockController, officialDoor, topologyBody } from "./client-modes.helpers.ts";
 import { assertRejectsWith, present } from "../testing.helpers.ts";
+import { capturingLog, loggedAt } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { AccessAuthError } from "../errors.ts";
 import assert from "node:assert/strict";
@@ -89,22 +90,80 @@ describe("a dual-mode client", () => {
     assert.equal(client.capabilities.mode, "dual", "the mode is still what the caller supplied");
   });
 
-  test("attributes a refused token to the token, on a connect whose credentials were accepted", async () => {
+  test("says nothing when it folds the controller's report that it has no official API", async () => {
 
-    /* The case the attribution exists for. Both legs run at connect and only one of them fails: the login and the document pair answer normally, so the credentials
-     * are known good by the time the official read is refused. What a user must be sent to is the token they configured rather than the password that just worked,
-     * which is a distinction only the leg can draw - the status is a 401 either way.
+    /* The silent fold beside the one that warns. The map records the Identity Enterprise verdict and nothing on the client can change it, so the connect carries on
+     * without the official half and without a warning of its own, where a refused token is said once.
+     */
+    const { agent, official, pool } = mockController();
+    const log = capturingLog();
+
+    interceptCredentialPass(pool);
+    official.intercept({ method: "GET", path: DOORS_PATH }).reply(200, identityEnterpriseBody());
+
+    await using client = (await connectCapturing(agent, { password: "p", token: "t0ken", username: "u" }, { log })).client;
+
+    assert.equal(client.capabilities.official, false, "the map records the controller's answer");
+    assert.deepEqual(log.entries.filter((entry) => (entry.level === "warn")), [], "and the fold logs no warning");
+  });
+
+  test("folds a refused token at connect to credentials-only, saying so once", async () => {
+
+    /* Both legs run at connect and only the token's read is refused, in any of the spellings the controller answers a refused token in: the login and the document
+     * pair answer normally, so the credentials are known good and the client holds a direct path for every command they can carry. The refusal closes the official
+     * path from the start, as the same refusal on a routed command closes it, and the one warning names the token as the thing to fix, which the capability map
+     * alone could not tell apart from a controller that has no official API.
+     */
+    const refusals = [
+
+      { body: "", context: { identity: "token", statusCode: 401 }, label: "a 401",
+        sentence: "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.", status: 401 },
+      { body: "", context: { identity: "token", statusCode: 403 }, label: "a 403",
+        sentence: "The configured API token lacks the permissions this operation requires on the UniFi Access controller.", status: 403 },
+      { body: JSON.stringify({ code: "CODE_AUTH_FAILED", msg: "Authentication failed." }), context: { code: "CODE_AUTH_FAILED" },
+        label: "a 200 carrying CODE_AUTH_FAILED", sentence: "Authentication failed.", status: 200 }
+    ];
+
+    for(const refusal of refusals) {
+
+      const { agent, official, pool } = mockController();
+      const log = capturingLog();
+
+      interceptCredentialPass(pool);
+      official.intercept({ method: "GET", path: DOORS_PATH }).reply(refusal.status, refusal.body);
+
+      // eslint-disable-next-line no-await-in-loop
+      await using client = (await connectCapturing(agent, { password: "p", token: "t0ken", username: "u" }, { log })).client;
+
+      assert.equal(client.capabilities.official, false, refusal.label + ": the map records that the official path closed at connect");
+      assert.equal(client.official, null, refusal.label + ": and the facade's nullability follows the map");
+      assert.equal(client.capabilities.mode, "dual", refusal.label + ": the mode is still what the caller supplied");
+
+      const warns = log.entries.filter((entry) => (entry.level === "warn"));
+
+      assert.deepEqual(warns.map((entry) => entry.params), [[refusal.context]], refusal.label + ": the closure is reported once, carrying the refusal's context");
+      assert.ok(warns[0]?.message.startsWith(refusal.sentence + " "), refusal.label + ": the report opens with the refusal's own sentence");
+      assert.ok(loggedAt(warns, "warn", "own endpoints for the life of this connection"), refusal.label + ": and says the commands take the direct path");
+    }
+  });
+
+  test("keeps a refused token as itself at connect when held to the official API, which leaves the credentials unused", async () => {
+
+    /* The override holds every routed command to the official path, so a client whose token is refused has nothing that could carry them, and the connect fails on
+     * the refusal as the same refusal on a routed command propagates. The login completed before the refused read, so the credentials are known good, and what a
+     * user must be sent to is the token they configured rather than the password that just worked - a distinction only the leg can draw.
      */
     const { agent, official, pool } = mockController();
 
     interceptCredentialPass(pool);
     official.intercept({ method: "GET", path: DOORS_PATH }).reply(401, "");
 
-    await assertRejectsWith(async () => connectCapturing(agent, { password: "p", token: "t0ken", username: "u" }), AccessAuthError, { check: (error) => {
+    await assertRejectsWith(async () => connectCapturing(agent, { api: "official-only", password: "p", token: "t0ken", username: "u" }), AccessAuthError,
+      { check: (error) => {
 
-      assert.equal(error.identity, "token", "the login completed before the refused read, so the leg the controller refused is the token");
-      assert.equal(error.message, "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.");
-    } });
+        assert.equal(error.identity, "token", "the login completed before the refused read, so the leg the controller refused is the token");
+        assert.equal(error.message, "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.");
+      } });
   });
 
   test("never reads the device listing, because the topology is its census", async () => {

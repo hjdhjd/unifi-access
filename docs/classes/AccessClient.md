@@ -173,7 +173,8 @@ get official(): Nullable<OfficialApi>;
 The official UniFi Access API, or `null` when this client has no working official path.
 
 Nullability follows the capability map rather than bare token presence, so the two agree by construction: a client that supplied a token to a controller that
-has no official API - an Identity Enterprise deployment - reads `null` here and `false` at `capabilities.official`, from the one verdict derived at connect.
+has no official API - an Identity Enterprise deployment - and a client whose token the controller refused at connect while its direct path can serve both read
+`null` here and `false` at `capabilities.official`, from the one verdict derived at connect.
 
 ##### Returns
 
@@ -542,6 +543,7 @@ when the options ask for a path the supplied identities cannot take - a token-on
 
 #### Throws
 
-[AccessAuthError](AccessAuthError.md) when an identity is refused, its `identity` field naming whether the credentials or the API token were the rejected one,
-  [AccessNetworkError](AccessNetworkError.md) when the controller cannot be reached, [AccessBootstrapError](AccessBootstrapError.md) when its configuration cannot be fetched, parsed, or
-  applied, or any other typed `FatalError` those stages surface. No partial client escapes a failure.
+[AccessAuthError](AccessAuthError.md) when an identity is refused and the client cannot carry on without it - the credentials on any client, the token on a client
+  with no direct path to fall back to - its `identity` field naming which one was refused, [AccessNetworkError](AccessNetworkError.md) when the controller cannot be reached,
+  [AccessBootstrapError](AccessBootstrapError.md) when its configuration cannot be fetched, parsed, or applied, or any other typed `FatalError` those stages surface. No partial
+  client escapes a failure.

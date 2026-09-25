@@ -8,8 +8,9 @@
 
 The identity authenticated but lacks the privilege the operation requires (typically a `403`; Access reserves many operations for administrator accounts).
 Fatal because the same identity will keep being refused. [AccessAuthorizationError.identity](#identity) names which one fell short, so a caller reporting the failure
-can point at the remedy that applies. On a routed command, the routing service folds a token refused a permission into its revocation latch when the client
-holds a direct path to carry the command instead...so a consumer of a dual client sees the command succeed and a warning logged, rather than this error.
+can point at the remedy that applies. At connect and on a routed command alike, a client whose direct path can serve folds a token refused a permission into
+credentials-only operation with a warning, so a consumer meets this error for a token only from a token-only client, from a client held to the official API, or
+from the official facade called directly.
 
 ## Extends
 

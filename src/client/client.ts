@@ -29,6 +29,7 @@ import { AccessAbortedError, AccessApiError, AccessBootstrapError, AccessCapabil
 import type { AccessApiMode, AccessApiOverride, AccessCapabilities } from "./routing.ts";
 import type { AccessBootstrapConfig, AccessControllerConfig, AccessDoorStateEntry, AccessEventPacket, Nullable } from "../types/index.ts";
 import type { AccessConnectionTransitionPayload, AccessStoreDispatchPayload } from "../diagnostics.ts";
+import { AccessRoutingService, directPathServes, isOfficialApiAbsent, isTokenRefusal, officialPathClosureSentence } from "./routing.ts";
 import type { AccessTypedEvent, AccessWireEvent } from "../protocol/events.ts";
 import type { ConnectionTransition, ThrottleSource } from "./connection.ts";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "./census.ts";
@@ -41,7 +42,6 @@ import { AccessDeviceRegistry } from "../devices/registry.ts";
 import type { AccessHub } from "../devices/hub.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { AccessRefreshDocuments } from "../state/store.ts";
-import { AccessRoutingService } from "./routing.ts";
 import type { AccessStateDevice } from "../protocol/reducer.ts";
 import type { AccessWebSocket } from "../transport/ws.ts";
 import { AuthSession } from "../transport/auth.ts";
@@ -384,9 +384,10 @@ export class AccessClient implements AsyncDisposable {
    *
    * @throws {TypeError} when the options ask for a path the supplied identities cannot take - a token-only client held to the direct API, or a credential-only client
    *   held to the official one. Caller misuse, raised before anything is sent.
-   * @throws {@link AccessAuthError} when an identity is refused, its `identity` field naming whether the credentials or the API token were the rejected one,
-   *   {@link AccessNetworkError} when the controller cannot be reached, {@link AccessBootstrapError} when its configuration cannot be fetched, parsed, or
-   *   applied, or any other typed `FatalError` those stages surface. No partial client escapes a failure.
+   * @throws {@link AccessAuthError} when an identity is refused and the client cannot carry on without it - the credentials on any client, the token on a client
+   *   with no direct path to fall back to - its `identity` field naming which one was refused, {@link AccessNetworkError} when the controller cannot be reached,
+   *   {@link AccessBootstrapError} when its configuration cannot be fetched, parsed, or applied, or any other typed `FatalError` those stages surface. No partial
+   *   client escapes a failure.
    */
   static async connect(opts: ConnectOptions): Promise<AccessClient> {
 
@@ -622,11 +623,18 @@ export class AccessClient implements AsyncDisposable {
       await seedFromOfficial(opts.signal);
     } catch(error) {
 
-      /* This is fatal in some cases and not in others. Anything but the Identity Enterprise code is a genuine failure of the seed; that code on a client with no
-       * other identity leaves nothing to fall back to; and that code on a client that also holds credentials is simply the news that this controller has no
-       * official API, which the map records and the client carries on without.
+      /* This is fatal in some cases and not in others. The Identity Enterprise code on a client that also holds credentials is simply the news that this controller
+       * has no official API, and a refused token, in any spelling, on a client whose direct path can serve is a token that client can carry on without: each leaves
+       * the official path closed from the start and the client carries on. Anything else is a genuine failure of the seed, including the Identity Enterprise code on a
+       * client with no credentials, which has nothing to fall back to, and a refused token on a client whose direct path cannot serve, which keeps the refusal as the
+       * error it arrived as, exactly as its routed commands do.
+       *
+       * Only the refused token is said. The map records the Identity Enterprise verdict at `official: false`, and nothing on the client can change it; a refused token
+       * is a fault in what the caller configured, which the map alone would leave indistinguishable from that verdict, so it is warned once here in the words the
+       * routing service uses for the same refusal on a routed command. Nothing later says either, because the routing service is built without the official surface.
        */
-      const folded = (error instanceof AccessApiError) && (error.code === "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED") && hasCredentials;
+      const tokenFolded = isTokenRefusal(error) && directPathServes({ mode, override });
+      const folded = (isOfficialApiAbsent(error) && hasCredentials) || tokenFolded;
 
       if(!folded) {
 
@@ -637,6 +645,12 @@ export class AccessClient implements AsyncDisposable {
       }
 
       officialCapable = false;
+
+      if(tokenFolded) {
+
+        log.warn(officialPathClosureSentence(error.message, true), (error instanceof AccessApiError) ? { code: error.code } :
+          { identity: error.identity, statusCode: error.statusCode });
+      }
     }
 
     const capabilities: AccessCapabilities = { mode, official: officialCapable, override };
@@ -811,7 +825,8 @@ export class AccessClient implements AsyncDisposable {
    * The official UniFi Access API, or `null` when this client has no working official path.
    *
    * Nullability follows the capability map rather than bare token presence, so the two agree by construction: a client that supplied a token to a controller that
-   * has no official API - an Identity Enterprise deployment - reads `null` here and `false` at `capabilities.official`, from the one verdict derived at connect.
+   * has no official API - an Identity Enterprise deployment - and a client whose token the controller refused at connect while its direct path can serve both read
+   * `null` here and `false` at `capabilities.official`, from the one verdict derived at connect.
    */
   get official(): Nullable<OfficialApi> {
 

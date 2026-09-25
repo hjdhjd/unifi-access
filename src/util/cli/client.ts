@@ -148,8 +148,8 @@ export function requireSurface(credentials: UfaCredentials, surface: "credential
 
 /**
  * Refuse an operation whose official path folded away at connect. The post-connect half of the gate {@link requireSurface} opens: a configuration can carry a token
- * and still connect without a working official path - an Identity Enterprise controller refuses the token as unsupported - so the runtime verdict is honored here
- * rather than assumed from the file's shape.
+ * and still connect without a working official path - an Identity Enterprise controller refuses the token as unsupported, and a token the controller refuses at
+ * connect closes the official path on a client whose direct path can serve - so the runtime verdict is honored here rather than assumed from the file's shape.
  *
  * @param client    - The connected client.
  * @param operation - The operation, as the refusal names it.
@@ -166,7 +166,8 @@ export function requireOfficial(client: AccessClient, operation: string): NonNul
 
   if(official === null) {
 
-    throw new CliError("The " + operation + " runs on the official API, which this controller did not offer the client's token.");
+    throw new CliError("The " + operation + " runs on the official API, which is not available to this client because the controller has none or refused the " +
+      "configured token, or because the client connected without a token.");
   }
 
   return official;

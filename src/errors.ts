@@ -205,8 +205,9 @@ export class AccessStallError extends RecoverableError {
 /**
  * Authentication failed: invalid credentials, an expired session that could not be renewed, a CSRF-token rotation that did not complete, or an API token the
  * controller refused. Fatal because retrying with the same identity reproduces the failure. {@link AccessAuthError.identity} names which identity was the refused
- * one, so a caller reporting the failure can point at the right one. On a routed command, the routing service folds a refused token into its revocation latch when
- * the client holds a direct path to carry the command instead...so a consumer of a dual client sees the command succeed and a warning logged, rather than this error.
+ * one, so a caller reporting the failure can point at the right one. At connect and on a routed command alike, a client whose direct path can serve folds a refused
+ * token into credentials-only operation with a warning, so a consumer meets this error for a token only from a token-only client, from a client held to the official
+ * API, or from the official facade called directly.
  *
  * @category Errors
  */
@@ -216,9 +217,9 @@ export class AccessAuthError extends FatalError {
    * Which identity leg the controller refused - `"credentials"` for the direct login session, `"token"` for the official API's bearer token - or `undefined` when
    * the constructing caller attributed none.
    *
-   * `AccessClient.connect()` logs in with credentials before the official read that verifies the token, so a token-tagged failure from a connect holding both
-   * identities carries a second fact by implication: the credentials themselves authenticated, because the login they authenticated is what the refused read ran
-   * after.
+   * A token-tagged failure reaches a consumer from a token-only client, at connect or on any routed command; from a client held to the official API by its override,
+   * whichever identities it holds, at connect or on any routed command; and from the official facade called directly, on any client. Everywhere else the client
+   * holds a direct path that can carry on without the token, and it folds the refusal into credentials-only operation with a warning rather than raising it.
    */
   readonly identity: AccessIdentityLeg | undefined;
 
@@ -247,8 +248,9 @@ export type AccessIdentityLeg = "credentials" | "token";
 /**
  * The identity authenticated but lacks the privilege the operation requires (typically a `403`; Access reserves many operations for administrator accounts).
  * Fatal because the same identity will keep being refused. {@link AccessAuthorizationError.identity} names which one fell short, so a caller reporting the failure
- * can point at the remedy that applies. On a routed command, the routing service folds a token refused a permission into its revocation latch when the client
- * holds a direct path to carry the command instead...so a consumer of a dual client sees the command succeed and a warning logged, rather than this error.
+ * can point at the remedy that applies. At connect and on a routed command alike, a client whose direct path can serve folds a token refused a permission into
+ * credentials-only operation with a warning, so a consumer meets this error for a token only from a token-only client, from a client held to the official API, or
+ * from the official facade called directly.
  *
  * @category Errors
  */
@@ -654,6 +656,43 @@ export function isExpectedWsDisconnect(error: unknown): boolean {
 export function isPrivilegeRefusal(error: unknown): error is AccessAuthorizationError | (AccessApiError & { readonly code: "CODE_OPERATION_FORBIDDEN" }) {
 
   return (error instanceof AccessAuthorizationError) || ((error instanceof AccessApiError) && (error.code === "CODE_OPERATION_FORBIDDEN"));
+}
+
+/* The result codes the vendor's reference documents for a refused identity, spelled once. The literal type an identity refusal narrows to is derived from this
+ * list, and membership is read from it too, so the type and the test cannot name different codes. Membership is read with `some` rather than `includes`, whose
+ * argument is typed as the list's own literals and so refuses the open `AccessApiCode` a caught error carries.
+ */
+const IDENTITY_REFUSAL_CODES = [ "CODE_ACCESS_TOKEN_INVALID", "CODE_AUTH_FAILED", "CODE_UNAUTHORIZED" ] as const satisfies readonly AccessApiCode[];
+
+/**
+ * Whether a failure is the controller refusing the identity itself - the credentials or the token did not authenticate, so the controller never reached the
+ * question of what that identity may do. A refused identity is spelled differently depending on which of the controller's surfaces answered it, and this reads
+ * every spelling the library produces for one.
+ *
+ * The following spellings qualify:
+ *
+ * 1. An {@link AccessAuthError}, the transport's classification of a refused status.
+ * 2. An {@link AccessApiError} whose `code` is `CODE_ACCESS_TOKEN_INVALID`, `CODE_AUTH_FAILED`, or `CODE_UNAUTHORIZED`, the controller's own refusal answered
+ *    inside a successful response. These are the codes the vendor's reference documents for a refused identity, and none has yet been captured from a live
+ *    controller. `CODE_UNAUTHORIZED` is read as a refused identity by this library's ruling, following its name, which is the HTTP vocabulary for a failed
+ *    authentication, although the reference words its message as a refused permission and no capture has settled which it is.
+ *
+ * What is read is the error handed in, never its `cause` chain, so a wrapper around a refusal answers false, on the same terms as {@link isPrivilegeRefusal}. A
+ * privilege refusal is a different fault with a different remedy and answers false...an identity refused a permission has already authenticated. No failure answers
+ * true both here and there, so a caller can branch on each reading without ordering them.
+ *
+ * The predicate type names the codes rather than answering with the bare class, for the reason {@link isPrivilegeRefusal} gives: an `AccessApiError` carrying any
+ * other code answers false, so it stays in the caller's type on the false branch, and the true branch hands over the narrowed members the refusal is reported from.
+ *
+ * @param error - The error value to classify. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
+ *
+ * @returns `true` when the failure is an identity refusal, narrowed to the arm that carries the caller's diagnosis; `false` for anything else.
+ *
+ * @category Utilities
+ */
+export function isIdentityRefusal(error: unknown): error is AccessAuthError | (AccessApiError & { readonly code: (typeof IDENTITY_REFUSAL_CODES)[number] }) {
+
+  return (error instanceof AccessAuthError) || ((error instanceof AccessApiError) && IDENTITY_REFUSAL_CODES.some((code) => (code === error.code)));
 }
 
 /**

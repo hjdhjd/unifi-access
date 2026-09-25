@@ -6,7 +6,7 @@
  */
 import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
   AccessCertificateError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError, AccessThrottledError,
-  AccessTimeoutError, FatalError, RecoverableError, assertNever, formatErrorChain, isCertificateVerificationFailure, isExpectedWsDisconnect,
+  AccessTimeoutError, FatalError, RecoverableError, assertNever, formatErrorChain, isCertificateVerificationFailure, isExpectedWsDisconnect, isIdentityRefusal,
   isPrivilegeRefusal, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -315,6 +315,12 @@ describe("isExpectedWsDisconnect", () => {
   });
 });
 
+/* The result codes the vendor's reference documents for a refused identity, spelled here independently of the library's own list. A code the library dropped or
+ * misspelled then fails the recognition test below rather than passing it by construction, and the identity and privilege readings are each checked against this
+ * same table, which proves they partition the refusal spellings from either side.
+ */
+const IDENTITY_REFUSAL_CODES = [ "CODE_ACCESS_TOKEN_INVALID", "CODE_AUTH_FAILED", "CODE_UNAUTHORIZED" ] as const;
+
 describe("isPrivilegeRefusal", () => {
 
   test("recognizes the transport's classification of a refused status", () => {
@@ -333,6 +339,12 @@ describe("isPrivilegeRefusal", () => {
     assert.equal(isPrivilegeRefusal(new AccessApiError("api", { code: "CODE_UNAUTHORIZED" })), false, "a refused identity is a different fault");
     assert.equal(isPrivilegeRefusal(new AccessApiError("api", { code: "CODE_SOMETHING_THE_REFERENCE_OMITS" })), false,
       "and a code the documentation does not list is not one either");
+
+    // The partition from this side: every code the identity reading claims answers false here, so no refusal is read as both.
+    for(const code of IDENTITY_REFUSAL_CODES) {
+
+      assert.equal(isPrivilegeRefusal(new AccessApiError("api", { code })), false, code + " is a refused identity, which this reading leaves to its sibling");
+    }
   });
 
   test("does not recognize a failed authentication", () => {
@@ -382,6 +394,76 @@ describe("isPrivilegeRefusal", () => {
     const mismatched: "CODE_NOT_EXISTS" = thrown.code;
 
     assert.deepEqual([ refused, mismatched ], Array(2).fill("CODE_OPERATION_FORBIDDEN"));
+  });
+});
+
+describe("isIdentityRefusal", () => {
+
+  test("recognizes the transport's classification of a refused status", () => {
+
+    assert.equal(isIdentityRefusal(new AccessAuthError("auth", { identity: "token", statusCode: 401 })), true);
+    assert.equal(isIdentityRefusal(new AccessAuthError("auth")), true, "a refusal the caller attributed to neither identity is still a refusal");
+  });
+
+  test("recognizes each of the controller's own identity refusal codes answered inside a successful response", () => {
+
+    for(const code of IDENTITY_REFUSAL_CODES) {
+
+      assert.equal(isIdentityRefusal(new AccessApiError("api", { code })), true, code + " is a refused identity");
+    }
+  });
+
+  test("does not recognize a privilege refusal in either of its spellings", () => {
+
+    // The partition from this side: a refused permission is the controller having already accepted who is asking, so neither spelling of one is read here.
+    assert.equal(isIdentityRefusal(new AccessAuthorizationError("authz", { identity: "token", statusCode: 403 })), false);
+    assert.equal(isIdentityRefusal(new AccessApiError("api", { code: "CODE_OPERATION_FORBIDDEN" })), false);
+  });
+
+  test("does not recognize an API error carrying a code the documentation does not list", () => {
+
+    assert.equal(isIdentityRefusal(new AccessApiError("api", { code: "CODE_SOMETHING_THE_REFERENCE_OMITS" })), false);
+  });
+
+  test("reads the error it was handed rather than the chain below it", () => {
+
+    const refusal = new AccessAuthError("auth", { identity: "credentials", statusCode: 401 });
+    const wrapper = new AccessBootstrapError("Unable to fetch the controller configuration.", { cause: refusal, stage: "fetch" });
+
+    assert.equal(isIdentityRefusal(wrapper), false, "a wrapper around a refusal is not itself one");
+    assert.equal(isIdentityRefusal(wrapper.cause), true, "while the cause it carries is");
+  });
+
+  test("does not recognize a value that is not one of the classified errors", () => {
+
+    assert.equal(isIdentityRefusal(undefined), false);
+    assert.equal(isIdentityRefusal("CODE_AUTH_FAILED"), false, "the code as bare text is not the error the library raises");
+    assert.equal(isIdentityRefusal({ code: "CODE_AUTH_FAILED" }), false, "and neither is a plain object wearing it");
+  });
+
+  test("leaves an API error carrying another code in the caller's type, and narrows the code inside a refusal", () => {
+
+    // The compile-time half of the reading, checked by the typecheck gate on the same terms as the privilege reading's own.
+    const other: AccessApiError = new AccessApiError("api", { code: "CODE_NOT_EXISTS", detail: "no such door" });
+
+    if(isIdentityRefusal(other)) {
+
+      assert.fail("an API error carrying another code is not an identity refusal");
+    }
+
+    assert.equal(other.code, "CODE_NOT_EXISTS", "the false branch still holds an API error whose code can be read");
+    assert.equal(other.detail, "no such door", "and whose diagnostic can be read there too");
+
+    const thrown: unknown = new AccessApiError("api", { code: "CODE_AUTH_FAILED", detail: "authentication failed" });
+
+    assert.ok(isIdentityRefusal(thrown) && (thrown instanceof AccessApiError), "the refusal narrows to the arm that carries the code");
+
+    const refused: (typeof IDENTITY_REFUSAL_CODES)[number] = thrown.code;
+
+    // @ts-expect-error - the true branch narrows the code to the identity refusals, so the privilege refusal's code is not assignable from it.
+    const mismatched: "CODE_OPERATION_FORBIDDEN" = thrown.code;
+
+    assert.deepEqual([ refused, mismatched ], Array(2).fill("CODE_AUTH_FAILED"));
   });
 });
 

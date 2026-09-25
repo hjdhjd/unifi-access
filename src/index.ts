@@ -28,8 +28,8 @@ export type { AccessApiCode, AccessBootstrapStage, AccessIdentityLeg } from "./e
 // The rendering a consumer logs a failure through, so the diagnosis a wrapped error carries below the sentence that was caught reaches an operator.
 export { formatErrorChain } from "./errors.ts";
 
-// The reading a consumer branches a refused permission on, whichever spelling the controller answered the refusal in.
-export { isPrivilegeRefusal } from "./errors.ts";
+// The readings a consumer branches a refused identity and a refused permission on, whichever spelling the controller answered the refusal in.
+export { isIdentityRefusal, isPrivilegeRefusal } from "./errors.ts";
 
 // Logging - the consumer-injectable logger interface and the silent default the library falls back to when a consumer injects none.
 export { noopLog } from "./logging.ts";
