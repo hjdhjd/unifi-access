@@ -101,3 +101,17 @@ export const ACCESS_RECOVERY_BACKOFF_MS = [ 0, 5000, 15000, 30000 ];
 // The interval, in milliseconds, the recovery loop polls at once it has walked out its staged delays. One minute is short enough that a returning controller is
 // picked up promptly and long enough that polling an absent one indefinitely costs nothing worth measuring.
 export const ACCESS_RECOVERY_STEADY_INTERVAL_MS = 60000;
+
+/* The delays, in milliseconds, before each successive attempt to recover a connection the controller refused on identity or privilege grounds, followed by the
+ * steady interval that recovery settles onto and polls at for as long as the refusal lasts. A refusal is a fact about the identity rather than the network: the
+ * controller answered, and asking it again moments later cannot change its answer, so probing at the network schedule's pace buys nothing. It would also cost
+ * something the network schedule never risks...UniFi OS locks an account after repeated failed sign-ins, so a wrong password retried at that pace could lock the
+ * owner out of the controller's own interface, and this cadence stays under that threshold. It is not slower still, because a credential or permission corrected
+ * on the controller is picked up within one interval of the correction - minutes rather than hours. A consumer's own startup retry waits by this same statement,
+ * which is why it is published rather than held inside the recovery loop.
+ */
+export const ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS = {
+
+  backoff: [ 30000, 60000, 120000, 240000 ],
+  steady: 300000
+} as const;

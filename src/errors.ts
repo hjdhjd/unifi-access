@@ -639,8 +639,9 @@ export function isExpectedWsDisconnect(error: unknown): boolean {
  * 2. An {@link AccessApiError} whose `code` is `CODE_OPERATION_FORBIDDEN`, the controller's own refusal answered inside a successful response.
  *
  * What is read is the error handed in, never its `cause` chain, so a wrapper around a refusal answers false. The library's own case is a refused bootstrap document,
- * which arrives as an {@link AccessBootstrapError}, so a caller holding one hands that wrapper's `cause` to this rather than the wrapper itself. A failed authentication
- * is a different fault with a different remedy and answers false...a privilege refusal is the controller having already accepted who is asking.
+ * which arrives as an {@link AccessBootstrapError}, so a caller holding one hands that wrapper's `cause` to this rather than the wrapper itself. A caller that wants a
+ * refused identity and a refused permission read together through that wrapper hands it to {@link isSignInRefusal} instead. A failed authentication is a different fault
+ * with a different remedy and answers false...a privilege refusal is the controller having already accepted who is asking.
  *
  * Saying this once is what keeps a consumer's reading from drifting from the library's, and it is the one place a further spelling lands if the controller grows
  * one. The predicate type names the code deliberately rather than answering with the bare class: a type guard narrows the false branch as well, and an
@@ -677,9 +678,10 @@ const IDENTITY_REFUSAL_CODES = [ "CODE_ACCESS_TOKEN_INVALID", "CODE_AUTH_FAILED"
  *    controller. `CODE_UNAUTHORIZED` is read as a refused identity by this library's ruling, following its name, which is the HTTP vocabulary for a failed
  *    authentication, although the reference words its message as a refused permission and no capture has settled which it is.
  *
- * What is read is the error handed in, never its `cause` chain, so a wrapper around a refusal answers false, on the same terms as {@link isPrivilegeRefusal}. A
- * privilege refusal is a different fault with a different remedy and answers false...an identity refused a permission has already authenticated. No failure answers
- * true both here and there, so a caller can branch on each reading without ordering them.
+ * What is read is the error handed in, never its `cause` chain, so a wrapper around a refusal answers false, on the same terms as {@link isPrivilegeRefusal}. A caller
+ * that wants a refused identity and a refused permission read together through an {@link AccessBootstrapError} hands the wrapper to {@link isSignInRefusal} instead. A
+ * privilege refusal is a different fault with a different remedy and answers false...an identity refused a permission has already authenticated. No failure answers true
+ * both here and there, so a caller can branch on each reading without ordering them.
  *
  * The predicate type names the codes rather than answering with the bare class, for the reason {@link isPrivilegeRefusal} gives: an `AccessApiError` carrying any
  * other code answers false, so it stays in the caller's type on the false branch, and the true branch hands over the narrowed members the refusal is reported from.
@@ -693,6 +695,31 @@ const IDENTITY_REFUSAL_CODES = [ "CODE_ACCESS_TOKEN_INVALID", "CODE_AUTH_FAILED"
 export function isIdentityRefusal(error: unknown): error is AccessAuthError | (AccessApiError & { readonly code: (typeof IDENTITY_REFUSAL_CODES)[number] }) {
 
   return (error instanceof AccessAuthError) || ((error instanceof AccessApiError) && IDENTITY_REFUSAL_CODES.some((code) => (code === error.code)));
+}
+
+/**
+ * Whether a failure is the controller refusing the sign-in on either ground - the identity itself, as {@link isIdentityRefusal} reads one, or a privilege, as
+ * {@link isPrivilegeRefusal} reads one - in every spelling the library produces for each.
+ *
+ * What is read is the error handed in, or the `cause` of an {@link AccessBootstrapError} handed in, and no further. The direct bootstrap wraps a refused document
+ * read in that error at the fetch stage, and the narrower predicates read the error handed in and never its `cause` chain, so this opens that one wrapper, the one
+ * their own contract tells a caller to open. Every other error is read as itself, and a bootstrap error wrapping another bootstrap error answers false.
+ *
+ * The answer is a plain `boolean` rather than a type guard, because in the wrapped case the value handed in is the wrapper and the refusal is its `cause`, so
+ * narrowing the value handed in would claim something untrue of it. A caller that wants the narrowed arm hands the refusal itself, the wrapper's `cause` in the
+ * wrapped case, to the narrower predicate that reads it.
+ *
+ * @param error - The error value to classify. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
+ *
+ * @returns `true` when the failure, or the cause a bootstrap error carries, is an identity or a privilege refusal; `false` for anything else.
+ *
+ * @category Utilities
+ */
+export function isSignInRefusal(error: unknown): boolean {
+
+  const refusal = (error instanceof AccessBootstrapError) ? error.cause : error;
+
+  return isIdentityRefusal(refusal) || isPrivilegeRefusal(refusal);
 }
 
 /**

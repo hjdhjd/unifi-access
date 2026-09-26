@@ -22,9 +22,10 @@ The following spellings qualify:
    controller. `CODE_UNAUTHORIZED` is read as a refused identity by this library's ruling, following its name, which is the HTTP vocabulary for a failed
    authentication, although the reference words its message as a refused permission and no capture has settled which it is.
 
-What is read is the error handed in, never its `cause` chain, so a wrapper around a refusal answers false, on the same terms as [isPrivilegeRefusal](isPrivilegeRefusal.md). A
-privilege refusal is a different fault with a different remedy and answers false...an identity refused a permission has already authenticated. No failure answers
-true both here and there, so a caller can branch on each reading without ordering them.
+What is read is the error handed in, never its `cause` chain, so a wrapper around a refusal answers false, on the same terms as [isPrivilegeRefusal](isPrivilegeRefusal.md). A caller
+that wants a refused identity and a refused permission read together through an [AccessBootstrapError](../classes/AccessBootstrapError.md) hands the wrapper to [isSignInRefusal](isSignInRefusal.md) instead. A
+privilege refusal is a different fault with a different remedy and answers false...an identity refused a permission has already authenticated. No failure answers true
+both here and there, so a caller can branch on each reading without ordering them.
 
 The predicate type names the codes rather than answering with the bare class, for the reason [isPrivilegeRefusal](isPrivilegeRefusal.md) gives: an `AccessApiError` carrying any
 other code answers false, so it stays in the caller's type on the false branch, and the true branch hands over the narrowed members the refusal is reported from.

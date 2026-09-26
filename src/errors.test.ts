@@ -7,7 +7,7 @@
 import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
   AccessCertificateError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError, AccessThrottledError,
   AccessTimeoutError, FatalError, RecoverableError, assertNever, formatErrorChain, isCertificateVerificationFailure, isExpectedWsDisconnect, isIdentityRefusal,
-  isPrivilegeRefusal, resolveErrnoCause } from "./errors.ts";
+  isPrivilegeRefusal, isSignInRefusal, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { errnoError } from "./testing.helpers.ts";
@@ -464,6 +464,51 @@ describe("isIdentityRefusal", () => {
     const mismatched: "CODE_OPERATION_FORBIDDEN" = thrown.code;
 
     assert.deepEqual([ refused, mismatched ], Array(2).fill("CODE_AUTH_FAILED"));
+  });
+});
+
+describe("isSignInRefusal", () => {
+
+  test("recognizes the transport's classification of a refused identity and of a refused privilege", () => {
+
+    assert.equal(isSignInRefusal(new AccessAuthError("auth", { identity: "token", statusCode: 401 })), true, "a refused identity is a refused sign-in");
+    assert.equal(isSignInRefusal(new AccessAuthorizationError("authz", { identity: "token", statusCode: 403 })), true, "and so is a refused privilege");
+  });
+
+  test("recognizes the controller's own identity and privilege refusal codes answered inside a successful response", () => {
+
+    assert.equal(isSignInRefusal(new AccessApiError("api", { code: "CODE_AUTH_FAILED" })), true, "an identity refusal code is a refused sign-in");
+    assert.equal(isSignInRefusal(new AccessApiError("api", { code: "CODE_OPERATION_FORBIDDEN" })), true, "and so is the privilege refusal code");
+  });
+
+  test("reads a bootstrap error by the cause it carries", () => {
+
+    // The direct bootstrap wraps a refused document read at the fetch stage, so this is the shape a refused re-bootstrap arrives in.
+    const identity = new AccessBootstrapError("Unable to fetch the controller configuration.",
+      { cause: new AccessAuthError("auth", { identity: "credentials", statusCode: 401 }), stage: "fetch" });
+    const privilege = new AccessBootstrapError("Unable to fetch the controller configuration.",
+      { cause: new AccessAuthorizationError("authz", { identity: "credentials", statusCode: 403 }), stage: "fetch" });
+    const unparsed = new AccessBootstrapError("Unable to parse the controller configuration.", { cause: new Error("unexpected token"), stage: "parse" });
+
+    assert.equal(isSignInRefusal(identity), true, "a wrapped identity refusal is read through its wrapper");
+    assert.equal(isSignInRefusal(privilege), true, "and so is a wrapped privilege refusal");
+    assert.equal(isSignInRefusal(unparsed), false, "while a bootstrap error whose cause is no refusal is not one");
+  });
+
+  test("opens a bootstrap error alone, and only the one handed in", () => {
+
+    const refusal = new AccessAuthError("auth", { identity: "credentials", statusCode: 401 });
+    const nested = new AccessBootstrapError("Unable to fetch the controller configuration.",
+      { cause: new AccessBootstrapError("Unable to fetch the controller configuration.", { cause: refusal, stage: "fetch" }), stage: "fetch" });
+
+    assert.equal(isSignInRefusal(new AccessNetworkError("net", { cause: refusal })), false, "a wrapper of any other class is read as itself");
+    assert.equal(isSignInRefusal(nested), false, "and a refusal two bootstrap errors down is past the one wrapper opened");
+  });
+
+  test("does not recognize a value that is not one of the classified errors", () => {
+
+    assert.equal(isSignInRefusal(new Error("refused")), false, "a plain error is not a refusal whatever its message says");
+    assert.equal(isSignInRefusal(null), false);
   });
 });
 

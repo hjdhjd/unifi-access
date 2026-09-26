@@ -4,12 +4,13 @@
  * transport throttle and the stream stall into one health surface, and the guarded recovery sequence. Driven with a fake clock, a fake throttle source, and
  * injected stream, probe, and re-bootstrap functions, so every path runs without a live controller and without real waits.
  */
-import { ACCESS_EVENTS_HEARTBEAT_TIMEOUT, ACCESS_REBOOT_UPTIME_DROP_MINIMUM, ACCESS_RECOVERY_BACKOFF_MS,
+import { ACCESS_EVENTS_HEARTBEAT_TIMEOUT, ACCESS_REBOOT_UPTIME_DROP_MINIMUM, ACCESS_RECOVERY_BACKOFF_MS, ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS,
   ACCESS_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
-import { AccessAbortedError, AccessError, AccessNetworkError, AccessStallError } from "../errors.ts";
+import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessError, AccessNetworkError,
+  AccessStallError } from "../errors.ts";
 import type { AccessControllerConfig, AccessEventPacket, Nullable } from "../types/index.ts";
 import type { ConnectionState, ConnectionTransition, ThrottleSource } from "./connection.ts";
-import { TestClock, advanceThroughSchedule, assertNoUnhandledRejections, capturingLog, settle, silentLog } from "homebridge-plugin-utils/testing";
+import { TestClock, advanceThroughSchedule, assertNoUnhandledRejections, capturingLog, logCount, settle, silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
 import type { AccessLogging } from "../logging.ts";
@@ -26,6 +27,10 @@ const HOST = "10.0.0.1";
 
 // The uptime the seeded controller document reports, in seconds. Every restart case moves from this value.
 const BASE_UPTIME = 990090;
+
+// A phrase unique to each of the lost warning's sentences, so a count by sentence tells a refused sign-in from an unreachable controller.
+const REFUSAL_WARNING = "is refusing the sign-in";
+const UNREACHABLE_WARNING = "appears to be unreachable";
 
 // The awaits one recovery attempt makes, named so a test can say which of them a disposal should land inside.
 type RecoveryStep = "probe" | "reBootstrap" | "relaunch";
@@ -330,6 +335,37 @@ function unopeningStream(clock: TestClock, signal?: AbortSignal): EventStream {
 
   return new EventStream({ clock, host: HOST, log: silentLog(), ...((signal !== undefined) && { signal }),
     webSocket: (): FakeWebSocket => new FakeWebSocket({ autoOpen: false }) });
+}
+
+/* Read a recovery schedule behaviorally: for each expected delay, advancing by one less than it must not release the attempt, and advancing the last millisecond
+ * must. The expected delays come out of the exported constants, so a changed delay fails here loudly rather than passing against a restated number, and the label
+ * names the walk in every assertion so a failure says which walk it was.
+ */
+async function assertRecoveryDelays(options: { delays: readonly number[]; label: string; rig: Harness }): Promise<void> {
+
+  const { clock, control } = options.rig;
+  let attempts = control.verifyCalls();
+
+  for(const delay of options.delays) {
+
+    if(delay > 0) {
+
+      clock.advance(delay - 1);
+
+      // eslint-disable-next-line no-await-in-loop
+      await settle();
+
+      assert.equal(control.verifyCalls(), attempts, options.label + ": no attempt is made before its scheduled delay of " + String(delay) + " has elapsed");
+    }
+
+    clock.advance((delay > 0) ? 1 : 0);
+
+    // eslint-disable-next-line no-await-in-loop
+    await settle();
+
+    assert.equal(control.verifyCalls(), attempts + 1, options.label + ": the attempt runs once its delay of " + String(delay) + " has elapsed");
+    attempts += 1;
+  }
 }
 
 describe("ConnectionMonitor", () => {
@@ -928,6 +964,296 @@ describe("ConnectionMonitor", () => {
         attempts += 1;
       }
     });
+
+    test("a refused identity or privilege, in every spelling, walks the refusal schedule out to its floor", async () => {
+
+      // Every spelling of a refusal the recovery loop can be handed: the transport's classification of a refused status, and the controller's own refusal code
+      // answered inside a successful response, for a refused identity and a refused privilege alike.
+      const refusals = [
+
+        { error: new AccessAuthError("refused", { statusCode: 401 }), label: "AccessAuthError with status 401" },
+        { error: new AccessApiError("refused", { code: "CODE_AUTH_FAILED" }), label: "AccessApiError with CODE_AUTH_FAILED" },
+        { error: new AccessAuthorizationError("refused", { statusCode: 403 }), label: "AccessAuthorizationError with status 403" },
+        { error: new AccessApiError("refused", { code: "CODE_OPERATION_FORBIDDEN" }), label: "AccessApiError with CODE_OPERATION_FORBIDDEN" }
+      ];
+
+      const walk = async (refusal: { error: Error; label: string }): Promise<void> => {
+
+        const rig = await harness();
+
+        await using monitor = rig.monitor;
+        const { control, streams } = rig;
+
+        await monitor.opened;
+        await settle();
+
+        control.setVerifyError(refusal.error);
+        streams[0]?.emitError(new Error("socket dropped"));
+        await settle();
+
+        /* The episode opens on the stream's own fault, which is not a refusal, so the first wait is the network schedule's first rung. The attempt it releases is
+         * refused, and every wait from there walks the refusal schedule: each of its rungs in turn, then its floor, held for a second interval.
+         */
+        await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff,
+          ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady, ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady ], label: refusal.label, rig });
+      };
+
+      for(const refusal of refusals) {
+
+        // Sequential by intent: each spelling walks its own monitor.
+        // eslint-disable-next-line no-await-in-loop
+        await walk(refusal);
+      }
+    });
+
+    test("a controller that turns from unreachable to refusing walks the refusal schedule from its first rung", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { control, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      // Two attempts fail unreachable, released by the network schedule's first two rungs.
+      control.setVerifyError(new AccessNetworkError("down"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: ACCESS_RECOVERY_BACKOFF_MS.slice(0, 2), label: "while unreachable", rig });
+
+      /* The controller turns to refusing. The wait already parked was chosen from the unreachable fault, so it runs out on the network schedule and releases the
+       * first refused attempt; every wait after that walks the refusal schedule from its first rung rather than from the rung the network schedule had reached.
+       * The walk runs out to the floor because the network and refusal schedules can agree at any single rung, and only the whole walk tells a schedule that
+       * switched from one that never did.
+       */
+      control.setVerifyError(new AccessAuthError("refused", { statusCode: 401 }));
+      await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(2, 3), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff,
+        ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady, ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady ], label: "once refusing", rig });
+    });
+
+    test("a controller that turns from refusing to unreachable walks the network schedule from its first rung", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { control, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      control.setVerifyError(new AccessAuthError("refused", { statusCode: 401 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+
+      // The stream's own fault opens the episode on the network schedule's first rung, and the attempt it releases is refused; the refusal schedule's first two
+      // rungs follow, each releasing another refused attempt.
+      await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 2) ],
+        label: "while refusing", rig });
+
+      /* The controller stops refusing and becomes unreachable. The wait already parked was chosen from the refusal, so it runs out on the refusal schedule and
+       * releases the first unreachable attempt; every wait after that walks the network schedule from its first rung, an immediate attempt, out to its floor.
+       */
+      control.setVerifyError(new AccessNetworkError("down"));
+      await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(2, 3), ...ACCESS_RECOVERY_BACKOFF_MS,
+        ACCESS_RECOVERY_STEADY_INTERVAL_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS ], label: "once unreachable", rig });
+    });
+
+    test("an episode that opens on a refusal is warned about once, as a refusal, across every rung it walks", async () => {
+
+      const log = capturingLog();
+      const rig = await harness({ log });
+
+      await using monitor = rig.monitor;
+      const { control, events, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      control.setVerifyError(new AccessAuthError("refused", { statusCode: 401 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+
+      // The network schedule's first rung releases the first refused attempt, and every refusal rung follows, out to the floor and held there for a second interval.
+      await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff,
+        ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady, ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady ], label: "while refusing", rig });
+
+      const warned = log.entries.find((entry) => (entry.level === "warn") && entry.message.includes("the connection is lost"));
+
+      assert.ok(warned?.message.includes(REFUSAL_WARNING), "the lost warning, found by the phrase every lost warning shares, is the refusal sentence");
+      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 1, "the refusal is warned about once for the whole walk");
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 0, "and never as an unreachable controller");
+      assert.equal(events.lost.length, 1, "and controllerLost fires once for the episode");
+    });
+
+    test("a controller that turns from unreachable to refusing is announced once as each, in the warning and on controllerLost", async () => {
+
+      const log = capturingLog();
+      const rig = await harness({ log });
+
+      await using monitor = rig.monitor;
+      const { control, events, streams } = rig;
+      const unreachable = new AccessNetworkError("down");
+      const refusal = new AccessAuthError("refused", { statusCode: 401 });
+
+      await monitor.opened;
+      await settle();
+
+      // Two attempts fail unreachable, released by the network schedule's first two rungs.
+      control.setVerifyError(unreachable);
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: ACCESS_RECOVERY_BACKOFF_MS.slice(0, 2), label: "while unreachable", rig });
+
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 1, "the loss is warned about once while the controller is unreachable");
+      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 0, "and not as a refusal");
+      assert.equal(events.lost.length, 1, "controllerLost fires once while the controller is unreachable");
+      assert.equal(events.lost[0], unreachable, "carrying the fault that concluded the loss");
+
+      // The controller turns to refusing. The network wait already parked releases the first refused attempt, and the refusal schedule's first two rungs release
+      // two more.
+      control.setVerifyError(refusal);
+      await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(2, 3), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 2) ],
+        label: "once refusing", rig });
+
+      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 1, "the turn to refusing is warned about once across its attempts");
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 1, "and the unreachable warning is not repeated");
+      assert.equal(events.lost.length, 2, "controllerLost fires again at the turn, and only then");
+      assert.equal(events.lost[1], refusal, "carrying the refusal the loss turned to");
+    });
+
+    test("a controller that turns from refusing to unreachable is announced once as each, in the warning and on controllerLost", async () => {
+
+      const log = capturingLog();
+      const rig = await harness({ log });
+
+      await using monitor = rig.monitor;
+      const { control, events, streams } = rig;
+      const refusal = new AccessAuthError("refused", { statusCode: 401 });
+      const unreachable = new AccessNetworkError("down");
+
+      await monitor.opened;
+      await settle();
+
+      // The stream's own fault opens the episode on the network schedule's first rung, which releases the first refused attempt; the refusal schedule's first two
+      // rungs release two more.
+      control.setVerifyError(refusal);
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 2) ],
+        label: "while refusing", rig });
+
+      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 1, "the loss is warned about once while the controller is refusing");
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 0, "and not as an unreachable controller");
+      assert.equal(events.lost.length, 1, "controllerLost fires once while the controller is refusing");
+      assert.equal(events.lost[0], refusal, "carrying the refusal that concluded the loss");
+
+      // The controller stops refusing and becomes unreachable. The refusal wait already parked releases the first unreachable attempt, and the network schedule's
+      // first two rungs release two more.
+      control.setVerifyError(unreachable);
+      await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(2, 3), ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 2) ],
+        label: "once unreachable", rig });
+
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 1, "the turn to unreachable is warned about once across its attempts");
+      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 1, "and the refusal warning is not repeated");
+      assert.equal(events.lost.length, 2, "controllerLost fires again at the turn, and only then");
+      assert.equal(events.lost[1], unreachable, "carrying the fault the loss turned to");
+    });
+
+    test("a fault that keeps its kind is announced once across repeated attempts, including attempts that pass through reconnecting", async () => {
+
+      /* Each walk fails attempt after attempt with one kind of fault after the controller answers the probe, so each attempt passes through reconnecting and drops
+       * back to lost at the re-bootstrap. The loss is announced for the episode's first loss alone, in the warning and on controllerLost alike, however many of
+       * those drops follow.
+       */
+      const walks = [
+
+        { delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 3) ],
+          error: new AccessAuthError("refused", { statusCode: 401 }), label: "refused", otherSentence: UNREACHABLE_WARNING, sentence: REFUSAL_WARNING },
+        { delays: ACCESS_RECOVERY_BACKOFF_MS.slice(0, 4), error: new AccessNetworkError("documents unavailable"), label: "unreachable",
+          otherSentence: REFUSAL_WARNING, sentence: UNREACHABLE_WARNING }
+      ];
+
+      const walk = async (options: { delays: readonly number[]; error: Error; label: string; otherSentence: string; sentence: string }): Promise<void> => {
+
+        const log = capturingLog();
+        const rig = await harness({ log });
+
+        await using monitor = rig.monitor;
+        const { control, events, streams } = rig;
+
+        await monitor.opened;
+        await settle();
+
+        control.setReBootstrapError(options.error);
+        streams[0]?.emitError(new Error("socket dropped"));
+        await settle();
+        await assertRecoveryDelays({ delays: options.delays, label: options.label, rig });
+
+        assert.equal(control.reBootstrapCalls(), options.delays.length, options.label + ": every attempt answered the probe and failed at the re-bootstrap");
+        assert.equal(logCount(log.entries, "warn", options.sentence), 1, options.label + ": the fault is warned about once across every attempt");
+        assert.equal(logCount(log.entries, "warn", options.otherSentence), 0, options.label + ": and never in the other sentence");
+        assert.equal(events.lost.length, 1, options.label + ": and controllerLost fires once for the episode");
+      };
+
+      for(const options of walks) {
+
+        // Sequential by intent: each kind walks its own monitor.
+        // eslint-disable-next-line no-await-in-loop
+        await walk(options);
+      }
+    });
+
+    test("a refusal wrapped in a bootstrap error walks the refusal schedule and is warned about as a refusal", async () => {
+
+      const log = capturingLog();
+      const rig = await harness({ log });
+
+      await using monitor = rig.monitor;
+      const { control, events, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      /* The direct re-bootstrap wraps a refused document read in a bootstrap error, and that is how this refusal arrives: the probe answers, so each attempt passes
+       * through reconnecting and fails at the re-bootstrap. The first wait was chosen from the stream's own fault, which is the network schedule's first rung, and
+       * the attempt it releases lands the first wrapped refusal; every wait after that walks the refusal schedule out to its floor, held for a second interval.
+       */
+      control.setReBootstrapError(new AccessBootstrapError("refused", { cause: new AccessAuthError("refused", { statusCode: 401 }), stage: "fetch" }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff,
+        ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady, ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady ], label: "a wrapped refusal", rig });
+
+      const warned = log.entries.find((entry) => (entry.level === "warn") && entry.message.includes("the connection is lost"));
+
+      assert.ok(warned?.message.includes(REFUSAL_WARNING), "the lost warning, found by the phrase every lost warning shares, is the refusal sentence");
+      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 1, "the wrapped refusal is warned about once for the whole walk");
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 0, "and never as an unreachable controller");
+      assert.equal(events.lost.length, 1, "and controllerLost fires once for the episode");
+    });
+
+    test("a refusal carried below a network fault is read as the network fault and walks the network schedule", async () => {
+
+      const log = capturingLog();
+      const rig = await harness({ log });
+
+      await using monitor = rig.monitor;
+      const { control, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      // A bootstrap error is the one wrapper read by its cause, so a network fault that carries a refusal below it is read as the network fault it is.
+      control.setVerifyError(new AccessNetworkError("unreachable", { cause: new AccessAuthError("refused", { statusCode: 401 }) }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS ],
+        label: "a refusal below a network fault", rig });
+
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 1, "the loss is warned about once, as an unreachable controller");
+      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 0, "and never as a refusal");
+    });
   });
 
   describe("the rendered failure text", () => {
@@ -1318,6 +1644,39 @@ describe("ConnectionMonitor", () => {
       await monitor[Symbol.asyncDispose]();
       await settle();
 
+      assert.equal(streams.length, before, "disposal must not relaunch the stream");
+      assert.equal(streams[0]?.closeRequested, true);
+    });
+
+    test("disposal while recovery is parked on the refusal schedule ends the loop without a further attempt", async () => {
+
+      const { clock, control, monitor, streams } = await harness();
+
+      await monitor.opened;
+      await settle();
+
+      control.setVerifyError(new AccessAuthError("refused", { statusCode: 401 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1));
+
+      await settleUntil(() => monitor.state === "lost");
+
+      const attempts = control.verifyCalls();
+      const before = streams.length;
+
+      // The refused attempt parks recovery on the refusal schedule's first rung. Advancing to one short of it leaves the wait pending, which is where disposal lands.
+      clock.advance(ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff[0] - 1);
+      await settle();
+
+      assert.equal(control.verifyCalls(), attempts, "recovery is parked on the refusal schedule's first rung");
+
+      // Disposal aborts the monitor's lifetime signal, which is the parked wait's other composed signal. Carrying the clock past the rung afterward is what shows
+      // the wait ended with disposal rather than releasing its attempt on schedule.
+      await monitor[Symbol.asyncDispose]();
+      clock.advance(1);
+      await settle();
+
+      assert.equal(control.verifyCalls(), attempts, "disposal must not release a further attempt");
       assert.equal(streams.length, before, "disposal must not relaunch the stream");
       assert.equal(streams[0]?.closeRequested, true);
     });

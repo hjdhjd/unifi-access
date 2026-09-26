@@ -28,8 +28,9 @@ export type { AccessApiCode, AccessBootstrapStage, AccessIdentityLeg } from "./e
 // The rendering a consumer logs a failure through, so the diagnosis a wrapped error carries below the sentence that was caught reaches an operator.
 export { formatErrorChain } from "./errors.ts";
 
-// The readings a consumer branches a refused identity and a refused permission on, whichever spelling the controller answered the refusal in.
-export { isIdentityRefusal, isPrivilegeRefusal } from "./errors.ts";
+// The readings a consumer branches on to recognize a refused identity, a refused permission, or a sign-in refused on either ground, whichever spelling the controller
+// answered the refusal in and, for the sign-in reading, through the bootstrap wrapper it opens.
+export { isIdentityRefusal, isPrivilegeRefusal, isSignInRefusal } from "./errors.ts";
 
 // Logging - the consumer-injectable logger interface and the silent default the library falls back to when a consumer injects none.
 export { noopLog } from "./logging.ts";
@@ -173,7 +174,7 @@ export { deviceDisplayName, isEnterpriseHubRecord, isHub, isReader, isTamperCapa
 // Settings - the externally observable timing and retry constants behind the library's defaults, exposed as documented reference values.
 export { ACCESS_API_ERROR_LIMIT, ACCESS_API_PATH_PREFIX, ACCESS_API_RETRY_INTERVAL, ACCESS_API_RETRY_PROFILE, ACCESS_API_TIMEOUT, ACCESS_BOOTSTRAP_REFRESH_INTERVAL,
   ACCESS_EVENTS_HEARTBEAT_TIMEOUT, ACCESS_OFFICIAL_API_PATH_PREFIX, ACCESS_OFFICIAL_API_PORT, ACCESS_REBOOT_UPTIME_DROP_MINIMUM, ACCESS_RECOVERY_BACKOFF_MS,
-  ACCESS_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
+  ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
 
 // Domain types - the Access wire and configuration shapes. Every export here is intentionally public; consumers type their controller interactions against these. The
 // list is named rather than wildcarded so that adding a type to the tier is a deliberate act of publishing it, not a side effect.

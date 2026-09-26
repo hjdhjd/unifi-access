@@ -19,8 +19,9 @@ The following spellings qualify:
 2. An [AccessApiError](../classes/AccessApiError.md) whose `code` is `CODE_OPERATION_FORBIDDEN`, the controller's own refusal answered inside a successful response.
 
 What is read is the error handed in, never its `cause` chain, so a wrapper around a refusal answers false. The library's own case is a refused bootstrap document,
-which arrives as an [AccessBootstrapError](../classes/AccessBootstrapError.md), so a caller holding one hands that wrapper's `cause` to this rather than the wrapper itself. A failed authentication
-is a different fault with a different remedy and answers false...a privilege refusal is the controller having already accepted who is asking.
+which arrives as an [AccessBootstrapError](../classes/AccessBootstrapError.md), so a caller holding one hands that wrapper's `cause` to this rather than the wrapper itself. A caller that wants a
+refused identity and a refused permission read together through that wrapper hands it to [isSignInRefusal](isSignInRefusal.md) instead. A failed authentication is a different fault
+with a different remedy and answers false...a privilege refusal is the controller having already accepted who is asking.
 
 Saying this once is what keeps a consumer's reading from drifting from the library's, and it is the one place a further spelling lands if the controller grows
 one. The predicate type names the code deliberately rather than answering with the bare class: a type guard narrows the false branch as well, and an

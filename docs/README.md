@@ -45,12 +45,12 @@ I welcome inputs and perspective, particularly around hardware I cannot test aga
 | [AccessClientEvents](interfaces/AccessClientEvents.md) | The events [AccessClient](classes/AccessClient.md) publishes. |
 | [ConnectionEvents](interfaces/ConnectionEvents.md) | The events [ConnectionMonitor](interfaces/ConnectionMonitor.md) publishes on its three-rail surface. |
 | [ConnectionMonitor](interfaces/ConnectionMonitor.md) | The connection coordinator. Constructed by the client; consumers read it as `client.connection`. |
-| [ConnectionTransition](interfaces/ConnectionTransition.md) | One edge of the connection state machine, carried on the `stateChanged` rail and yielded by [ConnectionMonitor.observe](interfaces/ConnectionMonitor.md#observe). `reason` is present when a typed fault - a stall, a failed reachability probe - is what drove the edge, and it holds that failure's whole cause chain as [formatErrorChain](functions/formatErrorChain.md) renders it, so the controller's own diagnosis reaches a consumer rather than the wrapper's sentence alone: the edge into `lost` carries exactly the text its own warning logs. |
+| [ConnectionTransition](interfaces/ConnectionTransition.md) | One edge of the connection state machine, carried on the `stateChanged` rail and yielded by [ConnectionMonitor.observe](interfaces/ConnectionMonitor.md#observe). `reason` is present when a typed fault - a stall, a failed reachability probe - is what drove the edge, and it holds that failure's whole cause chain as [formatErrorChain](functions/formatErrorChain.md) renders it, so the controller's own diagnosis reaches a consumer rather than the wrapper's sentence alone: the edge into `lost` renders its fault exactly as the lost warning logs it. |
 | [ConnectOptionsBase](interfaces/ConnectOptionsBase.md) | The options common to every way of connecting: the controller address, and the injected dependencies that each have a default. |
 | [AccessApiMode](type-aliases/AccessApiMode.md) | Which identities a client holds, and therefore which of the controller's APIs it can reach. |
 | [AccessApiOverride](type-aliases/AccessApiOverride.md) | Which API a routed command should prefer. |
 | [ConnectIdentity](type-aliases/ConnectIdentity.md) | The identities a client can connect with. At least one is required, and the union is what makes "no identity at all" impossible to write. |
-| [ConnectionState](type-aliases/ConnectionState.md) | The connection's observable state. `healthy` is steady operation; `degraded` means a fault was seen and reachability is being probed; `reconnecting` means the controller answered and the monitor is re-bootstrapping and relaunching the notification stream; `lost` means the controller is unreachable and recovery is polling for its return; `throttled` means the transport's breaker is open and holding requests back. The throttle verdict is read live from the transport and takes precedence only while nothing else is wrong. |
+| [ConnectionState](type-aliases/ConnectionState.md) | The connection's observable state. `healthy` is steady operation; `degraded` means a fault was seen and reachability is being probed; `reconnecting` means the controller answered and the monitor is re-bootstrapping and relaunching the notification stream; `lost` means the controller is unreachable or is refusing the sign-in, and recovery is retrying on the schedule that cause calls for; `throttled` means the transport's breaker is open and holding requests back. The throttle verdict is read live from the transport and takes precedence only while nothing else is wrong. |
 | [ConnectOptions](type-aliases/ConnectOptions.md) | Options for [AccessClient.connect](classes/AccessClient.md#connect): the controller address and injected dependencies, plus at least one identity to connect with. |
 
 ## Devices
@@ -307,6 +307,7 @@ I welcome inputs and perspective, particularly around hardware I cannot test aga
 | [formatErrorChain](functions/formatErrorChain.md) | Render an arbitrary thrown value as clean text, carrying every further diagnosis its `cause` chain holds. An `Error` surfaces its `message`; anything else is coerced through `String(...)`. |
 | [isIdentityRefusal](functions/isIdentityRefusal.md) | Whether a failure is the controller refusing the identity itself - the credentials or the token did not authenticate, so the controller never reached the question of what that identity may do. A refused identity is spelled differently depending on which of the controller's surfaces answered it, and this reads every spelling the library produces for one. |
 | [isPrivilegeRefusal](functions/isPrivilegeRefusal.md) | Whether a failure is the controller refusing an operation on privilege grounds - the identity authenticated, and was told it may not do this. A refusal is spelled differently depending on which of the controller's surfaces answered it, and this reads every spelling the library produces for one. |
+| [isSignInRefusal](functions/isSignInRefusal.md) | Whether a failure is the controller refusing the sign-in on either ground - the identity itself, as [isIdentityRefusal](functions/isIdentityRefusal.md) reads one, or a privilege, as [isPrivilegeRefusal](functions/isPrivilegeRefusal.md) reads one - in every spelling the library produces for each. |
 
 ## Other
 
@@ -388,6 +389,7 @@ I welcome inputs and perspective, particularly around hardware I cannot test aga
 | [ACCESS\_OFFICIAL\_API\_PORT](variables/ACCESS_OFFICIAL_API_PORT.md) | - |
 | [ACCESS\_REBOOT\_UPTIME\_DROP\_MINIMUM](variables/ACCESS_REBOOT_UPTIME_DROP_MINIMUM.md) | - |
 | [ACCESS\_RECOVERY\_BACKOFF\_MS](variables/ACCESS_RECOVERY_BACKOFF_MS.md) | - |
+| [ACCESS\_RECOVERY\_REFUSAL\_SCHEDULE\_MS](variables/ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.md) | - |
 | [ACCESS\_RECOVERY\_STEADY\_INTERVAL\_MS](variables/ACCESS_RECOVERY_STEADY_INTERVAL_MS.md) | - |
 
 ## Reducer
