@@ -4,7 +4,7 @@
  */
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_RETRY_PROFILE, ACCESS_API_TIMEOUT } from "../settings.ts";
 import { AccessAbortedError, AccessAuthError, AccessAuthorizationError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessRequestError,
-  AccessThrottledError, AccessTimeoutError, isCertificateVerificationFailure } from "../errors.ts";
+  AccessThrottledError, AccessTimeoutError, assertNever } from "../errors.ts";
 import type { AccessHttpRequestCommon, AccessHttpRequestEndOutcome, AccessHttpRequestEndPayload, AccessHttpRequestStartPayload } from "../diagnostics.ts";
 import type { AccessIdentityLeg, FatalError } from "../errors.ts";
 import { Pool, errors, interceptors, request } from "undici";
@@ -16,6 +16,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import type { OwnedConnector } from "./connector.ts";
 import type { StreamOptions } from "../event-bus.ts";
 import { channels } from "../diagnostics.ts";
+import { classifyTransportError } from "./failure.ts";
 import { createOwnedConnector } from "./connector.ts";
 import { noopLog } from "../logging.ts";
 import { randomUUID } from "node:crypto";
@@ -543,8 +544,8 @@ export class Transport implements AsyncDisposable {
     const timeout = opts.timeout ?? ACCESS_API_TIMEOUT;
 
     // Compose our own deadline with the caller's optional cancellation. The deadline is drawn from the injected clock rather than from the platform, so a suite
-    // fires it on virtual time instead of waiting it out. #classifyTransportError later tells the two apart by identity, comparing the failure against each
-    // signal's own reason.
+    // fires it on virtual time instead of waiting it out. #toAccessError later tells the two apart by identity, comparing the failure against each signal's own
+    // reason.
     const timeoutSignal = this.#clock.timeout(timeout);
     const signal = (opts.signal !== undefined) ? AbortSignal.any([ opts.signal, timeoutSignal ]) : timeoutSignal;
 
@@ -609,7 +610,7 @@ export class Transport implements AsyncDisposable {
       return result;
     } catch(error) {
 
-      const classified = this.#classifyTransportError(error, opts.signal, timeoutSignal, this.#clock.now() - startedAt);
+      const classified = this.#toAccessError(error, opts.signal, timeoutSignal, this.#clock.now() - startedAt);
 
       this.#publishEnd({ durationMs: this.#clock.now() - startedAt, error: classified.message, method, outcome: "failure", requestId, url });
 
@@ -683,11 +684,16 @@ export class Transport implements AsyncDisposable {
     }
   }
 
-  /* Classify an undici exception into the typed hierarchy. The cause is read by identity: the error a cancelled or expired request rejects with IS the reason of
-   * the signal that fired, so comparing against each signal's own reason names which of them caused the failure exactly - where asking whether the caller's signal
-   * is aborted at classification time would misname a deadline that fired first on a request its caller went on to cancel a moment later.
+  /* Translate a failed exchange into the typed hierarchy. A cancellation is read by identity first: the error a cancelled or expired request rejects with IS the
+   * reason of the signal that fired, so comparing against each signal's own reason names which of them caused the failure exactly - where asking whether the
+   * caller's signal is aborted at classification time would misname a deadline that fired first on a request its caller went on to cancel a moment later.
+   *
+   * Every other failure is sorted by the transport failure classifier, the local mirror of homebridge-plugin-utils' taxonomy that the notification socket sorts its
+   * failures by as well, and each kind maps to the typed error it reports as. The classifier is handed no signal, because the signals this transport composed are
+   * exactly what the identity checks above have already answered. A generic network failure carries the code the classifier read off the chain, so the error's
+   * public `code` and its kind are one reading of the same chain.
    */
-  #classifyTransportError(error: unknown, callerSignal: AbortSignal | undefined, deadline: AbortSignal,
+  #toAccessError(error: unknown, callerSignal: AbortSignal | undefined, deadline: AbortSignal,
     elapsedMs: number): AccessAbortedError | AccessNetworkError | AccessTimeoutError {
 
     // Our own deadline caused this failure, and settled the request at whatever stage it had reached.
@@ -703,38 +709,60 @@ export class Transport implements AsyncDisposable {
       return new AccessAbortedError("The request was aborted by the caller's signal.", { cause: error });
     }
 
-    // Our own pool reset destroyed an in-flight connection, live socket or connection attempt alike. Recoverable: the caller may retry against the rebuilt pool.
-    if(error instanceof errors.ClientDestroyedError) {
+    const failure = classifyTransportError(error);
 
-      return new AccessNetworkError("The request was interrupted because the connection pool was reset.", { cause: error });
+    switch(failure.kind) {
+
+      /* A connect-phase timeout (distinct from our request deadline) - surface it as a timeout, carrying the elapsed time. The arm is reached when a caller's
+       * `timeout` option exceeds undici's own ten-second connect timer, which then bounds the connect phase and wins. It is also reached by a request queued behind a
+       * connection attempt a settled request left running, when that attempt's ten-second timer fires before the queued request's own deadline: a failed connect
+       * fails every request queued on that client, and undici's retry interceptor does not retry UND_ERR_CONNECT_TIMEOUT, so the connect timer's error reaches the
+       * queued request.
+       */
+      case "connect-timeout":
+
+        return new AccessTimeoutError("The connection to the UniFi Access controller timed out.", { cause: error, elapsedMs });
+
+      /* The controller accepted the request and then stopped answering before its reply was complete, which undici's own response timers report. They are reached
+       * when a request's deadline exceeds those timers, or through an injected dispatcher that brings timers of its own. A cancellation that is not one of this
+       * transport's own signals classifies as a timeout too, the reading homebridge-plugin-utils gives it, and reports the same way.
+       */
+      case "timeout":
+
+        return new AccessTimeoutError("The UniFi Access controller stopped responding before its reply was complete.", { cause: error, elapsedMs });
+
+      // Our own pool reset destroyed an in-flight connection, live socket or connection attempt alike. Recoverable: the caller may retry against the rebuilt pool.
+      case "destroyed":
+
+        return new AccessNetworkError("The request was interrupted because the connection pool was reset.", { cause: error, code: failure.code });
+
+      // The retry interceptor exhausted its attempts without a usable response.
+      case "retries-exhausted":
+
+        return new AccessNetworkError("The UniFi Access controller could not be reached after exhausting retries.", { cause: error, code: failure.code });
+
+      /* The peer's certificate failed the platform's verification, so the failure names the listener it came from rather than reporting an unreachable host. Which
+       * listener that is comes from the identity this transport was built with, because each identity addresses exactly one of them.
+       */
+      case "certificate":
+
+        return new AccessCertificateError({ cause: error, host: this.#host, identity: this.#identity });
+
+      // Everything else is a connect, DNS, or socket failure. The aborted kind answers only a signal handed to the classifier, and this translation hands it none, so
+      // it is listed here for the union to stay exhaustive rather than because a request can reach it.
+      case "aborted":
+      case "dns":
+      case "refused":
+      case "reset":
+      case "transport":
+
+        return new AccessNetworkError("A network error occurred communicating with the UniFi Access controller.", { cause: error, code: failure.code });
+
+      default:
+
+        // Exhaustiveness guard. A new kind joining the union without a case above stops `failure` being `never` here, and this fails to compile.
+        return assertNever(failure);
     }
-
-    // The retry interceptor exhausted its attempts without a usable response.
-    if(error instanceof errors.RequestRetryError) {
-
-      return new AccessNetworkError("The UniFi Access controller could not be reached after exhausting retries.", { cause: error });
-    }
-
-    /* A connect-phase timeout (distinct from our request deadline) - surface it as a timeout, carrying the elapsed time. The arm is reached when a caller's `timeout`
-     * option exceeds undici's own ten-second connect timer, which then bounds the connect phase and wins. It is also reached by a request queued behind a connection
-     * attempt a settled request left running, when that attempt's ten-second timer fires before the queued request's own deadline: a failed connect fails every
-     * request queued on that client, and undici's retry interceptor does not retry UND_ERR_CONNECT_TIMEOUT, so the connect timer's error reaches the queued request.
-     */
-    if(error instanceof errors.ConnectTimeoutError) {
-
-      return new AccessTimeoutError("The connection to the UniFi Access controller timed out.", { cause: error, elapsedMs });
-    }
-
-    /* The peer's certificate failed the platform's verification, so the failure names the listener it came from rather than reporting an unreachable host. Which
-     * listener that is comes from the identity this transport was built with, because each identity addresses exactly one of them.
-     */
-    if(isCertificateVerificationFailure(error)) {
-
-      return new AccessCertificateError({ cause: error, host: this.#host, identity: this.#identity });
-    }
-
-    // Everything else is a connect/DNS/socket failure; AccessNetworkError lifts the errno from the cause chain.
-    return new AccessNetworkError("A network error occurred communicating with the UniFi Access controller.", { cause: error });
   }
 
   /* Publish the request:end diagnostic when anyone is listening. Centralized so the success and failure paths emit the same shape, and the controller host is

@@ -20,4 +20,4 @@ List visitors. A `keyword` prefix-matches the first and last name, and disables 
 | <a id="keyword"></a> `keyword?` | `string` | - |
 | <a id="pagenum"></a> `pageNum?` | `number` | [`AccessOfficialPageOptions`](AccessOfficialPageOptions.md).[`pageNum`](AccessOfficialPageOptions.md#pagenum) |
 | <a id="pagesize"></a> `pageSize?` | `number` | [`AccessOfficialPageOptions`](AccessOfficialPageOptions.md).[`pageSize`](AccessOfficialPageOptions.md#pagesize) |
-| <a id="status"></a> `status?` | `2` \| `1` \| `3` \| `5` \| `6` \| `4` | - |
+| <a id="status"></a> `status?` | `1` \| `3` \| `5` \| `2` \| `6` \| `4` | - |

@@ -68,16 +68,19 @@ export class AccessThrottledError extends RecoverableError {
 }
 
 /**
- * Our own request deadline elapsed before the controller responded. Distinct from {@link AccessAbortedError}: this fires when the library's own request deadline wins the
- * race, whereas an aborted error fires when the caller's signal wins. The transport tells the two apart by the identity of the reason the failure carries - the reason of
- * its own deadline signal names a timeout, and the reason of the caller's signal names a cancellation - so the class states which signal fired first rather than which
- * one happens to be aborted by the time the failure is classified.
+ * The controller did not answer in time. The request path raises it when the library's own request deadline elapses, when the connection attempt times out, and
+ * when the controller stops responding before its reply is complete; the notification socket raises it when its connection times out.
+ *
+ * Distinct from {@link AccessAbortedError}: the deadline raises this when the library's own request deadline wins the race, whereas an aborted error fires when the
+ * caller's signal wins. The transport tells the two apart by the identity of the reason the failure carries - the reason of its own deadline signal names a timeout,
+ * and the reason of the caller's signal names a cancellation - so the class states which signal fired first rather than which one happens to be aborted by the time
+ * the failure is classified.
  *
  * @category Errors
  */
 export class AccessTimeoutError extends RecoverableError {
 
-  /** Milliseconds elapsed between dispatch and the deadline firing. */
+  /** Milliseconds elapsed from the start of the request, or of the notification socket's connection attempt, to the timeout. */
   readonly elapsedMs: number;
 
   constructor(message: string, options: { cause?: unknown; elapsedMs: number }) {
@@ -91,7 +94,8 @@ export class AccessTimeoutError extends RecoverableError {
 /**
  * A connect, DNS, TLS, or socket-level failure reaching the controller. The originating Node `ErrnoException` is preserved on the `cause` chain (the shape undici raises
  * as `TypeError("fetch failed", { cause: errnoError })`); `code` lifts the errno string out for convenient branching. The transport reports a pool reset under the
- * request through this class as well.
+ * request through this class as well. A failure that is a timeout - a connection attempt that ran out of time, or a controller that stopped responding before its
+ * reply was complete - reports as {@link AccessTimeoutError} instead.
  *
  * @category Errors
  */
@@ -498,11 +502,47 @@ export function assertNever(value: never): never {
   throw new AccessProtocolError("Encountered an unhandled variant in an exhaustive switch: " + detail + ".");
 }
 
-/* How far below the value that was caught the rendering descends. Real chains are short - a client wraps a transport failure, the transport wraps a socket
- * failure - and the bound is what makes the descent terminate at all: a chain that refers back to itself simply exhausts it, so no cycle bookkeeping has to
- * exist. Counted in descents, so the value handed in is depth zero and this many links below it are still read.
+/* How far below the value that was caught any reader of a `cause` chain descends. Real chains are short - a client wraps a transport failure, the transport wraps
+ * a socket failure - and the bound is what makes the descent terminate at all: a chain that refers back to itself simply exhausts it, so no cycle bookkeeping has
+ * to exist. Counted in descents, so the value handed in is depth zero and this many links below it are still read.
  */
 const CAUSE_CHAIN_DEPTH = 8;
+
+/**
+ * Yield a thrown value and then each link beneath it down its `cause` chain, ending at a link that carries no further cause or at the depth bound.
+ *
+ * A wrapped failure presents what a reader needs below what it caught, so every reader asking such a question descends the same chain, and the descent lives here
+ * once: {@link formatErrorChain} takes the sentences from each link, and the transport failure classifier takes the codes and the cancellation markers. The library
+ * takes no runtime dependency on homebridge-plugin-utils, so the descent its `causeChain` states is implemented here as well, and the differential tests that hold
+ * each reader to homebridge-plugin-utils' own are what keep the two descents one rule.
+ *
+ * Every link is yielded verbatim, including a final one that is not an object, and what a link means is left to the reader. It is not published from the library's
+ * public surface, because its readers are the library's own.
+ *
+ * @param error - Whatever was thrown or rejected. Any value at all can be handed to it, including values that are not errors.
+ *
+ * @returns A generator yielding the value handed in, then each `cause` beneath it.
+ *
+ * @category Utilities
+ */
+export function *causeChain(error: unknown): Generator<unknown, void, undefined> {
+
+  let link: unknown = error;
+
+  for(let depth = 0; depth <= CAUSE_CHAIN_DEPTH; depth++) {
+
+    yield link;
+
+    // A value that is not an object holds nothing beneath it, and neither does one carrying no `cause` key at all, so either ends the descent. A key present with
+    // the value `undefined` is a link like any other: the descent yields it, finds nothing beneath it, and ends on the following pass.
+    if((typeof link !== "object") || (link === null) || !("cause" in link)) {
+
+      return;
+    }
+
+    link = link.cause;
+  }
+}
 
 /**
  * Render an arbitrary thrown value as clean text, carrying every further diagnosis its `cause` chain holds. An `Error` surfaces its `message`; anything else is
@@ -534,21 +574,11 @@ const CAUSE_CHAIN_DEPTH = 8;
 export function formatErrorChain(error: unknown): string {
 
   let rendered = ((error instanceof Error) ? error.message : String(error)).replace(/\.$/, "");
-  let link: unknown = error;
 
   /* Each link below the one that was caught may hold the diagnosis the wrapper's own sentence lacks. An empty message is contained in every string, so it falls
    * out of the containment rule with no case of its own.
    */
-  for(let depth = 0; depth < CAUSE_CHAIN_DEPTH; depth++) {
-
-    // A value that is not an object holds nothing beneath it, and neither does one carrying no `cause` key at all, so either ends the descent. A key present
-    // with the value `undefined` is a link like any other: the descent takes it, finds no error to render, and ends on the following pass.
-    if((typeof link !== "object") || (link === null) || !("cause" in link)) {
-
-      break;
-    }
-
-    link = link.cause;
+  for(const link of causeChain(error).drop(1)) {
 
     if(!(link instanceof Error)) {
 
@@ -566,45 +596,6 @@ export function formatErrorChain(error: unknown): string {
   }
 
   return rendered;
-}
-
-/* The verdicts the platform's certificate verification can return, each spelled as Node spells it on the error's `code`: the OpenSSL X509 verification family Node
- * maps by name, together with the hostname check Node runs itself.
- *
- * Neighbors from that same table are left out on purpose. `OUT_OF_MEM` is the verifier running out of room rather than a verdict about the certificate, so a
- * failure carrying it tells a user nothing that installing a certificate would fix. `CERT_DIR`, `CERT_FILE`, `CERT_STORE`, `CERT_ALTNAME_FORMAT`,
- * `UNABLE_TO_CHECK_GENERATOR`, and `UNABLE_TO_PIPE` are not verification verdicts at all - they are store locations and unrelated failures that share the
- * library's naming.
- */
-const CERTIFICATE_VERIFICATION_CODES: ReadonlySet<string> = new Set([ "CERT_CHAIN_TOO_LONG", "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID", "CERT_REJECTED",
-  "CERT_REVOKED", "CERT_SIGNATURE_FAILURE", "CERT_UNTRUSTED", "CRL_HAS_EXPIRED", "CRL_NOT_YET_VALID", "CRL_SIGNATURE_FAILURE", "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "ERR_TLS_CERT_ALTNAME_INVALID", "ERROR_IN_CERT_NOT_AFTER_FIELD", "ERROR_IN_CERT_NOT_BEFORE_FIELD", "ERROR_IN_CRL_LAST_UPDATE_FIELD",
-  "ERROR_IN_CRL_NEXT_UPDATE_FIELD", "HOSTNAME_MISMATCH", "INVALID_CA", "INVALID_PURPOSE", "PATH_LENGTH_EXCEEDED", "SELF_SIGNED_CERT_IN_CHAIN",
-  "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY", "UNABLE_TO_DECRYPT_CERT_SIGNATURE", "UNABLE_TO_DECRYPT_CRL_SIGNATURE", "UNABLE_TO_GET_CRL",
-  "UNABLE_TO_GET_ISSUER_CERT", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ]);
-
-/**
- * Whether a failure is the platform's certificate verification refusing the peer. The verdict is read from the errno the cause chain carries, which is where both
- * channels put it: the request path wraps the platform's error as undici hands it over, and the notification socket reads the dial's own error from the connector
- * that vended the socket.
- *
- * What this answers is a verdict about a certificate and nothing else. A connection that never reached a handshake carries a different errno and answers false,
- * which is what keeps the generic network sentence serving every failure that is not about a certificate.
- *
- * It is deliberately not published from the library's public surface. Its consumers are the transport sites that raise {@link AccessCertificateError} from it,
- * and a consumer branches on that class - which carries the listener and the address the bare question could not.
- *
- * @param error - The error value to classify. Typed `unknown` because catch bindings, socket callbacks, and rejected promises all deliver untyped values.
- *
- * @returns `true` when the platform's certificate verification refused the peer; `false` for every other failure, and for an error carrying no errno at all.
- *
- * @category Utilities
- */
-export function isCertificateVerificationFailure(error: unknown): boolean {
-
-  const code = resolveErrnoCause(error)?.code;
-
-  return (code !== undefined) && CERTIFICATE_VERIFICATION_CODES.has(code);
 }
 
 /**

@@ -6,8 +6,8 @@
  */
 import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
   AccessCertificateError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError, AccessThrottledError,
-  AccessTimeoutError, FatalError, RecoverableError, assertNever, formatErrorChain, isCertificateVerificationFailure, isExpectedWsDisconnect, isIdentityRefusal,
-  isPrivilegeRefusal, isSignInRefusal, resolveErrnoCause } from "./errors.ts";
+  AccessTimeoutError, FatalError, RecoverableError, assertNever, causeChain, formatErrorChain, isExpectedWsDisconnect, isIdentityRefusal, isPrivilegeRefusal,
+  isSignInRefusal, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { errnoError } from "./testing.helpers.ts";
@@ -227,28 +227,6 @@ describe("AccessCertificateError", () => {
       identity: "credentials" });
 
     assert.ok(error.message.includes(": self-signed certificate ("), "the reason reads as one clause rather than carrying the platform's whitespace");
-  });
-});
-
-describe("isCertificateVerificationFailure", () => {
-
-  test("reads the verifier's verdict off the errno, bare or one hop down the cause chain", () => {
-
-    assert.equal(isCertificateVerificationFailure(errnoError("unable to verify the first certificate", "UNABLE_TO_VERIFY_LEAF_SIGNATURE")), true);
-    assert.equal(isCertificateVerificationFailure(errnoError("hostname mismatch", "ERR_TLS_CERT_ALTNAME_INVALID")), true,
-      "the hostname check Node runs itself is a verdict about the certificate too");
-
-    const expired = errnoError("certificate has expired", "CERT_HAS_EXPIRED");
-
-    assert.equal(isCertificateVerificationFailure(new Error("fetch failed", { cause: expired })), true, "the wrapped shape undici raises resolves as well");
-  });
-
-  test("answers false for every failure that is not a verdict about a certificate", () => {
-
-    assert.equal(isCertificateVerificationFailure(errnoError("connect ECONNREFUSED", "ECONNREFUSED")), false, "a host that refused presented nothing");
-    assert.equal(isCertificateVerificationFailure(errnoError("out of memory", "OUT_OF_MEM")), false, "the verifier running out of room is not a verdict");
-    assert.equal(isCertificateVerificationFailure(new TypeError("terminated")), false, "a content-free socket failure carries no errno at all");
-    assert.equal(isCertificateVerificationFailure(undefined), false);
   });
 });
 
@@ -525,6 +503,46 @@ describe("assertNever", () => {
 
       return true;
     });
+  });
+});
+
+describe("causeChain", () => {
+
+  test("yields the value handed in and then each cause beneath it, nearest first", () => {
+
+    const errno = errnoError("connect ECONNREFUSED", "ECONNREFUSED");
+    const middle = new Error("the dial failed.", { cause: errno });
+    const outer = new TypeError("fetch failed", { cause: middle });
+
+    assert.deepEqual([...causeChain(outer)], [ outer, middle, errno ], "a link carrying no cause key is the last one yielded");
+    assert.deepEqual([...causeChain("refused")], ["refused"], "a value that is not an object is yielded and holds nothing beneath it");
+
+    // A cause that is not an object is still a link: it is yielded verbatim, and what it means is left to the reader.
+    assert.deepEqual([...causeChain(new Error("wrapped", { cause: "refused" }))].slice(1), ["refused"]);
+  });
+
+  test("stops at the depth bound", () => {
+
+    const links: Error[] = [new Error("level 11.")];
+
+    for(let level = 10; level >= 0; level--) {
+
+      links.unshift(new Error("level " + level.toString() + ".", { cause: links[0] }));
+    }
+
+    // The value handed in is depth zero, and the bound's worth of links below it are still yielded...the link one past the bound, and everything beneath it, is not.
+    assert.deepEqual([...causeChain(links[0])], links.slice(0, 9));
+  });
+
+  test("terminates on a chain that refers back to itself", () => {
+
+    const outer = new Error("Unable to fetch the bootstrap.");
+    const inner = new Error("the controller refused the request.", { cause: outer });
+
+    outer.cause = inner;
+
+    // The bound is what ends the descent, so the two links alternate until it is exhausted rather than the walk running forever.
+    assert.deepEqual([...causeChain(outer)], [ outer, inner, outer, inner, outer, inner, outer, inner, outer ]);
   });
 });
 

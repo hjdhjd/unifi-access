@@ -28,8 +28,8 @@
  * @module AccessEventStream
  */
 import { ACCESS_API_PATH_PREFIX, ACCESS_EVENTS_HEARTBEAT_TIMEOUT } from "../settings.ts";
-import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessStallError, assertNever,
-  isCertificateVerificationFailure, isExpectedWsDisconnect } from "../errors.ts";
+import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessStallError, AccessTimeoutError, assertNever,
+  isExpectedWsDisconnect } from "../errors.ts";
 import type { AccessError, AccessIdentityLeg } from "../errors.ts";
 import type { AccessEventPacket, Nullable } from "../types/index.ts";
 import type { AccessEventsClosedPayload, AccessEventsPacketPayload } from "../diagnostics.ts";
@@ -43,6 +43,7 @@ import { EventBus } from "../event-bus.ts";
 import type { OwnedConnector } from "./connector.ts";
 import type { StreamOptions } from "../event-bus.ts";
 import { channels } from "../diagnostics.ts";
+import { classifyTransportError } from "./failure.ts";
 import { createOwnedConnector } from "./connector.ts";
 import { noopLog } from "../logging.ts";
 import { toText } from "./ws.ts";
@@ -181,6 +182,10 @@ export class EventStream implements AsyncDisposable {
   readonly #address: string;
   readonly #bus = new EventBus<EventStreamEvents>();
   readonly #clock: Clock;
+  /* When the connection attempt began, on the injected clock, which is what a connection that times out measures its elapsed time from. It is a stamp of its own
+   * rather than the watchdog's liveness stamp, which every frame moves, so the measure means the same thing whatever phase the stream has reached.
+   */
+  readonly #connectStartedAt: number;
   // One AbortController governs the watchdog loop and the binding to the caller's signal, so a single abort() ends them together. The socket's own listeners are
   // not among what it governs: the stream holds them and takes them off itself.
   readonly #controller = new AbortController();
@@ -246,7 +251,11 @@ export class EventStream implements AsyncDisposable {
      * reconnections and a dead connection is detected by TCP keepalive probes, and certificate verification follows `verifyTls`, which is off unless the caller
      * asks for it because controllers ship self-signed certificates. undici's WebSocket structurally satisfies the minimal surface we model, so it assigns
      * directly - no cast.
+     *
+     * Building the socket is where the connection attempt begins, whichever branch builds it, so the attempt's start is stamped immediately ahead of it.
      */
+    this.#connectStartedAt = this.#clock.now();
+
     if(options.webSocket !== undefined) {
 
       this.#owned = null;
@@ -319,9 +328,9 @@ export class EventStream implements AsyncDisposable {
    *
    * @returns A connected {@link EventStream}.
    *
-   * @throws The failure that ended the connect: the fault the stream detected before it opened (a socket error's {@link AccessNetworkError} or the watchdog's
-   *   {@link AccessStallError}), a generic {@link AccessNetworkError} when the peer closes before opening, or {@link AccessAbortedError} when the caller's signal
-   *   aborts the connect.
+   * @throws The failure that ended the connect: the fault the stream detected before it opened (a socket error's {@link AccessNetworkError}, an
+   *   {@link AccessTimeoutError} when the connection attempt timed out, or the watchdog's {@link AccessStallError}), a generic {@link AccessNetworkError} when the
+   *   peer closes before opening, or {@link AccessAbortedError} when the caller's signal aborts the connect.
    */
   static async connect(options: EventStreamOptions): Promise<EventStream> {
 
@@ -334,9 +343,9 @@ export class EventStream implements AsyncDisposable {
 
   /**
    * The open handshake. Resolves when the WebSocket opens, and rejects with whatever ended the connect: the fault the stream detected before it opened (a socket
-   * error's {@link AccessNetworkError} or the watchdog's {@link AccessStallError}), a generic {@link AccessNetworkError} when the peer closes before opening, or
-   * an {@link AccessAbortedError} when the caller's signal aborts first. The composition root awaits this *after* attaching its bridge subscription, so no frame
-   * is lost between open and subscription.
+   * error's {@link AccessNetworkError}, an {@link AccessTimeoutError} when the connection attempt timed out, or the watchdog's {@link AccessStallError}), a generic
+   * {@link AccessNetworkError} when the peer closes before opening, or an {@link AccessAbortedError} when the caller's signal aborts first. The composition root
+   * awaits this *after* attaching its bridge subscription, so no frame is lost between open and subscription.
    */
   get opened(): Promise<void> {
 
@@ -557,10 +566,46 @@ export class EventStream implements AsyncDisposable {
       this.#log.error("The UniFi Access realtime notification API reported an error.", cause ?? event.message);
     }
 
-    const fault = isCertificateVerificationFailure(cause) ? new AccessCertificateError({ cause, host: this.#address, identity: this.#identity }) :
-      new AccessNetworkError("The UniFi Access realtime notification API connection failed.", { cause });
+    this.#shutdown({ error: this.#toAccessError(cause), kind: "fault" }, 1006, "the notification stream connection errored");
+  }
 
-    this.#shutdown({ error: fault, kind: "fault" }, 1006, "the notification stream connection errored");
+  /* What a socket error is reported as. The failure is sorted by the transport failure classifier, the local mirror of homebridge-plugin-utils' taxonomy that the
+   * request path sorts its failures by as well, so a failure reads as the same typed error whichever channel met it. A connection that timed out measures its
+   * elapsed time from the attempt's own start stamp, and a generic network failure carries the code the classifier read off the chain, so the error's public `code`
+   * and its kind are one reading of the same chain.
+   */
+  #toAccessError(cause: unknown): AccessNetworkError | AccessTimeoutError {
+
+    const failure = classifyTransportError(cause);
+
+    switch(failure.kind) {
+
+      // The listener's certificate failed the platform's verification, so the failure names the listener and the address dialed rather than an unreachable host.
+      case "certificate":
+
+        return new AccessCertificateError({ cause, host: this.#address, identity: this.#identity });
+
+      case "connect-timeout":
+      case "timeout":
+
+        return new AccessTimeoutError("The UniFi Access realtime notification API connection timed out.",
+          { cause, elapsedMs: this.#clock.now() - this.#connectStartedAt });
+
+      case "aborted":
+      case "destroyed":
+      case "dns":
+      case "refused":
+      case "reset":
+      case "retries-exhausted":
+      case "transport":
+
+        return new AccessNetworkError("The UniFi Access realtime notification API connection failed.", { cause, code: failure.code });
+
+      default:
+
+        // Exhaustiveness guard. A new kind joining the union without a case above stops `failure` being `never` here, and this fails to compile.
+        return assertNever(failure);
+    }
   }
 
   // The single teardown. Guarded so it runs once whether triggered by the socket's close event, an error, the watchdog, or an explicit close. Detaches the socket's

@@ -501,6 +501,50 @@ describe("Transport", () => {
       await assert.rejects(transport.send(url(host, "/x")),
         (error: unknown) => (error instanceof AccessTimeoutError) && (error.cause === connectTimeout) && (error.elapsedMs >= 0));
     });
+
+    test("a deadline that fires ahead of a caller's cancel surfaces as AccessTimeoutError", async () => {
+
+      const { clock, host, pool, transport } = makeMockTransport();
+      const controller = new AbortController();
+
+      pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
+
+      const pending = transport.send(url(host, "/slow"), { signal: controller.signal });
+
+      await settle();
+
+      /* The deadline fires first and settles the request with its own reason, and the caller cancels in the same turn, before that rejection has been translated -
+       * so the caller's signal is already aborted by the time the translation runs. Identity names the deadline, the signal that actually fired first, where a
+       * test of which signal is aborted would name the caller.
+       */
+      clock.advance(ACCESS_API_TIMEOUT);
+      controller.abort();
+
+      await assert.rejects(pending, (error: unknown) => (error instanceof AccessTimeoutError) && (error.elapsedMs === ACCESS_API_TIMEOUT));
+    });
+
+    test("a response whose headers stop arriving surfaces as AccessTimeoutError", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const stalled = new errors.HeadersTimeoutError();
+
+      // undici's own response timer, which a request meets when its deadline runs past that timer or when an injected dispatcher brings timers of its own.
+      pool.intercept({ method: "GET", path: "/x" }).replyWithError(stalled);
+
+      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => (error instanceof AccessTimeoutError) && (error.cause === stalled) &&
+        error.message.includes("stopped responding"));
+    });
+
+    test("a response whose body stops arriving surfaces as AccessTimeoutError", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const stalled = new errors.BodyTimeoutError();
+
+      pool.intercept({ method: "GET", path: "/x" }).replyWithError(stalled);
+
+      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => (error instanceof AccessTimeoutError) && (error.cause === stalled) &&
+        error.message.includes("stopped responding"));
+    });
   });
 
   /* What a request settles as, and what happens to its connection attempt, when something ends it while that attempt is still in flight.

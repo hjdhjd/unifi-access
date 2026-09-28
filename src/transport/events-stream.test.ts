@@ -7,14 +7,16 @@
  * The frames these tests feed are text, because the Access notification wire is JSON text. That is the detail a port of a binary-protocol stream gets wrong
  * silently - a normalizer written for bytes discards every string frame and the stream simply goes quiet - so the ordinary decode cases here drive strings.
  */
-import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessStallError, formatErrorChain } from "../errors.ts";
+import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessStallError, AccessTimeoutError,
+  formatErrorChain } from "../errors.ts";
 import type { AccessEventsClosedPayload, AccessEventsPacketPayload } from "../diagnostics.ts";
+import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, createSilentLoopback, elapsedSince, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
 import { EventStream, HEARTBEAT_FRAME } from "./events-stream.ts";
 import { FakeWebSocket, createLoopbackServer } from "./events-stream.helpers.ts";
 import { TestClock, assertNoUnhandledRejections, capturingLog, settle, silentLog, waitUntil } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
-import { settleUntil, subscribeTo } from "../testing.helpers.ts";
+import { errnoError, present, settleUntil, subscribeTo } from "../testing.helpers.ts";
 import { ACCESS_EVENTS_HEARTBEAT_TIMEOUT } from "../settings.ts";
 import type { AccessEventPacket } from "../types/index.ts";
 import type { AccessLogging } from "../logging.ts";
@@ -25,6 +27,7 @@ import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { createServer as createTcpServer } from "node:net";
 import { findPacket } from "../protocol/capture.helpers.ts";
+import tls from "node:tls";
 
 const HOST = "10.0.0.1";
 
@@ -1521,6 +1524,50 @@ describe("EventStream", () => {
       assert.ok(failure instanceof AccessNetworkError, "a refused dial is a reachability failure");
       assert.ok(!(failure instanceof AccessCertificateError), "and nothing about a certificate, since no handshake was reached to present one");
       assert.equal(failure.code, "ECONNREFUSED");
+
+      await stream.close();
+    });
+
+    test("a connection attempt that times out reaches the caller as AccessTimeoutError measured on the injected clock", async (t) => {
+
+      await using peer = await createSilentLoopback();
+
+      const clock = new TestClock();
+      const dials: TLSSocket[] = [];
+      const dial = tls.connect;
+      const elapsedMs = 2500;
+      const log = capturingLog();
+
+      /* undici's own connect timer runs on real time, ten seconds of it, so this row reaches a connect timeout by undici's other route to one. The platform's dial
+       * is wrapped for this test alone, which hands the row the socket the owned connector vended, and destroying that socket with the aggregate `ETIMEDOUT` the
+       * platform raises when every attempted address times out is what undici's connect normalization turns into its `ConnectTimeoutError`. The failure therefore
+       * reaches the stream exactly as a real one does, through the connector's record of the dial.
+       */
+      t.mock.method(tls, "connect", (options: ConnectionOptions): TLSSocket => {
+
+        const socket = dial(options);
+
+        dials.push(socket);
+
+        return socket;
+      });
+
+      const stream = new EventStream({ clock, host: peer.host, log });
+
+      await peer.connection(0);
+      clock.advance(elapsedMs);
+
+      present(dials[0], "the dial the owned connector vended").destroy(Object.assign(new AggregateError([errnoError("connect ETIMEDOUT " + peer.host,
+        "ETIMEDOUT")], "connect ETIMEDOUT"), { code: "ETIMEDOUT" }));
+
+      const failure = await stream.opened.catch((error: unknown) => error);
+
+      assert.ok(failure instanceof AccessTimeoutError, "a connection attempt that timed out reads as a timeout, as it does on the request path");
+      assert.equal(failure.elapsedMs, elapsedMs, "the elapsed time is the injected clock's own measure from the start of the attempt");
+      assert.ok(failure.cause instanceof Error, "the cause is the dial's own failure");
+      assert.equal(failure.cause.name, "ConnectTimeoutError", "undici's normalization is what the stream read, from the connector's record of the dial");
+      assert.equal((failure.cause as NodeJS.ErrnoException).code, "UND_ERR_CONNECT_TIMEOUT");
+      assert.equal(log.entries.some((entry) => entry.level === "error"), false, "a failure before the open leaves no error-level line from the stream itself");
 
       await stream.close();
     });
