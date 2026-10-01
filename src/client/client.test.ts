@@ -770,6 +770,35 @@ describe("AccessClient.connect", () => {
       assert.deepEqual(raw, [ "access.data.device.update", "access.base.info" ]);
     });
 
+    test("message rejections reach the client without degrading the connection", async () => {
+
+      const { agent, pool } = mockController();
+
+      interceptLogin(pool);
+      interceptPass(pool);
+
+      const captured = await connectCapturing(agent);
+
+      await using client = captured.client;
+      const rejected: string[] = [];
+      const raw: unknown[] = [];
+      const typed: string[] = [];
+
+      using rejection = client.on("packetRejected", (info): void => { rejected.push(info.reason); });
+      using rawPackets = client.on("rawPacket", (packet): void => { raw.push(packet.data); });
+      using packets = client.on("packet", (event): void => { typed.push(event.kind); });
+
+      captured.ws.emitMessage(JSON.stringify({ data: "wallet-status", event: "access.data.wallet_status.update", "event_object_id": "wallet" }));
+      captured.ws.emitMessage("{bad json containing sensitive content");
+      captured.ws.emitMessage(JSON.stringify({ data: null, event: "missing-identifier" }));
+      captured.ws.emitMessage(deviceFrame(HUB));
+
+      assert.deepEqual(rejected, [ "invalidJson", "invalidEnvelope" ]);
+      assert.equal(raw[0], "wallet-status");
+      assert.deepEqual(typed, ["deviceChanged"]);
+      assert.equal(client.connection.state, "healthy");
+    });
+
     test("the typed firehose ends quietly on the caller's own abort", async () => {
 
       const { agent, pool } = mockController();

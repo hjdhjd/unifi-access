@@ -126,6 +126,7 @@ export interface ConnectionMonitorOptions {
   eventStreamFactory: (signal?: AbortSignal) => EventStream;
   log?: AccessLogging;
   packetSink: (event: AccessWireEvent) => void;
+  packetRejectedSink?: (info: { reason: "invalidEnvelope" | "invalidJson" }) => void;
   rawPacketSink: (packet: AccessEventPacket) => void;
   reBootstrap: (signal?: AbortSignal) => Promise<void>;
   refreshAdminStatus: (signal?: AbortSignal) => Promise<Nullable<boolean>>;
@@ -156,6 +157,7 @@ class ManagedEventStream implements AsyncDisposable {
   readonly #onError: (error: AccessError) => void;
   readonly #packetSink: (event: AccessWireEvent) => void;
   readonly #rawPacketSink: (packet: AccessEventPacket) => void;
+  readonly #packetRejectedSink: (info: { reason: "invalidEnvelope" | "invalidJson" }) => void;
 
   // The current inner stream and the bridges into it. Both are replaced together on a relaunch, so they can never describe different sockets, and neither exists
   // until open() builds the first one.
@@ -166,6 +168,7 @@ class ManagedEventStream implements AsyncDisposable {
     factory: (signal?: AbortSignal) => EventStream;
     onError: (error: AccessError) => void;
     packetSink: (event: AccessWireEvent) => void;
+    packetRejectedSink?: (info: { reason: "invalidEnvelope" | "invalidJson" }) => void;
     rawPacketSink: (packet: AccessEventPacket) => void;
   }) {
 
@@ -173,6 +176,7 @@ class ManagedEventStream implements AsyncDisposable {
     this.#onError = options.onError;
     this.#packetSink = options.packetSink;
     this.#rawPacketSink = options.rawPacketSink;
+    this.#packetRejectedSink = options.packetRejectedSink ?? ((): void => undefined);
   }
 
   /**
@@ -215,7 +219,8 @@ class ManagedEventStream implements AsyncDisposable {
     const stream = this.#factory(signal);
 
     this.#subscriptions = [ stream.on("packet", (event): void => this.#packetSink(event)),
-      stream.on("rawPacket", (packet): void => this.#rawPacketSink(packet)), stream.on("error", (error): void => this.#onError(error)) ];
+      stream.on("rawPacket", (packet): void => this.#rawPacketSink(packet)),
+      stream.on("packetRejected", (info): void => this.#packetRejectedSink(info)), stream.on("error", (error): void => this.#onError(error)) ];
 
     return stream;
   }
@@ -295,6 +300,7 @@ export class ConnectionMonitor {
       factory: options.eventStreamFactory,
       onError: (error: AccessError): void => this.#onStreamFault(error),
       packetSink: options.packetSink,
+      ...((options.packetRejectedSink !== undefined) && { packetRejectedSink: options.packetRejectedSink }),
       rawPacketSink: options.rawPacketSink
     });
 

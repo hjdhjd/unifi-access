@@ -11,11 +11,23 @@
 import type { AccessBootstrapConfig, AccessDeviceConfig, AccessDeviceEntryConfig, AccessEventPacket } from "../types/index.ts";
 import { accessEventPackets2024Fixture, accessEventPacketsDoorStateFixture, accessEventPacketsFixture, accessEventPacketsHistoricalFixture,
   accessEventPacketsInteractiveFixture, accessEventPacketsOfficialSocketFixture, accessEventPacketsTamperFixture } from "./events.fixtures.ts";
+import type { AccessKnownJsonValue } from "../types/common.ts";
 import type { AccessTypedEvent } from "./events.ts";
 import { accessBootstrap2026Fixture } from "./topology.fixtures.ts";
 import assert from "node:assert/strict";
 import { classifyPacket } from "./events.ts";
+import { isRecord } from "../json.ts";
 import { topologyDevices } from "../testing.helpers.ts";
+
+// The existing committed corpus carries only object/null payloads. Keep that narrower fact local to fixture helpers, not the public wire envelope.
+export type CapturedPacket = AccessEventPacket & { data: Record<string, AccessKnownJsonValue> | null };
+
+function capturedPacket(packet: AccessEventPacket): CapturedPacket {
+
+  assert.ok((packet.data === null) || isRecord(packet.data), "this fixture corpus carries only object/null payloads");
+
+  return packet as CapturedPacket;
+}
 
 // The real hardware the committed captures carry, by identity: a UA Ultra, a UA Hub and one of its readers, a UA Hub Door Mini, and the Enterprise Access Hub of
 // the second document.
@@ -103,17 +115,17 @@ export const documentWith = (document: AccessBootstrapConfig, device: AccessDevi
 /* The whole captured corpus, in the order the groups were accreted. findPacket below returns the first match, so a newly accreted group spreads last: an event name
  * that more than one window carries then still resolves to the specimen the tests written before that window relied on.
  */
-export const capturedPackets: readonly AccessEventPacket[] = [ ...accessEventPacketsFixture, ...accessEventPackets2024Fixture,
+export const capturedPackets: readonly CapturedPacket[] = [ ...accessEventPacketsFixture, ...accessEventPackets2024Fixture,
   ...accessEventPacketsHistoricalFixture, ...accessEventPacketsInteractiveFixture, ...accessEventPacketsDoorStateFixture,
-  ...accessEventPacketsOfficialSocketFixture, ...accessEventPacketsTamperFixture ];
+  ...accessEventPacketsOfficialSocketFixture, ...accessEventPacketsTamperFixture ].map(capturedPacket);
 
 /* Find the one captured packet a test names, failing loudly rather than silently skipping if the corpus ever stops carrying it. The search covers the whole capture
  * by default; a caller that means one capture window names it through the corpus option, which is how a test says which window its specimen came out of.
  */
-export function findPacket(predicate: (packet: AccessEventPacket) => boolean, description: string,
-  options: { corpus?: readonly AccessEventPacket[] } = {}): AccessEventPacket {
+export function findPacket(predicate: (packet: CapturedPacket) => boolean, description: string,
+  options: { corpus?: readonly AccessEventPacket[] } = {}): CapturedPacket {
 
-  const packet = (options.corpus ?? capturedPackets).find(predicate);
+  const packet = (options.corpus ?? capturedPackets).map(capturedPacket).find(predicate);
 
   assert.ok(packet, "the fixture corpus should carry " + description);
 

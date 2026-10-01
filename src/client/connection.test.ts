@@ -334,6 +334,29 @@ function unopeningStream(clock: TestClock, signal?: AbortSignal): EventStream {
 
 describe("ConnectionMonitor", () => {
 
+  test("unmodeled scalar notifications and bad frames do not trigger recovery", async () => {
+
+    const rig = await harness();
+
+    await using monitor = rig.monitor;
+    const ws = rig.streams[0];
+
+    assert.ok(ws);
+    ws.emitMessage(JSON.stringify({ data: "status", event: "access.data.wallet_status.update", "event_object_id": "wallet" }));
+    ws.emitMessage("{not json");
+    ws.emitMessage(JSON.stringify({ data: null, event: "missing-identifier" }));
+    ws.emitMessage(JSON.stringify({ data: { channel: "test", "device_id": "reader" }, event: "access.remote_view", "event_object_id": "call" }));
+    await settle();
+
+    assert.equal(monitor.state, "healthy");
+    assert.equal(rig.streams.length, 1);
+    assert.equal(rig.control.verifyCalls(), 0);
+    assert.equal(rig.control.reBootstrapCalls(), 0);
+    assert.equal(rig.events.transitions.length, 0);
+    assert.equal(rig.sunk[0]?.kind, "doorbellRing");
+    assert.equal(rig.rawSunk[0]?.data, "status");
+  });
+
   describe("initial state", () => {
 
     test("starts healthy once the notification stream opens", async () => {

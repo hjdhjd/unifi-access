@@ -14,10 +14,12 @@ state model and the firehose, and a consumer reading `client.state` inside a han
 
 `rawPacket` is the raw observability firehose: every well-formed frame the controller sent, emitted before classification, so it carries both the notifications
 the library does not model and the payload fields the translation drops. It is never dispatched into state.
+`packetRejected` reports invalid JSON or notification envelopes without treating an independently rejected message as a connection failure.
 
 ## Properties
 
 | Property | Type |
 | ------ | ------ |
 | <a id="packet"></a> `packet` | \[[`AccessWireEvent`](../type-aliases/AccessWireEvent.md)\] |
+| <a id="packetrejected"></a> `packetRejected` | \[\{ `reason`: `"invalidEnvelope"` \| `"invalidJson"`; \}\] |
 | <a id="rawpacket"></a> `rawPacket` | \[[`AccessEventPacketInterface`](AccessEventPacketInterface.md)\] |

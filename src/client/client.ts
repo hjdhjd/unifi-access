@@ -125,12 +125,14 @@ export type ConnectOptions = ConnectOptionsBase & ConnectIdentity;
  *
  * `rawPacket` is the raw observability firehose: every well-formed frame the controller sent, emitted before classification, so it carries both the notifications
  * the library does not model and the payload fields the translation drops. It is never dispatched into state.
+ * `packetRejected` reports invalid JSON or notification envelopes without treating an independently rejected message as a connection failure.
  *
  * @category Client
  */
 export interface AccessClientEvents {
 
   packet: [event: AccessWireEvent];
+  packetRejected: [info: { reason: "invalidEnvelope" | "invalidJson" }];
   rawPacket: [packet: AccessEventPacket];
 }
 
@@ -327,6 +329,7 @@ export class AccessClient implements AsyncDisposable {
       clock: parts.clock,
       eventStreamFactory: parts.eventStreamFactory,
       log: parts.log,
+      packetRejectedSink: (info): void => { this.#bus.emit("packetRejected", info); },
       packetSink,
       rawPacketSink,
       reBootstrap: parts.reBootstrap,

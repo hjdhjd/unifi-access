@@ -9,6 +9,7 @@ import { DEVICE_FIELD_EXCLUSIONS, DEVICE_FIELD_MAP, DOOR_STATE_FACT_GUARDS, LOCA
 import { capturedPackets, classifyAs, findPacket } from "./capture.helpers.ts";
 import { describe, test } from "node:test";
 import type { AccessEventPacket } from "../types/index.ts";
+import type { CapturedPacket } from "./capture.helpers.ts";
 import assert from "node:assert/strict";
 import { isRecord } from "../json.ts";
 
@@ -19,7 +20,7 @@ import { isRecord } from "../json.ts";
  * unrelated payloads, of which only the one naming a call is a cancellation. Re-deriving the expectation from each packet at runtime is what makes this table catch
  * a specimen that changes sides - a fixed kind would have to be edited into agreement with whatever the classifier did, which is the opposite of a check.
  */
-const EXPECTED_KIND: Readonly<Record<string, string | null | ((packet: AccessEventPacket) => string | null)>> = {
+const EXPECTED_KIND: Readonly<Record<string, string | null | ((packet: CapturedPacket) => string | null)>> = {
 
   "access.base.info": null,
   "access.data.camera.update": null,
@@ -80,7 +81,7 @@ function hasAdmissibleEntry(value: unknown): boolean {
 
 // A location carrier's `state` member completed with the door identity the envelope supplies, mirroring what the classifier does before it admits the entry: the
 // member carries every other field an entry holds but names no door, because the packet is already about one.
-function completedState(packet: AccessEventPacket): unknown {
+function completedState(packet: CapturedPacket): unknown {
 
   const state = packet.data?.["state"];
 
@@ -571,7 +572,7 @@ describe("the tamper alert", () => {
 
     const packet = findPacket((entry) => entry.event === "access.tamper_resistant", "the tamper alert specimen");
 
-    assert.equal(classifyPacket({ ...packet, data: withoutKey(packet.data ?? {}, "device") } as AccessEventPacket), null);
+    assert.equal(classifyPacket({ ...packet, data: withoutKey(packet.data ?? {}, "device") }), null);
 
     // A device object present but carrying no identity fails the same way, because the identity is the whole of what the guard requires.
     assert.equal(classifyPacket({ ...packet, data: { ...packet.data, "device": { "name": "Test Name 6" } } }), null);
@@ -672,6 +673,7 @@ describe("door-state classification", () => {
     Array.isArray(entry.data?.["location_states"]), "the Door Mini device update carrying door state");
   const entryOf = (packet: AccessEventPacket): Record<string, unknown> => {
 
+    assert.ok(isRecord(packet.data));
     const entry = (packet.data?.["location_states"] as Record<string, unknown>[])[0];
 
     assert.ok(entry, "the specimen should carry a door-state entry to build near-misses from");
@@ -679,7 +681,7 @@ describe("door-state classification", () => {
     return structuredClone(entry);
   };
 
-  const withStates = (states: unknown[]): AccessEventPacket => ({ ...deviceCarrier, data: { ...deviceCarrier.data, "location_states": states } }) as AccessEventPacket;
+  const withStates = (states: unknown[]): AccessEventPacket => ({ ...deviceCarrier, data: { ...deviceCarrier.data, "location_states": states } });
 
   test("a device update carrying door state classifies with its entry and its own device facet", () => {
 
@@ -944,6 +946,20 @@ describe("packets the classifier declines", () => {
 
 describe("isAccessEventPacket", () => {
 
+  test("accepts non-object JSON payloads without relaxing event-specific classification", () => {
+
+    const packet = findPacket((entry) => entry.event === "access.remote_view", "a ring");
+
+    for(const data of [ "wallet-status", 42, true, ["status"], null ]) {
+
+      const unmodeled = { ...packet, data, event: "access.data.wallet_status.update" };
+
+      assert.equal(isAccessEventPacket(unmodeled), true);
+      assert.equal(classifyPacket(unmodeled), null);
+      assert.equal(classifyPacket({ ...packet, data }), null, "a ring still requires its event-specific object payload");
+    }
+  });
+
   test("accepts every captured packet in the corpus", () => {
 
     // The corpus is the positive half of the proof, and it is what keeps the check from drifting toward over-strictness: a guard that rejected any real
@@ -981,7 +997,6 @@ describe("isAccessEventPacket", () => {
 
     assert.equal(isAccessEventPacket({ ...packet, "event": 42 }), false);
     assert.equal(isAccessEventPacket({ ...packet, "event_object_id": null }), false);
-    assert.equal(isAccessEventPacket({ ...packet, "data": "a string payload" }), false);
   });
 
   test("rejects values that are not records at all", () => {

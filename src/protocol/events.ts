@@ -350,7 +350,7 @@ export function classifyPacket(packet: AccessEventPacket): Nullable<AccessWireEv
  * consumers with an undefined identifier typed as a string and be published under it.
  *
  * The checked fields are the ones the classifier actually reads from the envelope: `event` and `event_object_id` must be strings, and `data` must be present and
- * either null or a record, because a deletion notification legitimately carries `data: null`. `meta` is deliberately not required - it is optional on the packet
+ * allowed to carry any parsed JSON value. Payload shape belongs to the event-specific guards. `meta` is deliberately not required - it is optional on the packet
  * and the classifier reaches it through optional chaining.
  *
  * @param value - A decoded value of unknown shape, typically the result of parsing a notification frame.
@@ -366,8 +366,7 @@ export function isAccessEventPacket(value: unknown): value is AccessEventPacket 
     return false;
   }
 
-  return (typeof value["event"] === "string") && (typeof value["event_object_id"] === "string") && ("data" in value) &&
-    ((value["data"] === null) || isRecord(value["data"]));
+  return (typeof value["event"] === "string") && (typeof value["event_object_id"] === "string") && Object.hasOwn(value, "data");
 }
 
 /* Translate a newer-dialect device payload into the bootstrap vocabulary. Only the fields the table names are read, so an unlisted wire field cannot reach the
@@ -613,5 +612,6 @@ function isNonEmpty<T>(value: T[]): value is [T, ...T[]] {
 // payload, so this returning undefined is not by itself a malformed packet.
 function asRecord(data: AccessEventPacket["data"]): Record<string, AccessKnownJsonValue> | undefined {
 
-  return isRecord(data) ? data : undefined;
+  // This record came from parsed JSON; the predicate establishes the shape and the JSON boundary establishes its value vocabulary.
+  return isRecord(data) ? data as Record<string, AccessKnownJsonValue> : undefined;
 }

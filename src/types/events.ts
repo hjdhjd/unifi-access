@@ -2,7 +2,7 @@
  *
  * events.ts: The UniFi Access realtime event types and the API response envelope.
  */
-import type { AccessKnownJsonValue, Nullable } from "./common.ts";
+import type { Nullable } from "./common.ts";
 
 /**
  * The UniFi Access realtime event surface: the notification packet the controller pushes over its websocket, the payloads carried on that stream - the doorbell
@@ -17,15 +17,13 @@ import type { AccessKnownJsonValue, Nullable } from "./common.ts";
  * A UniFi Access event packet is the representation of a notification event from a UniFi Access controller. The `event` property informs us of the notification type,
  * such as `access.data.device.remote_unlock` for door unlock events, and the details arrive as a JSON payload in the `data` property.
  *
- * `data` is deliberately left as an open record here rather than narrowed by event name. Recognizing an event and giving its payload a specific type is the protocol
+ * `data` is deliberately unknown here rather than narrowed by event name. Recognizing an event and giving its payload a specific type is the protocol
  * layer's job, and doing it here would put a second, competing view of the same packet in the type tier.
  */
 export interface AccessEventPacketInterface {
 
-  /* Nullable because a deletion notification carries no payload at all: the controller sends `data: null` on device-delete events, observed on every firmware sampled
-   * through 2026. A consumer narrows this before reaching into it.
-   */
-  data: Nullable<Record<string, AccessKnownJsonValue>>;
+  // Raw payloads may be any parsed JSON value. Each event classifier owns its payload's shape, not the envelope guard.
+  data: unknown;
   event: string;
   event_object_id: string;
   /* Present on the events that describe a change to a stored object, and absent from the rest. `target_field` names the fields that changed, and is `null` on the

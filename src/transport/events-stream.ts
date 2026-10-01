@@ -28,7 +28,7 @@
  * @module AccessEventStream
  */
 import { ACCESS_API_PATH_PREFIX, ACCESS_EVENTS_HEARTBEAT_TIMEOUT } from "../settings.ts";
-import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessStallError, assertNever,
+import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessStallError, assertNever,
   isCertificateVerificationFailure, isExpectedWsDisconnect } from "../errors.ts";
 import type { AccessError, AccessIdentityLeg } from "../errors.ts";
 import type { AccessEventPacket, Nullable } from "../types/index.ts";
@@ -106,7 +106,8 @@ export interface EventStreamOptions {
  *   classification - so it carries both the notifications the library does not model and the payload fields the classifier's translation allowlist drops, neither
  *   of which `packet` ever sees. Pure observability for protocol exploration and capture; never dispatched into state.
  * - `closed` fires once when the WebSocket closes (naturally, on error, or on a watchdog stall), carrying the close frame's code and reason.
- * - `error` carries a typed {@link AccessError} - a frame that could not be parsed or was not a notification, a socket error, an {@link AccessStallError} from the
+ * - `packetRejected` reports an independently rejected frame without triggering connection recovery. It never carries the frame or parser error text.
+ * - `error` carries a typed {@link AccessError} - a socket error, an {@link AccessStallError} from the
  *   silence watchdog, or an {@link AccessNetworkError} when the peer closes a live socket unsolicited (a controller reboot drops the socket exactly this way: a
  *   `close` event with no preceding socket `error`). It carries the faults of a stream that opened and nothing else: a close this stream ran for itself stays
  *   informational on `closed`, and a failure that ends a stream before it opened reports through the {@link EventStream.opened} handshake rejection alone - a
@@ -120,6 +121,7 @@ export interface EventStreamEvents {
   closed: [info: { code: number; reason: string }];
   error: [err: AccessError];
   packet: [event: AccessWireEvent];
+  packetRejected: [info: { reason: "invalidEnvelope" | "invalidJson" }];
   rawPacket: [packet: AccessEventPacket];
 }
 
@@ -463,7 +465,7 @@ export class EventStream implements AsyncDisposable {
    * make a notification of it. The guards below then run in an order the protocol dictates rather than an arbitrary one - the heartbeat is checked before parsing
    * because it is valid JSON and would otherwise decode to the string `Hello`, and the empty frame is checked before parsing because parsing it would raise a
    * protocol error for something the controller legitimately sends. A frame that fails to parse, or parses to something that is not a notification, surfaces on the
-   * error rail but does not tear the channel down: WebSocket frames are independently delimited, so one bad frame does not desync the next.
+   * packetRejected rail but does not tear the channel down: WebSocket frames are independently delimited, so one bad frame does not desync the next.
    */
   #onMessage(data: unknown): void {
 
@@ -496,9 +498,9 @@ export class EventStream implements AsyncDisposable {
     try {
 
       parsed = JSON.parse(text) as unknown;
-    } catch(error) {
+    } catch {
 
-      this.#bus.emit("error", new AccessProtocolError("A realtime notification frame could not be parsed as JSON.", { cause: error }));
+      this.#bus.emit("packetRejected", { reason: "invalidJson" });
 
       return;
     }
@@ -509,7 +511,7 @@ export class EventStream implements AsyncDisposable {
      */
     if(!isAccessEventPacket(parsed)) {
 
-      this.#bus.emit("error", new AccessProtocolError("A realtime notification frame did not carry the fields a notification packet is defined by."));
+      this.#bus.emit("packetRejected", { reason: "invalidEnvelope" });
 
       return;
     }

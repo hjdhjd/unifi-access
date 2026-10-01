@@ -82,7 +82,8 @@ describe("the door-state builders", () => {
 
     const stateOf = (packet: AccessEventPacket): Record<string, unknown> => {
 
-      const [state] = packet.data?.["location_states"] as Record<string, unknown>[];
+      assert.ok((typeof packet.data === "object") && (packet.data !== null));
+      const [state] = (packet.data as Record<string, unknown>)["location_states"] as Record<string, unknown>[];
 
       assert.ok(state, "the builder frames exactly one location state");
 

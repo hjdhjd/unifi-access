@@ -7,7 +7,7 @@
  * The frames these tests feed are text, because the Access notification wire is JSON text. That is the detail a port of a binary-protocol stream gets wrong
  * silently - a normalizer written for bytes discards every string frame and the stream simply goes quiet - so the ordinary decode cases here drive strings.
  */
-import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessStallError, formatErrorChain } from "../errors.ts";
+import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessStallError, formatErrorChain } from "../errors.ts";
 import type { AccessEventsClosedPayload, AccessEventsPacketPayload } from "../diagnostics.ts";
 import { DIAL_CUT_BOUND_MS, createSilentLoopback, elapsedSince, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
 import { EventStream, HEARTBEAT_FRAME } from "./events-stream.ts";
@@ -25,6 +25,7 @@ import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { createServer as createTcpServer } from "node:net";
 import { findPacket } from "../protocol/capture.helpers.ts";
+import { isRecord } from "../json.ts";
 
 const HOST = "10.0.0.1";
 
@@ -399,6 +400,7 @@ describe("EventStream", () => {
 
       const rawData = first(raw)[0].data ?? {};
 
+      assert.ok(isRecord(rawData));
       assert.equal(rawData["name"], "Test Name 68");
       assert.equal(rawData["cap"], null);
       assert.ok(Array.isArray(rawData["settings"]), "the reduced settings projection reaches consumers on the raw rail");
@@ -613,7 +615,36 @@ describe("EventStream", () => {
 
   describe("decode failure resilience", () => {
 
-    test("a frame that is not JSON surfaces a typed error and the stream stays open", async () => {
+    test("wallet notifications and rejected frames do not interrupt a subsequent ring", async () => {
+
+      const opened = await openStream();
+
+      await using stream = opened.stream;
+      const { ws } = opened;
+      const raw = collect(stream, "rawPacket");
+      const packets = collect(stream, "packet");
+      const errors = collect(stream, "error");
+      const rejected = collect(stream, "packetRejected");
+      const ring = findPacket((entry) => entry.event === "access.remote_view", "a ring");
+
+      for(const data of [ "wallet-status", 42, true, ["status"], null ]) {
+
+        ws.emitMessage(frame({ ...ring, data, event: "access.data.wallet_status.update" }));
+      }
+
+      ws.emitMessage("{not json with sensitive contents");
+      ws.emitMessage(JSON.stringify({ data: "sensitive", event: "missing-identifier" }));
+      ws.emitMessage(frame(ring));
+
+      assert.equal(raw.length, 6);
+      assert.equal(packets.length, 1);
+      assert.equal(first(packets)[0].kind, "doorbellRing");
+      assert.equal(errors.length, 0);
+      assert.deepEqual(rejected, [ [{ reason: "invalidJson" }], [{ reason: "invalidEnvelope" }] ]);
+      assert.equal(ws.closeRequested, false, "message rejection must leave the same socket open");
+    });
+
+    test("a frame that is not JSON is rejected without a connection fault and the stream stays open", async () => {
 
       const clock = new TestClock();
       const opened = await openStream({ clock });
@@ -626,10 +657,13 @@ describe("EventStream", () => {
       const packet = findPacket((entry) => entry.event === "access.data.device.update", "a legacy device update");
 
       clock.advance(4321);
+
+      const rejected = collect(stream, "packetRejected");
+
       ws.emitMessage("{not json");
 
-      assert.equal(errors.length, 1);
-      assert.ok(first(errors)[0] instanceof AccessProtocolError, "an unparseable frame surfaces as a protocol error");
+      assert.equal(errors.length, 0, "an independently rejected frame must not trigger recovery");
+      assert.deepEqual(rejected, [[{ reason: "invalidJson" }]]);
       assert.equal(raw.length, 0, "nothing reached the raw rail, because nothing parsed");
 
       // Liveness comes from any frame at all, so a frame we could not read still proves the channel is carrying traffic. This is the path where that claim has
@@ -641,7 +675,7 @@ describe("EventStream", () => {
       assert.equal(packets.length, 1);
     });
 
-    test("valid JSON that is not a notification reaches only the error rail", async () => {
+    test("valid JSON that is not a notification reaches only the packetRejected rail", async () => {
 
       const clock = new TestClock();
       const opened = await openStream({ clock });
@@ -653,6 +687,7 @@ describe("EventStream", () => {
       const raw = collect(stream, "rawPacket");
 
       clock.advance(9876);
+      const rejected = collect(stream, "packetRejected");
 
       /* Both frames parse cleanly and neither is a notification. Asserting the envelope onto them rather than checking it would publish the first under an
        * identifier that is undefined while typed as a string, which is exactly the failure the check exists to prevent.
@@ -660,9 +695,8 @@ describe("EventStream", () => {
       ws.emitMessage(JSON.stringify({ "data": null, "event": "access.data.device.update", "receiver_id": "", "save_to_history": false }));
       ws.emitMessage(JSON.stringify([ 1, 2, 3 ]));
 
-      assert.equal(errors.length, 2);
-      assert.ok(first(errors)[0] instanceof AccessProtocolError, "a frame without the notification envelope surfaces as a protocol error");
-      assert.ok(errors[1]?.[0] instanceof AccessProtocolError, "and so does a frame that is not an object at all");
+      assert.equal(errors.length, 0, "invalid envelopes must not reach the connection fault rail");
+      assert.deepEqual(rejected, [ [{ reason: "invalidEnvelope" }], [{ reason: "invalidEnvelope" }] ]);
       assert.equal(packets.length, 0);
       assert.equal(raw.length, 0, "an unshaped value must not reach the raw rail either, which is typed as a notification");
 
