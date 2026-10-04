@@ -6,8 +6,8 @@
  */
 import { AccessApiError, AccessCapabilityError } from "../errors.ts";
 import { DOOR_HUB, DOOR_MINI_DOOR, HUB, deviceFixture, intercept } from "./device.helpers.ts";
-import { assertRejectsWith, present } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
+import { expectAt, present, silentLog } from "homebridge-plugin-utils/testing";
 import type { AccessApiOverride } from "../client/routing.ts";
 import { AccessDeviceRegistry } from "./registry.ts";
 import type { AccessOfficialCallOptions } from "../official/dispatch.ts";
@@ -15,7 +15,6 @@ import type { AccessOfficialDoorUnlockOptions } from "../official/spaces.ts";
 import { AccessRoutingService } from "../client/routing.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
-import { silentLog } from "homebridge-plugin-utils/testing";
 
 describe("the hub commands under routing", () => {
 
@@ -160,7 +159,7 @@ describe("the hub commands under routing", () => {
 
     await hub.close();
 
-    const captured = present(fixture.captured[0], "the captured close request");
+    const captured = expectAt(fixture.captured, 0, "the captured close request");
 
     assert.ok(captured.path.includes("control_cmd=close"), "the close command names its control verb on the path");
     assert.equal(captured.body, undefined, "and the close command's body-absent shape is untouched by routing");
@@ -180,11 +179,14 @@ describe("the hub commands under routing", () => {
     for(const command of commands) {
 
       // eslint-disable-next-line no-await-in-loop
-      await assertRejectsWith(command.issue, AccessCapabilityError, { check: (error) => {
+      await assert.rejects(command.issue, (error: unknown) => {
 
+        assert.ok(error instanceof AccessCapabilityError);
         assert.match(error.message, command.operation, "the message names the operation");
         assert.match(error.message, /held to the official API/, "and the override that left it nowhere to go");
-      } });
+
+        return true;
+      });
     }
 
     assert.equal(fixture.captured.length, 0, "nothing reached the direct transport");
@@ -308,7 +310,7 @@ describe("the hub commands under routing", () => {
       assert.equal(fixture.captured.length, 0, "nothing went out on the direct path");
 
       // Two unaborted signals compare equal under deepEqual, so the identity check is what rules out a stand-in minted somewhere along the way.
-      assert.equal(fixture.official.unlocks[0]?.call?.signal, controller.signal, "and the official call holds the caller's own signal");
+      assert.equal(fixture.official.unlocks[0]?.call.signal, controller.signal, "and the official call holds the caller's own signal");
     });
 
     test("threads the caller's signal through a gate stop", async () => {
@@ -320,7 +322,7 @@ describe("the hub commands under routing", () => {
       await hub.stop({ signal: controller.signal });
 
       assert.deepEqual(fixture.official.unlocks, [{ call: { signal: controller.signal }, id: DOOR_HUB, opts: { controlCmd: "stop" } }]);
-      assert.equal(fixture.official.unlocks[0]?.call?.signal, controller.signal, "and the official call holds the caller's own signal");
+      assert.equal(fixture.official.unlocks[0]?.call.signal, controller.signal, "and the official call holds the caller's own signal");
     });
   });
 });

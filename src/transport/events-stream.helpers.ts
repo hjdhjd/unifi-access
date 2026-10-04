@@ -3,10 +3,11 @@
  * events-stream.helpers.ts: The two peers EventStream tests drive it against - a deterministic in-memory fake WebSocket for everything above the socket, and a
  * loopback TLS server that speaks the upgrade by hand for the things only a real socket can show.
  */
-import { createConnectionLedger, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
+import { listenOnLoopback, stopListening } from "homebridge-plugin-utils/testing";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
 import type { AccessWebSocket } from "./ws.ts";
 import type { TLSSocket } from "node:tls";
+import { createConnectionLedger } from "./loopback.helpers.ts";
 import { createHash } from "node:crypto";
 import { createServer } from "node:tls";
 

@@ -79,8 +79,13 @@ describe("door resolution", () => {
 
     const { client } = makeFakeClient(HUB_SPEC);
 
-    assert.throws(() => findDoorTarget(asAccessClient(client), "Reader"),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("is not a hub, so it drives no door"));
+    assert.throws(() => findDoorTarget(asAccessClient(client), "Reader"), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.ok(error.message.includes("is not a hub, so it drives no door"));
+
+      return true;
+    });
   });
 
   test("a door resolves by id, then by name, then by full name, each case-insensitively", () => {
@@ -108,9 +113,15 @@ describe("door resolution", () => {
       snapshot: { doors: new Map<string, FakeDoorSpec>([ [ "door-1", { "full_name": "1F - Loading Dock", "name": "Acme Name 13", "unique_id": "door-1" } ],
         [ "door-2", { "full_name": "2F - Loading Dock", "name": "Acme Name 13", "unique_id": "door-2" } ] ]) } });
 
-    assert.throws(() => findDoorTarget(asAccessClient(client), "Acme Name 13"),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("More than one door matches") &&
-        error.message.includes("1F - Loading Dock => door-1") && error.message.includes("2F - Loading Dock => door-2"));
+    assert.throws(() => findDoorTarget(asAccessClient(client), "Acme Name 13"), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.ok(error.message.includes("More than one door matches"));
+      assert.ok(error.message.includes("1F - Loading Dock => door-1"));
+      assert.ok(error.message.includes("2F - Loading Dock => door-2"));
+
+      return true;
+    });
   });
 
   test("a door driven by more than one handle names the ambiguity and the candidates", () => {
@@ -118,9 +129,16 @@ describe("door resolution", () => {
     const { client } = makeFakeClient({ ...HUB_SPEC,
       devices: [ { doorId: "door-1", id: "hub-1", name: "Acme Name 6" }, { doorId: "door-1", id: "hub-2", name: "Side Hub" } ] });
 
-    assert.throws(() => findDoorTarget(asAccessClient(client), "Acme Name 13"),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("More than one device") && error.message.includes("1F - Loading Dock") &&
-        error.message.includes("Acme Name 6") && error.message.includes("Side Hub"));
+    assert.throws(() => findDoorTarget(asAccessClient(client), "Acme Name 13"), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.ok(error.message.includes("More than one device"));
+      assert.ok(error.message.includes("1F - Loading Dock"));
+      assert.ok(error.message.includes("Acme Name 6"));
+      assert.ok(error.message.includes("Side Hub"));
+
+      return true;
+    });
   });
 
   test("a door no handle drives answers as the door itself, for the command to serve on the surface that addresses doors", () => {
@@ -141,9 +159,15 @@ describe("door resolution", () => {
 
     const { client } = makeFakeClient(HUB_SPEC);
 
-    assert.throws(() => findDoorTarget(asAccessClient(client), "Nothing"),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("Acme Name 6 => hub-1") && error.message.includes("2F - Loading Bay => door-2") &&
-        !error.message.includes("Side Door => door-2"));
+    assert.throws(() => findDoorTarget(asAccessClient(client), "Nothing"), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.ok(error.message.includes("Acme Name 6 => hub-1"));
+      assert.ok(error.message.includes("2F - Loading Bay => door-2"));
+      assert.ok(!error.message.includes("Side Door => door-2"));
+
+      return true;
+    });
   });
 });
 
@@ -154,8 +178,12 @@ describe("the door unlock command", () => {
     const { client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: ["unlock"], client });
 
-    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify one door by name or id. Run \"ufa door unlock --help\" for usage."));
+    await assert.rejects(async () => door.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify one door by name or id. Run \"ufa door unlock --help\" for usage.",
+      name: "CliError"
+    });
   });
 
   test("a bare unlock calls the hub's own unlock and confirms with the door", async () => {
@@ -195,8 +223,7 @@ describe("the door unlock command", () => {
     const { calls, client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: [ "unlock", "Acme Name 6", "--duration", "90s" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("whole-minute"));
+    await assert.rejects(async () => door.run(ctx), { exitCode: 2, message: /whole-minute/, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -218,7 +245,7 @@ describe("the door unlock command", () => {
     const { calls, client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: [ "unlock", "Acme Name 6", "--duration", "5m", "--hold" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(async () => door.run(ctx), { exitCode: 2, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -249,7 +276,13 @@ describe("the door unlock command", () => {
 
       // Sequential by intent: each malformed actor is asserted on its own invocation.
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => door.run(bad.ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2), value);
+      await assert.rejects(async () => door.run(bad.ctx), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, value);
+        assert.equal(error.exitCode, 2, value);
+
+        return true;
+      }, value);
     }
   });
 
@@ -262,8 +295,14 @@ describe("the door unlock command", () => {
 
       // Sequential by intent: each combination is asserted on its own invocation.
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => door.run(ctx),
-        (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("attributed unlock"), extra.join(" "));
+      await assert.rejects(async () => door.run(ctx), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, extra.join(" "));
+        assert.equal(error.exitCode, 2, extra.join(" "));
+        assert.match(error.message, /attributed unlock/, extra.join(" "));
+
+        return true;
+      }, extra.join(" "));
 
       assert.equal(calls.opens.length, 0);
       assert.equal(calls.credentialLoads, 0);
@@ -275,8 +314,7 @@ describe("the door unlock command", () => {
     const { calls, client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: [ "unlock", "Acme Name 6", "--api", "official" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("auto, direct-only, official-only"));
+    await assert.rejects(async () => door.run(ctx), { exitCode: 2, message: /auto, direct-only, official-only/, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -436,9 +474,7 @@ describe("the door arm - a door no handle drives", () => {
     const { calls, client } = makeFakeClient(PINNED_ORPHAN_SPEC);
     const { ctx } = makeCommandContext({ args: [ "unlock", "Orphan", "--api", "direct-only" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx),
-      (error: unknown) => (error instanceof CliError) &&
-        (error.message === "The door \"B1 - Service Entrance\" is in the topology, but no hub handle drives it."));
+    await assert.rejects(async () => door.run(ctx), { message: "The door \"B1 - Service Entrance\" is in the topology, but no hub handle drives it.", name: "CliError" });
 
     assert.deepEqual(calls.official, []);
     assert.deepEqual(calls.unlocks, []);
@@ -449,9 +485,7 @@ describe("the door arm - a door no handle drives", () => {
     const { calls, client } = makeFakeClient(CREDENTIAL_ORPHAN_SPEC);
     const { ctx } = makeCommandContext({ args: [ "unlock", "Orphan" ], calls, client, credentials: CREDENTIALS_PAIR });
 
-    await assert.rejects(async () => door.run(ctx),
-      (error: unknown) => (error instanceof CliError) &&
-        (error.message === "The door \"B1 - Service Entrance\" is in the topology, but no hub handle drives it."));
+    await assert.rejects(async () => door.run(ctx), { message: "The door \"B1 - Service Entrance\" is in the topology, but no hub handle drives it.", name: "CliError" });
 
     assert.deepEqual(calls.unlocks, []);
   });
@@ -496,8 +530,12 @@ describe("the door close command", () => {
     const { client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: ["close"], client });
 
-    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify one door by name or id. Run \"ufa door close --help\" for usage."));
+    await assert.rejects(async () => door.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify one door by name or id. Run \"ufa door close --help\" for usage.",
+      name: "CliError"
+    });
   });
 
   test("close calls the hub's own close", async () => {
@@ -531,8 +569,12 @@ describe("the door lock-rule command", () => {
     const { client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: ["lock-rule"], client });
 
-    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify one door by name or id, and optionally a rule. Run \"ufa door lock-rule --help\" for usage."));
+    await assert.rejects(async () => door.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify one door by name or id, and optionally a rule. Run \"ufa door lock-rule --help\" for usage.",
+      name: "CliError"
+    });
   });
 
   test("the read renders the official rule for the resolved door", async () => {
@@ -553,8 +595,14 @@ describe("the door lock-rule command", () => {
     const { calls, client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: [ "lock-rule", "Acme Name 13" ], calls, client, credentials: CREDENTIALS_PAIR });
 
-    await assert.rejects(async () => door.run(ctx),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("lock-rule read") && error.message.includes("official API"));
+    await assert.rejects(async () => door.run(ctx), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.match(error.message, /lock-rule read/);
+      assert.match(error.message, /official API/);
+
+      return true;
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 1);
@@ -565,7 +613,7 @@ describe("the door lock-rule command", () => {
     const { calls, client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: [ "lock-rule", "Acme Name 13", "--api", "direct-only" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(async () => door.run(ctx), { exitCode: 2, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 1);
@@ -605,8 +653,15 @@ describe("the door lock-rule command", () => {
     const { calls, client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: [ "lock-rule", "Acme Name 6", "sideways" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("keep-lock") && error.message.includes("30m"));
+    await assert.rejects(async () => door.run(ctx), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.equal(error.exitCode, 2);
+      assert.match(error.message, /keep-lock/);
+      assert.match(error.message, /30m/);
+
+      return true;
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -652,8 +707,12 @@ describe("the door emergency command", () => {
     const { client } = makeFakeClient(HUB_SPEC);
     const { ctx } = makeCommandContext({ args: [ "emergency", "lockdown", "evacuation" ], client });
 
-    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify at most one emergency state. Run \"ufa door emergency --help\" for usage."));
+    await assert.rejects(async () => door.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify at most one emergency state. Run \"ufa door emergency --help\" for usage.",
+      name: "CliError"
+    });
   });
 
   test("the read renders both status flags", async () => {
@@ -688,8 +747,7 @@ describe("the door emergency command", () => {
     const { calls, client } = makeFakeClient(officialSpec);
     const { ctx } = makeCommandContext({ args: [ "emergency", "panic" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("evacuation, lockdown, normal"));
+    await assert.rejects(async () => door.run(ctx), { exitCode: 2, message: /evacuation, lockdown, normal/, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -700,12 +758,18 @@ describe("the door emergency command", () => {
     const { calls, client } = makeFakeClient(officialSpec);
     const refused = makeCommandContext({ args: [ "emergency", "lockdown" ], calls, client, credentials: CREDENTIALS_PAIR });
 
-    await assert.rejects(async () => door.run(refused.ctx),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("emergency command") && error.message.includes("official API"));
+    await assert.rejects(async () => door.run(refused.ctx), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.match(error.message, /emergency command/);
+      assert.match(error.message, /official API/);
+
+      return true;
+    });
 
     const pinned = makeCommandContext({ args: [ "emergency", "lockdown", "--api", "direct-only" ], calls, client });
 
-    await assert.rejects(async () => door.run(pinned.ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(async () => door.run(pinned.ctx), { exitCode: 2, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 2);
@@ -716,8 +780,7 @@ describe("the door emergency command", () => {
     const { calls, client } = makeFakeClient({ ...HUB_SPEC, capabilities: { mode: "dual", official: false, override: "auto" } });
     const { ctx } = makeCommandContext({ args: [ "emergency", "lockdown" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("official API"));
+    await assert.rejects(async () => door.run(ctx), { message: /official API/, name: "CliError" });
 
     assert.equal(calls.opens.length, 1, "the refusal is the connected client's own capability verdict");
   });
@@ -772,8 +835,12 @@ describe("the door capture scrub", () => {
     const { calls, client } = makeFakeClient(OFFICIAL_SPEC);
     const { ctx } = makeCommandContext({ args: [ "lock-rule", "Acme Name 13", "keep-unlock", "--scrub" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "A rule change prints a confirmation rather than a document, so --scrub applies to the rule read only."));
+    await assert.rejects(async () => door.run(ctx), {
+
+      exitCode: 2,
+      message: "A rule change prints a confirmation rather than a document, so --scrub applies to the rule read only.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -784,8 +851,12 @@ describe("the door capture scrub", () => {
     const { calls, client } = makeFakeClient(OFFICIAL_SPEC);
     const { ctx } = makeCommandContext({ args: [ "emergency", "lockdown", "--scrub" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "A state change prints a confirmation rather than a document, so --scrub applies to the state read only."));
+    await assert.rejects(async () => door.run(ctx), {
+
+      exitCode: 2,
+      message: "A state change prints a confirmation rather than a document, so --scrub applies to the state read only.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -796,8 +867,12 @@ describe("the door capture scrub", () => {
     const { calls, client } = makeFakeClient(OFFICIAL_SPEC);
     const { ctx } = makeCommandContext({ args: [ "lock-rule", "Acme Name 13", "keep-unlock", "--json" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "A rule change prints a confirmation rather than a document, so --json applies to the rule read only."));
+    await assert.rejects(async () => door.run(ctx), {
+
+      exitCode: 2,
+      message: "A rule change prints a confirmation rather than a document, so --json applies to the rule read only.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -808,8 +883,12 @@ describe("the door capture scrub", () => {
     const { calls, client } = makeFakeClient(OFFICIAL_SPEC);
     const { ctx } = makeCommandContext({ args: [ "emergency", "lockdown", "--json" ], calls, client });
 
-    await assert.rejects(async () => door.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "A state change prints a confirmation rather than a document, so --json applies to the state read only."));
+    await assert.rejects(async () => door.run(ctx), {
+
+      exitCode: 2,
+      message: "A state change prints a confirmation rather than a document, so --json applies to the state read only.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);

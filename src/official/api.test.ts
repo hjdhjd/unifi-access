@@ -30,16 +30,16 @@ describe("OfficialApi", () => {
    */
   const reachable: readonly [ string, string, (api: OfficialApi) => Promise<unknown> ][] = [
 
-    [ "credentials", "/credentials/touch_passes/assignable", async (api) => api.credentials.fetchAssignableTouchPasses() ],
-    [ "devices", "/devices", async (api) => api.devices.fetchAll() ],
-    [ "identity", "/users/identity/assignments", async (api) => api.identity.fetchAvailableResources() ],
-    [ "logs", "/system/logs/resource/r-1", async (api) => api.logs.fetchResource("r-1") ],
-    [ "policies", "/access_policies", async (api) => api.policies.fetchAll() ],
-    [ "server", "/api_server/certificates", async (api) => api.server.deleteCertificate() ],
-    [ "spaces", "/doors", async (api) => api.spaces.fetchAll() ],
-    [ "users", "/user_groups", async (api) => api.users.fetchAllGroups() ],
-    [ "visitors", "/visitors/v-1", async (api) => api.visitors.fetch("v-1") ],
-    [ "webhooks", "/webhooks/endpoints", async (api) => api.webhooks.fetchAllEndpoints() ]
+    [ "credentials", "/credentials/touch_passes/assignable", async (api): Promise<unknown> => api.credentials.fetchAssignableTouchPasses() ],
+    [ "devices", "/devices", async (api): Promise<unknown> => api.devices.fetchAll() ],
+    [ "identity", "/users/identity/assignments", async (api): Promise<unknown> => api.identity.fetchAvailableResources() ],
+    [ "logs", "/system/logs/resource/r-1", async (api): Promise<unknown> => api.logs.fetchResource("r-1") ],
+    [ "policies", "/access_policies", async (api): Promise<unknown> => api.policies.fetchAll() ],
+    [ "server", "/api_server/certificates", async (api): Promise<unknown> => api.server.deleteCertificate() ],
+    [ "spaces", "/doors", async (api): Promise<unknown> => api.spaces.fetchAll() ],
+    [ "users", "/user_groups", async (api): Promise<unknown> => api.users.fetchAllGroups() ],
+    [ "visitors", "/visitors/v-1", async (api): Promise<unknown> => api.visitors.fetch("v-1") ],
+    [ "webhooks", "/webhooks/endpoints", async (api): Promise<unknown> => api.webhooks.fetchAllEndpoints() ]
   ];
 
   for(const [ member, path, call ] of reachable) {

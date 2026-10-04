@@ -9,20 +9,20 @@
  * contract - exactly and without flakiness.
  */
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_RETRY_PROFILE, ACCESS_API_TIMEOUT } from "../settings.ts";
-import { AccessAbortedError, AccessAuthError, AccessAuthorizationError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessRequestError,
-  AccessThrottledError, AccessTimeoutError } from "../errors.ts";
+import { AccessAbortedError, AccessAuthError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessThrottledError,
+  AccessTimeoutError } from "../errors.ts";
 import type { AccessHttpRequestEndPayload, AccessHttpRequestStartPayload, AccessHttpThrottleEnteredPayload,
   AccessHttpThrottleExitedPayload } from "../diagnostics.ts";
 import { DIAL_SETTLE_BOUND_MS, createHttpsLoopback, createResettingLoopback, createSilentLoopback, elapsedSince, pendingThroughRedialWait } from "./loopback.helpers.ts";
-import { TestClock, capturingLog, settle, silentLog } from "homebridge-plugin-utils/testing";
+import { TestClock, capturingLog, errnoError, expectAt, loggedAt, settle, silentLog } from "homebridge-plugin-utils/testing";
 import { Transport, controllerReachable, responseOk } from "./http.ts";
-import { assertRejectsWith, errnoError, present, subscribeTo } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { errors } from "undici";
 import { setTimeout as setTimeoutAsync } from "node:timers/promises";
+import { subscribeTo } from "../testing.helpers.ts";
 
 // The breaker cooldown in milliseconds, mirroring the transport's own derivation, so the fake-clock advances line up with the gate math.
 const COOLDOWN_MS = ACCESS_API_RETRY_INTERVAL * 1000;
@@ -134,22 +134,16 @@ describe("Transport", () => {
 
       const response = await transport.send(url(host, "/a"));
 
-      let thrown: unknown;
+      assert.throws(() => response.ensureOk(), {
 
-      try {
+        // A transport constructed without an identity authenticates with credentials.
+        identity: "credentials",
 
-        response.ensureOk();
-      } catch(error) {
-
-        thrown = error;
-      }
-
-      assert.ok(thrown instanceof AccessAuthError, "a 401 surfaces as an authentication error");
-      assert.equal(thrown.statusCode, 401);
-      assert.equal(thrown.identity, "credentials", "a transport constructed without an identity authenticates with credentials");
-
-      // The message is consumer-facing copy that a caller may render verbatim, so it is asserted exactly rather than matched loosely.
-      assert.equal(thrown.message, "Authentication with the UniFi Access controller failed.");
+        // The message is consumer-facing copy that a caller may render verbatim, so it is asserted exactly rather than matched loosely.
+        message: "Authentication with the UniFi Access controller failed.",
+        name: "AccessAuthError",
+        statusCode: 401
+      });
     });
 
     test("401 on a token transport names the API token rather than the credentials", async () => {
@@ -160,22 +154,15 @@ describe("Transport", () => {
 
       const response = await transport.send(url(host, "/token-401"));
 
-      let thrown: unknown;
+      assert.throws(() => response.ensureOk(), {
 
-      try {
+        identity: "token",
 
-        response.ensureOk();
-      } catch(error) {
-
-        thrown = error;
-      }
-
-      assert.ok(thrown instanceof AccessAuthError, "a 401 surfaces as an authentication error");
-      assert.equal(thrown.statusCode, 401);
-      assert.equal(thrown.identity, "token");
-
-      // Each leg has its own remedy, so each gets its own sentence: this one sends the reader to the issued token rather than to an account password.
-      assert.equal(thrown.message, "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.");
+        // Each leg has its own remedy, so each gets its own sentence: this one sends the reader to the issued token rather than to an account password.
+        message: "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.",
+        name: "AccessAuthError",
+        statusCode: 401
+      });
     });
 
     test("403 classifies as AccessAuthorizationError carrying the status and the credential leg", async () => {
@@ -186,22 +173,16 @@ describe("Transport", () => {
 
       const response = await transport.send(url(host, "/b"));
 
-      let thrown: unknown;
+      assert.throws(() => response.ensureOk(), {
 
-      try {
+        // A transport constructed without an identity authenticates with credentials.
+        identity: "credentials",
 
-        response.ensureOk();
-      } catch(error) {
-
-        thrown = error;
-      }
-
-      assert.ok(thrown instanceof AccessAuthorizationError, "a 403 surfaces as an authorization error");
-      assert.equal(thrown.statusCode, 403);
-      assert.equal(thrown.identity, "credentials", "a transport constructed without an identity authenticates with credentials");
-
-      // The message is consumer-facing copy that a caller may render verbatim, so it is asserted exactly rather than matched loosely.
-      assert.equal(thrown.message, "The account lacks the privileges this operation requires on the UniFi Access controller.");
+        // The message is consumer-facing copy that a caller may render verbatim, so it is asserted exactly rather than matched loosely.
+        message: "The account lacks the privileges this operation requires on the UniFi Access controller.",
+        name: "AccessAuthorizationError",
+        statusCode: 403
+      });
     });
 
     test("403 on a token transport names the API token's permissions rather than the account's role", async () => {
@@ -212,22 +193,15 @@ describe("Transport", () => {
 
       const response = await transport.send(url(host, "/token-403"));
 
-      let thrown: unknown;
+      assert.throws(() => response.ensureOk(), {
 
-      try {
+        identity: "token",
 
-        response.ensureOk();
-      } catch(error) {
-
-        thrown = error;
-      }
-
-      assert.ok(thrown instanceof AccessAuthorizationError, "a 403 surfaces as an authorization error");
-      assert.equal(thrown.statusCode, 403);
-      assert.equal(thrown.identity, "token");
-
-      // Each leg has its own remedy, so each gets its own sentence: this one sends the reader to the token's issued permissions rather than to an account role.
-      assert.equal(thrown.message, "The configured API token lacks the permissions this operation requires on the UniFi Access controller.");
+        // Each leg has its own remedy, so each gets its own sentence: this one sends the reader to the token's issued permissions rather than to an account role.
+        message: "The configured API token lacks the permissions this operation requires on the UniFi Access controller.",
+        name: "AccessAuthorizationError",
+        statusCode: 403
+      });
     });
 
     test("other non-2xx classify as AccessRequestError carrying status, body, and headers", async () => {
@@ -238,20 +212,15 @@ describe("Transport", () => {
 
       const response = await transport.send(url(host, "/c"));
 
-      let thrown: unknown;
+      assert.throws(() => response.ensureOk(), (error: unknown) => {
 
-      try {
+        assert.ok(error instanceof AccessRequestError, "a 500 surfaces as a request error");
+        assert.equal(error.statusCode, 500);
+        assert.equal(error.body, "boom");
+        assert.equal(error.headers?.["x-trace"], "abc");
 
-        response.ensureOk();
-      } catch(error) {
-
-        thrown = error;
-      }
-
-      assert.ok(thrown instanceof AccessRequestError, "a 500 surfaces as a request error");
-      assert.equal(thrown.statusCode, 500);
-      assert.equal(thrown.body, "boom");
-      assert.equal(thrown.headers?.["x-trace"], "abc");
+        return true;
+      });
     });
 
     test("ensureOk returns the response unchanged on 2xx", async () => {
@@ -450,7 +419,7 @@ describe("Transport", () => {
       clock.advance(1);
 
       // The elapsed time the error carries is the injected clock's own measurement, which is what makes the caller's value and the reported one the same number.
-      await assert.rejects(pending, (error: unknown) => (error instanceof AccessTimeoutError) && (error.elapsedMs === 50));
+      await assert.rejects(pending, { elapsedMs: 50, name: "AccessTimeoutError" });
       await observed;
     });
 
@@ -461,7 +430,7 @@ describe("Transport", () => {
 
       pool.intercept({ method: "GET", path: "/x" }).replyWithError(errno);
 
-      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => (error instanceof AccessNetworkError) && (error.code === "ECONNREFUSED"));
+      await assert.rejects(transport.send(url(host, "/x")), { code: "ECONNREFUSED", name: "AccessNetworkError" });
     });
 
     test("a pool destroyed under an in-flight request surfaces as AccessNetworkError", async () => {
@@ -472,8 +441,14 @@ describe("Transport", () => {
       // This is what our own reset() does to requests already in flight when the breaker trips. It is recoverable: the caller may retry against the rebuilt pool.
       pool.intercept({ method: "GET", path: "/x" }).replyWithError(destroyed);
 
-      await assert.rejects(transport.send(url(host, "/x")),
-        (error: unknown) => (error instanceof AccessNetworkError) && (error.cause === destroyed) && error.message.includes("connection pool was reset"));
+      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => {
+
+        assert.ok(error instanceof AccessNetworkError);
+        assert.equal(error.cause, destroyed);
+        assert.match(error.message, /connection pool was reset/);
+
+        return true;
+      });
     });
 
     test("exhausted retries surface as AccessNetworkError", async () => {
@@ -485,8 +460,14 @@ describe("Transport", () => {
       // request.
       pool.intercept({ method: "GET", path: "/x" }).replyWithError(exhausted);
 
-      await assert.rejects(transport.send(url(host, "/x")),
-        (error: unknown) => (error instanceof AccessNetworkError) && (error.cause === exhausted) && error.message.includes("exhausting retries"));
+      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => {
+
+        assert.ok(error instanceof AccessNetworkError);
+        assert.equal(error.cause, exhausted);
+        assert.match(error.message, /exhausting retries/);
+
+        return true;
+      });
     });
 
     test("a connect-phase timeout surfaces as AccessTimeoutError carrying the elapsed time", async () => {
@@ -498,8 +479,14 @@ describe("Transport", () => {
       // one rather than as a generic network fault.
       pool.intercept({ method: "GET", path: "/x" }).replyWithError(connectTimeout);
 
-      await assert.rejects(transport.send(url(host, "/x")),
-        (error: unknown) => (error instanceof AccessTimeoutError) && (error.cause === connectTimeout) && (error.elapsedMs >= 0));
+      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => {
+
+        assert.ok(error instanceof AccessTimeoutError);
+        assert.equal(error.cause, connectTimeout);
+        assert.ok(error.elapsedMs >= 0);
+
+        return true;
+      });
     });
 
     test("a deadline that fires ahead of a caller's cancel surfaces as AccessTimeoutError", async () => {
@@ -520,7 +507,7 @@ describe("Transport", () => {
       clock.advance(ACCESS_API_TIMEOUT);
       controller.abort();
 
-      await assert.rejects(pending, (error: unknown) => (error instanceof AccessTimeoutError) && (error.elapsedMs === ACCESS_API_TIMEOUT));
+      await assert.rejects(pending, { elapsedMs: ACCESS_API_TIMEOUT, name: "AccessTimeoutError" });
     });
 
     test("a response whose headers stop arriving surfaces as AccessTimeoutError", async () => {
@@ -531,8 +518,14 @@ describe("Transport", () => {
       // undici's own response timer, which a request meets when its deadline runs past that timer or when an injected dispatcher brings timers of its own.
       pool.intercept({ method: "GET", path: "/x" }).replyWithError(stalled);
 
-      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => (error instanceof AccessTimeoutError) && (error.cause === stalled) &&
-        error.message.includes("stopped responding"));
+      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => {
+
+        assert.ok(error instanceof AccessTimeoutError);
+        assert.equal(error.cause, stalled);
+        assert.match(error.message, /stopped responding/);
+
+        return true;
+      });
     });
 
     test("a response whose body stops arriving surfaces as AccessTimeoutError", async () => {
@@ -542,8 +535,14 @@ describe("Transport", () => {
 
       pool.intercept({ method: "GET", path: "/x" }).replyWithError(stalled);
 
-      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => (error instanceof AccessTimeoutError) && (error.cause === stalled) &&
-        error.message.includes("stopped responding"));
+      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => {
+
+        assert.ok(error instanceof AccessTimeoutError);
+        assert.equal(error.cause, stalled);
+        assert.match(error.message, /stopped responding/);
+
+        return true;
+      });
     });
   });
 
@@ -599,7 +598,7 @@ describe("Transport", () => {
 
       clock.advance(ACCESS_API_TIMEOUT);
 
-      await assert.rejects(pending, (error: unknown) => (error instanceof AccessTimeoutError) && (error.elapsedMs === ACCESS_API_TIMEOUT));
+      await assert.rejects(pending, { elapsedMs: ACCESS_API_TIMEOUT, name: "AccessTimeoutError" });
 
       assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "an expired request settles at once rather than waiting on undici's own connect timer");
       assert.ok(await pendingThroughRedialWait(connection.closed), "a deadline leaves the connection attempt to the pool rather than cutting it");
@@ -656,7 +655,7 @@ describe("Transport", () => {
       assert.equal(peer.accepted, 1, "a cancel opens no connection of its own");
 
       // The rejection is claimed before the disposal that causes it, so it is never a rejection nobody is waiting on.
-      const failing = assert.rejects(pendingFirst, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("connection pool was reset"));
+      const failing = assert.rejects(pendingFirst, { message: /connection pool was reset/, name: "AccessNetworkError" });
 
       await transport[Symbol.asyncDispose]();
       await failing;
@@ -686,7 +685,7 @@ describe("Transport", () => {
       assert.equal(peer.accepted, 1, "a cancel opens no connection of its own");
 
       // The rejection is claimed before the disposal that causes it, so it is never a rejection nobody is waiting on.
-      const failing = assert.rejects(pendingSecond, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("connection pool was reset"));
+      const failing = assert.rejects(pendingSecond, { message: /connection pool was reset/, name: "AccessNetworkError" });
 
       await transport[Symbol.asyncDispose]();
       await failing;
@@ -758,7 +757,7 @@ describe("Transport", () => {
       transport.reset();
 
       // undici's own destroy fails the request at once whether or not the connection attempt was cut, so the peer's close is the assertion that carries this row.
-      await assert.rejects(pending, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("connection pool was reset"));
+      await assert.rejects(pending, { message: /connection pool was reset/, name: "AccessNetworkError" });
       await connection.closed;
 
       assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "a reset releases a connection attempt rather than leaving it to undici's own connect timer");
@@ -774,7 +773,7 @@ describe("Transport", () => {
       const connection = await arriving;
 
       // The rejection is claimed before the disposal that causes it, so it is never a rejection nobody is waiting on.
-      const failing = assert.rejects(pending, (error: unknown) => (error instanceof AccessNetworkError) && error.message.includes("connection pool was reset"));
+      const failing = assert.rejects(pending, { message: /connection pool was reset/, name: "AccessNetworkError" });
       const startedAt = process.hrtime.bigint();
 
       await transport[Symbol.asyncDispose]();
@@ -882,7 +881,7 @@ describe("Transport", () => {
       await sendFailures(transport, url(host, "/f"), ACCESS_API_ERROR_LIMIT);
       clock.advance(1000);
 
-      await assert.rejects(transport.send(url(host, "/f")), (error: unknown) => (error instanceof AccessThrottledError) && (error.cooldownMs === COOLDOWN_MS - 1000));
+      await assert.rejects(transport.send(url(host, "/f")), { cooldownMs: COOLDOWN_MS - 1000, name: "AccessThrottledError" });
     });
 
     test("a successful half-open probe after cooldown closes the breaker and emits throttleExited", async () => {
@@ -1066,12 +1065,12 @@ describe("Transport", () => {
 
       await sendFailures(transport, url(host, "/f"), ACCESS_API_ERROR_LIMIT);
 
-      assert.ok(log.entries.some((entry) => (entry.level === "error") && entry.message.includes("Throttling")), "the trip should log at error level");
+      assert.ok(loggedAt(log.entries, "error", "Throttling"), "the trip should log at error level");
 
       clock.advance(COOLDOWN_MS);
       await transport.send(url(host, "/f"));
 
-      assert.ok(log.entries.some((entry) => (entry.level === "info") && entry.message.includes("Resumed")), "the recovery should log at info level");
+      assert.ok(loggedAt(log.entries, "info", "Resumed"), "the recovery should log at info level");
     });
   });
 
@@ -1093,15 +1092,15 @@ describe("Transport", () => {
 
       assert.equal(starts.length, 1);
       assert.equal(starts[0]?.method, "GET");
-      assert.equal(starts[0]?.host, configuredHost, "the start payload carries the configured controller host verbatim");
+      assert.equal(starts[0].host, configuredHost, "the start payload carries the configured controller host verbatim");
       assert.equal(ends.length, 1);
 
-      const end = present(ends[0], "the request's end payload");
+      const end = expectAt(ends, 0, "the request's end payload");
 
       assert.equal(end.outcome, "response", "a request that received a response reports the response outcome");
-      assert.equal((end.outcome === "response") ? end.statusCode : undefined, 200);
+      assert.equal(end.statusCode, 200);
       assert.equal(end.host, configuredHost, "the end payload carries the configured controller host verbatim");
-      assert.equal(starts[0]?.requestId, end.requestId, "start and end must share the requestId");
+      assert.equal(starts[0].requestId, end.requestId, "start and end must share the requestId");
     });
 
     test("reports the failure outcome on the end channel when the request fails at the transport level", async () => {
@@ -1118,11 +1117,11 @@ describe("Transport", () => {
 
       assert.equal(ends.length, 1);
 
-      const end = present(ends[0], "the request's end payload");
+      const end = expectAt(ends, 0, "the request's end payload");
 
       assert.equal(end.host, configuredHost, "the failure-path end payload still carries the configured controller host");
       assert.equal(end.outcome, "failure", "a request that never received a response reports the failure outcome");
-      assert.ok(((end.outcome === "failure") ? end.error : "").length > 0, "a transport-level failure carries the classified error's message");
+      assert.ok(end.error.length > 0, "a transport-level failure carries the classified error's message");
     });
 
     test("publishes the full throttle entered and exited payloads around the breaker lifecycle", async () => {
@@ -1204,15 +1203,18 @@ describe("Transport", () => {
        * reports it as the certificate refusal it is: the sentence names the listener that presented the certificate, the address that was dialed, and the
        * verifier's own words and code, so a user reads which of the controller's two listeners to go fix rather than that the host was unreachable.
        */
-      await assertRejectsWith(async () => transport.send(url(peer.host, "/ok")), AccessCertificateError, { check: (error) => {
+      await assert.rejects(async () => transport.send(url(peer.host, "/ok")), (error: unknown) => {
 
+        assert.ok(error instanceof AccessCertificateError);
         assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
         assert.equal(error.host, peer.host, "the address reported is the one this transport dials");
         assert.equal(error.identity, "credentials");
         assert.ok(error.message.startsWith("The UniFi console at " + peer.host + " presented a certificate that could not be verified: "),
           "the sentence opens by naming the console and the address");
         assert.ok(error.message.endsWith("(DEPTH_ZERO_SELF_SIGNED_CERT)."), "and closes with the verifier's own code");
-      } });
+
+        return true;
+      });
     });
 
     test("names the developer API when the transport that met the certificate carries the token identity", async () => {
@@ -1222,14 +1224,17 @@ describe("Transport", () => {
 
       // The identity leg is what fixes the listener: a token transport is built against the developer API's own address, so its refusal says so and tells the
       // user that installing a certificate on the console would not have reached this one.
-      await assertRejectsWith(async () => transport.send(url(peer.host, "/ok")), AccessCertificateError, { check: (error) => {
+      await assert.rejects(async () => transport.send(url(peer.host, "/ok")), (error: unknown) => {
 
+        assert.ok(error instanceof AccessCertificateError);
         assert.equal(error.identity, "token");
         assert.ok(error.message.startsWith("The UniFi Access developer API at " + peer.host + " presented a certificate that could not be verified: "),
           "the sentence opens by naming the developer API");
         assert.ok(error.message.endsWith(" The developer API presents its own certificate, separate from the console's."),
           "and the token leg is told where the certificate it needs actually goes");
-      } });
+
+        return true;
+      });
     });
   });
 

@@ -7,7 +7,7 @@ import { describe, test } from "node:test";
 import type { TransportFailure } from "./failure.ts";
 import assert from "node:assert/strict";
 import { classifyTransportError } from "./failure.ts";
-import { errnoError } from "../testing.helpers.ts";
+import { errnoError } from "homebridge-plugin-utils/testing";
 import { errors } from "undici";
 
 // The fields a row asserts, read off one classification, so each row states its expectation as a single literal.
@@ -67,8 +67,8 @@ describe("classifyTransportError", () => {
   test("reads a timeout at any depth ahead of a cancellation and a code", () => {
 
     assert.deepEqual(reading(platformTimeout()), { code: undefined, kind: "timeout" }, "the platform's numeric legacy code is not a code this reads");
-    assert.deepEqual(reading(Object.assign(new Error("read ECONNRESET", { cause: platformTimeout() }), { code: "ECONNRESET" })), { code: "ECONNRESET",
-      kind: "timeout" }, "a timeout one link down outranks the code above it, which is still carried");
+    assert.deepEqual(reading(errnoError("read ECONNRESET", "ECONNRESET", platformTimeout())), { code: "ECONNRESET", kind: "timeout" },
+      "a timeout one link down outranks the code above it, which is still carried");
     assert.deepEqual(reading(new Error("aborted", { cause: new Error("timed out", { cause: platformTimeout() }) })), { code: undefined, kind: "timeout" },
       "a timeout two links down is found as well");
   });
@@ -77,8 +77,8 @@ describe("classifyTransportError", () => {
 
     assert.deepEqual(reading(platformAbort()), { code: undefined, kind: "timeout" });
     assert.deepEqual(reading(new errors.RequestAbortedError()), { code: "UND_ERR_ABORTED", kind: "timeout" }, "undici's own class for an aborted request");
-    assert.deepEqual(reading(Object.assign(new Error("connect ECONNREFUSED", { cause: platformAbort() }), { code: "ECONNREFUSED" })), { code: "ECONNREFUSED",
-      kind: "timeout" }, "a cancellation below a code outranks the code map");
+    assert.deepEqual(reading(errnoError("connect ECONNREFUSED", "ECONNREFUSED", platformAbort())), { code: "ECONNREFUSED", kind: "timeout" },
+      "a cancellation below a code outranks the code map");
   });
 
   test("reads undici's own failures by the codes they carry", () => {
@@ -128,15 +128,14 @@ describe("classifyTransportError", () => {
 
   test("takes the nearest code, so a certificate verdict below a coded wrapper reads as the wrapper", () => {
 
-    const wrapped = Object.assign(new Error("other side closed", { cause: errnoError("self-signed certificate", "DEPTH_ZERO_SELF_SIGNED_CERT") }),
-      { code: "UND_ERR_SOCKET" });
+    const wrapped = errnoError("other side closed", "UND_ERR_SOCKET", errnoError("self-signed certificate", "DEPTH_ZERO_SELF_SIGNED_CERT"));
 
     assert.deepEqual(reading(wrapped), { code: "UND_ERR_SOCKET", kind: "transport" });
   });
 
   test("skips a code that is not a string and keeps descending", () => {
 
-    const wrapped = Object.assign(new Error("wrapper.", { cause: errnoError("read ECONNRESET", "ECONNRESET") }), { code: 42 });
+    const wrapped = errnoError("wrapper.", 42, errnoError("read ECONNRESET", "ECONNRESET"));
 
     assert.deepEqual(reading(wrapped), { code: "ECONNRESET", kind: "reset" });
   });

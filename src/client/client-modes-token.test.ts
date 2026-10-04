@@ -3,14 +3,13 @@
  * client-modes-token.test.ts: Tests for what a client that connects with a token alone can reach - which endpoints it touches, what it seeds door state from,
  * which of its accessors answer, and what it tears down.
  */
-import { AccessApiError, AccessAuthError, AccessCapabilityError } from "../errors.ts";
 import { DEVICES_PATH, DOORS_PATH, DOOR_HUB, DOOR_MINI, DOOR_ULTRA, HOST, HUB, READER_PRO, connectCapturing, connectCapturingWithDispatch, devicesBody, doorsBody,
   identityEnterpriseBody, interceptOfficialPass, mockController, officialDoor } from "./client-modes.helpers.ts";
-import { TestClock, capturingLog, settle } from "homebridge-plugin-utils/testing";
+import { TestClock, capturingLog, logCount, present, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
-import { assertRejectsWith, present, settleUntil } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "./census.ts";
+import { AccessCapabilityError } from "../errors.ts";
 import type { AccessOfficialDevice } from "../official/devices.ts";
 import type { Interceptable } from "undici";
 import assert from "node:assert/strict";
@@ -171,7 +170,7 @@ describe("a token-only client", () => {
 
     captured.ws.emitMessage(JSON.stringify({ "data": { "firmware": "v4.12.19.0", "unique_id": HUB }, "event": "access.data.device.update",
       "event_object_id": HUB, "receiver_id": "", "save_to_history": false }));
-    await settleUntil(() => client.device(HUB)?.config.firmware === "v4.12.19.0");
+    await settleUntil(() => client.device(HUB)?.config.firmware === "v4.12.19.0", { description: "the frame's firmware to merge onto the seeded hub" });
 
     // A member the listing carries is untouched by a frame that never mentions it, which is what says the frame merged rather than replaced.
     assert.equal(client.device(HUB)?.config.alias, "Test alias 13");
@@ -198,7 +197,7 @@ describe("a token-only client", () => {
 
     captured.ws.emitMessage(JSON.stringify({ "data": { "firmware": "v4.12.19.0", "unique_id": HUB }, "event": "access.data.device.update",
       "event_object_id": HUB, "receiver_id": "", "save_to_history": false }));
-    await settleUntil(() => client.device(HUB)?.config.firmware === "v4.12.19.0");
+    await settleUntil(() => client.device(HUB)?.config.firmware === "v4.12.19.0", { description: "the frame's firmware to merge onto the seeded hub" });
 
     const surviving = accessOfficialDevicesFixture.flat().filter((device) => device.id !== READER_PRO).map(officialDeviceRecord);
     const admitted = officialDeviceRecord({ ...accessOfficialDevicesFixture.flat()[0], "alias": "New Reader", "id": "aabbccddeeff" } as unknown as AccessOfficialDevice);
@@ -230,7 +229,7 @@ describe("a token-only client", () => {
     interceptOfficialPass(official, { devices: devicesBody(renamed) });
     clock.advance(1000);
     await settle();
-    await settleUntil(() => client.device(HUB)?.config.alias === "Front Hub");
+    await settleUntil(() => client.device(HUB)?.config.alias === "Front Hub", { description: "the refresh pass to re-seed the renamed hub" });
   });
 
   test("refuses to produce the topology document, which is credential surface", async () => {
@@ -291,11 +290,14 @@ describe("a token-only client", () => {
       { label: "a configuration write", run: async (): Promise<void> => { await device.updateDevice({}); } } ]) {
 
       // eslint-disable-next-line no-await-in-loop
-      await assertRejectsWith(attempt.run, AccessCapabilityError, { check: (error) => {
+      await assert.rejects(attempt.run, (error: unknown) => {
 
+        assert.ok(error instanceof AccessCapabilityError, attempt.label + " should refuse as a capability verdict");
         assert.match(error.message, new RegExp(attempt.label));
         assert.match(error.message, /holds no credentials for the Access application's own endpoints/);
-      }, message: attempt.label + " should refuse as a capability verdict" });
+
+        return true;
+      }, attempt.label + " should refuse as a capability verdict");
     }
   });
 
@@ -324,8 +326,7 @@ describe("a token-only client", () => {
       assert.equal(client.devices.length, 0, refusal.label + " leaves the inventory empty");
       assert.equal(client.state.snapshot().doorStates.size, 3, "while the doors the token could read are still seeded");
       assert.equal(client.state.snapshot().doors.size, 3);
-      assert.equal(log.entries.filter((entry) => (entry.level === "warn") && entry.message.includes("refused this token the device listing")).length, 1,
-        refusal.label + " is reported exactly once");
+      assert.equal(logCount(log.entries, "warn", "refused this token the device listing"), 1, refusal.label + " is reported exactly once");
     }
   });
 
@@ -349,7 +350,7 @@ describe("a token-only client", () => {
 
     clock.advance(1000);
     await settle();
-    await settleUntil(() => client.doorStates.get(DOOR_MINI)?.lock === "unlocked");
+    await settleUntil(() => client.doorStates.get(DOOR_MINI)?.lock === "unlocked", { description: "the re-seed wake to report the door unlocked" });
 
     const pending = agent.pendingInterceptors().map((interceptor) => interceptor.path);
 
@@ -365,7 +366,7 @@ describe("a token-only client", () => {
     official.intercept({ method: "GET", path: DOORS_PATH }).reply(200, doorsBody(accessOfficialDoorsFixture));
     official.intercept({ method: "GET", path: DEVICES_PATH }).reply(500, "");
 
-    await assert.rejects(async () => connectCapturing(agent, { token: "t0ken" }));
+    await assert.rejects(async () => connectCapturing(agent, { token: "t0ken" }), { name: "AccessRequestError", statusCode: 500 });
   });
 
   test("takes a token the controller has no official API for as fatal, because nothing else can serve it", async () => {
@@ -374,10 +375,7 @@ describe("a token-only client", () => {
 
     official.intercept({ method: "GET", path: DOORS_PATH }).reply(200, identityEnterpriseBody());
 
-    await assertRejectsWith(async () => connectCapturing(agent, { token: "t0ken" }), AccessApiError, { check: (error) => {
-
-      assert.equal(error.code, "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED");
-    } });
+    await assert.rejects(async () => connectCapturing(agent, { token: "t0ken" }), { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED", name: "AccessApiError" });
   });
 
   test("takes a rejected token as terminal, because a token cannot re-authenticate itself", async () => {
@@ -390,13 +388,14 @@ describe("a token-only client", () => {
 
     official.intercept({ method: "GET", path: DOORS_PATH }).reply(401, "");
 
-    await assertRejectsWith(async () => connectCapturing(agent, { token: "t0ken" }), AccessAuthError, { check: (error) => {
+    await assert.rejects(async () => connectCapturing(agent, { token: "t0ken" }), {
 
-      assert.equal(error.identity, "token");
+      identity: "token",
 
       // The refusal reaches the caller through the whole official stack, so this asserts the exact sentence a consumer rendering the message verbatim shows a user.
-      assert.equal(error.message, "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.");
-    } });
+      message: "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.",
+      name: "AccessAuthError"
+    });
   });
 
   test("propagates a failure that is not the capability signal as itself", async () => {
@@ -407,9 +406,6 @@ describe("a token-only client", () => {
 
     official.intercept({ method: "GET", path: DOORS_PATH }).reply(200, JSON.stringify({ code: "CODE_AUTH_FAILED", msg: "the token is not valid" }));
 
-    await assertRejectsWith(async () => connectCapturing(agent, { token: "t0ken" }), AccessApiError, { check: (error) => {
-
-      assert.equal(error.code, "CODE_AUTH_FAILED");
-    } });
+    await assert.rejects(async () => connectCapturing(agent, { token: "t0ken" }), { code: "CODE_AUTH_FAILED", name: "AccessApiError" });
   });
 });

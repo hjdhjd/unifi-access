@@ -17,11 +17,12 @@ import { deviceDisplayName as barrelDeviceDisplayName, isEnterpriseHubRecord as 
 import { describe, test } from "node:test";
 import { deviceDisplayName, isEnterpriseHubRecord, isHub, isReader, isTamperCapable, portBindings, selectAccessPoints, selectController, selectControllerName,
   selectControllerUptime, selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState, terminalInput } from "./selectors.ts";
-import { present, topologyDevices } from "../testing.helpers.ts";
 import { ACCESS_TERMINAL_INPUTS } from "../protocol/terminal-inputs.ts";
 import type { AccessPortBinding } from "../protocol/port-bindings.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
+import { present } from "homebridge-plugin-utils/testing";
+import { topologyDevices } from "../testing.helpers.ts";
 
 // Named entries from the 2026 document: the doors and devices named below, all of them door-attached.
 const DOOR_ULTRA = "00000000-0000-0000-0000-000000000002";
@@ -88,7 +89,7 @@ const stateFrom = (bootstrap: AccessBootstrapConfig): AccessState => applyBootst
 const capabilityLessBootstrap = (): AccessBootstrapConfig => {
 
   const bootstrap = structuredClone(accessBootstrap2026Fixture);
-  const template = structuredClone(bootstrap.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0]);
+  const template = structuredClone(bootstrap.floors?.[0]?.doors?.[0]?.device_groups[0]?.[0]);
 
   assert.ok(template, "the 2026 document should carry a device record to clone");
 
@@ -756,9 +757,9 @@ describe("selectAccessPoints", () => {
 
     assert.equal(points.length, 9, "a port extension the mapping has no port fields for is still expanded");
     assert.equal(synthetic?.unique_id, "00000000-0000-4000-8000-000000000001");
-    assert.equal(synthetic?.alias, "Unknown", "with no target name, the alias falls back");
-    assert.equal(synthetic?.location_id, EAH_ROOT, "with no target value, the location stays the hub's own");
-    assert.equal(synthetic?.display_model, "EAH 8", "and with no port, the model label gains no suffix");
+    assert.equal(synthetic.alias, "Unknown", "with no target name, the alias falls back");
+    assert.equal(synthetic.location_id, EAH_ROOT, "with no target value, the location stays the hub's own");
+    assert.equal(synthetic.display_model, "EAH 8", "and with no port, the model label gains no suffix");
   });
 
   test("carries no model label on the ports of a hub whose census never established one", () => {

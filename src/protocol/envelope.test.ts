@@ -4,8 +4,8 @@
  * member for member under the wire's own key names, so what the reader is checked against is what a controller actually sent rather than a shape imagined for it;
  * and every body the guard is asked to reject is one no capture shows, which is what makes rejecting it the answer rather than a guess.
  */
-import { AccessApiError, AccessProtocolError } from "../errors.ts";
 import { describe, test } from "node:test";
+import { AccessProtocolError } from "../errors.ts";
 import assert from "node:assert/strict";
 import { readResultEnvelope } from "./envelope.ts";
 
@@ -20,22 +20,6 @@ const DIRECT_REFUSAL = { "cloud_code": "", "code": -3, "codeS": "CODE_SYSTEM_ERR
 
 // The sentence a caller supplies for a refusal that arrives without a message of its own.
 const REFUSAL = "The UniFi Access controller refused the operation.";
-
-// The refusal one read raised, typed, so that a test can assert each field by value rather than through a callback.
-function refusalOf(body: unknown, refusal: string = REFUSAL): AccessApiError {
-
-  try {
-
-    readResultEnvelope(body, refusal);
-  } catch(error) {
-
-    assert.ok(error instanceof AccessApiError, "the reader reports a refusal through the typed API error");
-
-    return error;
-  }
-
-  return assert.fail("the reader should have refused " + JSON.stringify(body));
-}
 
 describe("the result envelope's guard", () => {
 
@@ -126,102 +110,120 @@ describe("the result envelope's refusals", () => {
 
   test("reads the official capture, carrying the controller's code, its message and its diagnostic", () => {
 
-    const error = refusalOf(OFFICIAL_REFUSAL);
+    assert.throws(() => readResultEnvelope(OFFICIAL_REFUSAL, REFUSAL), {
 
-    assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
-    assert.equal(error.message, "Invalid image.");
+      // The diagnostic is a fact the controller reported rather than an exception this library caught, so the chain stays empty.
+      cause: undefined,
+      code: "CODE_USER_IMAGE_INVALID",
 
-    // The diagnostic's own internal spacing is the controller's text and survives untouched; only the ends of a member are ever trimmed.
-    assert.equal(error.detail, "CODE[180005];Mesg:Invalid img file format;CauseBy:image: unknown format");
-
-    // The diagnostic is a fact the controller reported rather than an exception this library caught, so the chain stays empty.
-    assert.equal(error.cause, undefined);
+      // The diagnostic's own internal spacing is the controller's text and survives untouched; only the ends of a member are ever trimmed.
+      detail: "CODE[180005];Mesg:Invalid img file format;CauseBy:image: unknown format",
+      message: "Invalid image.",
+      name: "AccessApiError"
+    });
   });
 
   test("reads the direct capture the same way, taking the vocabulary string rather than the number beside it", () => {
 
-    const error = refusalOf(DIRECT_REFUSAL);
+    assert.throws(() => readResultEnvelope(DIRECT_REFUSAL, REFUSAL), {
 
-    // The native dialect spells the vocabulary in `codeS`, so a reader that took `code` would hand the caller -3 and nothing to branch on.
-    assert.equal(error.code, "CODE_SYSTEM_ERROR");
-    assert.equal(error.message, "Server system error.");
-    assert.equal(error.detail, "CODE[-3];Mesg:;CauseBy:");
-    assert.equal(error.cause, undefined);
+      cause: undefined,
+
+      // The native dialect spells the vocabulary in `codeS`, so a reader that took `code` would hand the caller -3 and nothing to branch on.
+      code: "CODE_SYSTEM_ERROR",
+      detail: "CODE[-3];Mesg:;CauseBy:",
+      message: "Server system error.",
+      name: "AccessApiError"
+    });
   });
 
   test("carries a vocabulary string the documentation does not list, rather than rejecting it", () => {
 
-    const error = refusalOf({ ...DIRECT_REFUSAL, "codeS": "CODE_SOMETHING_UNDOCUMENTED" });
+    assert.throws(() => readResultEnvelope({ ...DIRECT_REFUSAL, "codeS": "CODE_SOMETHING_UNDOCUMENTED" }, REFUSAL), {
 
-    assert.equal(error.code, "CODE_SOMETHING_UNDOCUMENTED");
+      code: "CODE_SOMETHING_UNDOCUMENTED",
+      name: "AccessApiError"
+    });
   });
 
   test("falls back to the caller's sentence when the refusal carries no message member", () => {
 
     // Each of the four shapes below is a member that says nothing a reader could use, and each falls back to a different sentence so that what is asserted is the
     // caller's own words rather than a sentence this module composed.
-    const error = refusalOf({ "cloud_code": "", "code": -3, "codeS": "CODE_SYSTEM_ERROR", "error": "CODE[-3];Mesg:;CauseBy:" },
-      "The UniFi Access controller refused the door command.");
-
-    assert.equal(error.message, "The UniFi Access controller refused the door command.");
+    assert.throws(() => readResultEnvelope({ "cloud_code": "", "code": -3, "codeS": "CODE_SYSTEM_ERROR", "error": "CODE[-3];Mesg:;CauseBy:" },
+      "The UniFi Access controller refused the door command."), { message: "The UniFi Access controller refused the door command.", name: "AccessApiError" });
   });
 
   test("falls back to the caller's sentence when the message member is not a string", () => {
 
-    const error = refusalOf({ ...DIRECT_REFUSAL, "msg": {} }, "The UniFi Access controller refused the device restart.");
+    assert.throws(() => readResultEnvelope({ ...DIRECT_REFUSAL, "msg": {} }, "The UniFi Access controller refused the device restart."), {
 
-    assert.equal(error.message, "The UniFi Access controller refused the device restart.");
+      message: "The UniFi Access controller refused the device restart.",
+      name: "AccessApiError"
+    });
   });
 
   test("falls back to the caller's sentence when the message member is empty", () => {
 
-    const error = refusalOf({ ...DIRECT_REFUSAL, "msg": "" }, "The UniFi Access controller refused the topology read.");
+    assert.throws(() => readResultEnvelope({ ...DIRECT_REFUSAL, "msg": "" }, "The UniFi Access controller refused the topology read."), {
 
-    assert.equal(error.message, "The UniFi Access controller refused the topology read.");
+      message: "The UniFi Access controller refused the topology read.",
+      name: "AccessApiError"
+    });
   });
 
   test("falls back to the caller's sentence when the message member is nothing but whitespace", () => {
 
-    const error = refusalOf({ ...DIRECT_REFUSAL, "msg": "   " }, "The UniFi Access controller refused the controller information read.");
+    assert.throws(() => readResultEnvelope({ ...DIRECT_REFUSAL, "msg": "   " }, "The UniFi Access controller refused the controller information read."), {
 
-    assert.equal(error.message, "The UniFi Access controller refused the controller information read.");
+      message: "The UniFi Access controller refused the controller information read.",
+      name: "AccessApiError"
+    });
   });
 
   test("reports no diagnostic when the refusal carries no error member", () => {
 
     // The four shapes here mirror the message's, and each asserts that losing the diagnostic costs the caller nothing else: the code and the message still read.
-    const error = refusalOf({ "cloud_code": "", "code": -3, "codeS": "CODE_SYSTEM_ERROR", "msg": "Server system error. " });
+    assert.throws(() => readResultEnvelope({ "cloud_code": "", "code": -3, "codeS": "CODE_SYSTEM_ERROR", "msg": "Server system error. " }, REFUSAL), {
 
-    assert.equal(error.detail, undefined);
-    assert.equal(error.code, "CODE_SYSTEM_ERROR");
-    assert.equal(error.message, "Server system error.");
+      code: "CODE_SYSTEM_ERROR",
+      detail: undefined,
+      message: "Server system error.",
+      name: "AccessApiError"
+    });
   });
 
   test("reports no diagnostic when the error member is not a string", () => {
 
-    const error = refusalOf({ ...DIRECT_REFUSAL, "error": {} });
+    assert.throws(() => readResultEnvelope({ ...DIRECT_REFUSAL, "error": {} }, REFUSAL), {
 
-    assert.equal(error.detail, undefined);
-    assert.equal(error.code, "CODE_SYSTEM_ERROR");
-    assert.equal(error.message, "Server system error.");
+      code: "CODE_SYSTEM_ERROR",
+      detail: undefined,
+      message: "Server system error.",
+      name: "AccessApiError"
+    });
   });
 
   test("reports no diagnostic when the error member is empty", () => {
 
-    const error = refusalOf({ ...DIRECT_REFUSAL, "error": "" });
+    assert.throws(() => readResultEnvelope({ ...DIRECT_REFUSAL, "error": "" }, REFUSAL), {
 
-    assert.equal(error.detail, undefined);
-    assert.equal(error.code, "CODE_SYSTEM_ERROR");
-    assert.equal(error.message, "Server system error.");
+      code: "CODE_SYSTEM_ERROR",
+      detail: undefined,
+      message: "Server system error.",
+      name: "AccessApiError"
+    });
   });
 
   test("reports no diagnostic when the error member is nothing but whitespace", () => {
 
-    const error = refusalOf({ ...DIRECT_REFUSAL, "error": "   " });
+    assert.throws(() => readResultEnvelope({ ...DIRECT_REFUSAL, "error": "   " }, REFUSAL), {
 
-    assert.equal(error.detail, undefined);
-    assert.equal(error.code, "CODE_SYSTEM_ERROR");
-    assert.equal(error.message, "Server system error.");
+      code: "CODE_SYSTEM_ERROR",
+      detail: undefined,
+      message: "Server system error.",
+      name: "AccessApiError"
+    });
   });
 
   test("reads a padded message and a padded diagnostic as their trimmed text", () => {
@@ -229,21 +231,25 @@ describe("the result envelope's refusals", () => {
     /* Whitespace at the ends of a member is the wire's padding rather than the controller's words: a consumer appending its own punctuation to a message that ends
      * in a space prints the gap. Everything inside the member - its punctuation, its casing, its own spelling - is the controller's text and is left alone.
      */
-    const error = refusalOf({ ...DIRECT_REFUSAL, "error": " CODE[1];Mesg:x;CauseBy:y ", "msg": "  Padded.  " });
+    assert.throws(() => readResultEnvelope({ ...DIRECT_REFUSAL, "error": " CODE[1];Mesg:x;CauseBy:y ", "msg": "  Padded.  " }, REFUSAL), {
 
-    assert.equal(error.message, "Padded.");
-    assert.equal(error.detail, "CODE[1];Mesg:x;CauseBy:y");
+      detail: "CODE[1];Mesg:x;CauseBy:y",
+      message: "Padded.",
+      name: "AccessApiError"
+    });
   });
 
   test("a documented-dialect refusal reads its code out of the member that dialect spells it in", () => {
 
-    const error = refusalOf({ "code": "CODE_RESOURCE_NOT_FOUND", "msg": "The requested resource was not found." });
+    assert.throws(() => readResultEnvelope({ "code": "CODE_RESOURCE_NOT_FOUND", "msg": "The requested resource was not found." }, REFUSAL), {
 
-    assert.equal(error.code, "CODE_RESOURCE_NOT_FOUND");
-    assert.equal(error.message, "The requested resource was not found.");
+      cause: undefined,
+      code: "CODE_RESOURCE_NOT_FOUND",
 
-    // The documented dialect carries no diagnostic member, so there is nothing to report as a detail.
-    assert.equal(error.detail, undefined);
-    assert.equal(error.cause, undefined);
+      // The documented dialect carries no diagnostic member, so there is nothing to report as a detail.
+      detail: undefined,
+      message: "The requested resource was not found.",
+      name: "AccessApiError"
+    });
   });
 });

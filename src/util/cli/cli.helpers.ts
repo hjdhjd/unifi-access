@@ -694,7 +694,7 @@ export function makeCommandContext(opts: { args?: string[]; client?: Record<stri
     return true;
   } } });
 
-  const openClient: OpenClient = opts.openClient ?? (async (openOpts = {}) => {
+  const openClient: OpenClient = opts.openClient ?? (async (openOpts = {}): Promise<AccessClient> => {
 
     opts.calls?.opens.push(openOpts);
 

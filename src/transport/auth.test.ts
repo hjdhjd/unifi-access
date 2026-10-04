@@ -7,8 +7,8 @@
  */
 import { AccessAbortedError, AccessAuthError, AccessThrottledError } from "../errors.ts";
 import type { Interceptable, MockAgent } from "undici";
-import { assertRejectsWith, errnoError, settleUntil, subscribeTo } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
+import { errnoError, settleUntil } from "homebridge-plugin-utils/testing";
 import { heldReply, makeMockTransport, url } from "./mock-controller.helpers.ts";
 import { ACCESS_API_ERROR_LIMIT } from "../settings.ts";
 import type { AccessAuthReloginPayload } from "../diagnostics.ts";
@@ -18,6 +18,7 @@ import type { TestClock } from "homebridge-plugin-utils/testing";
 import type { Transport } from "./http.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
+import { subscribeTo } from "../testing.helpers.ts";
 
 // The endpoints the session drives, relative to the mock controller origin.
 const LOGIN_PATH = "/api/auth/login";
@@ -215,13 +216,15 @@ describe("AuthSession", () => {
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
       pool.intercept({ method: "GET", path: ROOT_PATH }).reply(500, "unavailable");
 
-      await assertRejectsWith(auth.login({ ...CREDENTIALS, host }), AccessAuthError, { check: (error) => {
+      await assert.rejects(auth.login({ ...CREDENTIALS, host }), {
 
-        assert.equal(error.identity, "credentials", "the login handshake is the credential leg, so it attributes its own refusal to that leg");
+        // The login handshake is the credential leg, so it attributes its own refusal to that leg.
+        identity: "credentials",
 
         // Consumer-facing copy a caller may render verbatim, so the sentence is asserted exactly rather than matched loosely.
-        assert.equal(error.message, "Unable to authenticate with the UniFi Access controller. Please check the configured address, username, and password.");
-      } });
+        message: "Unable to authenticate with the UniFi Access controller. Please check the configured address, username, and password.",
+        name: "AccessAuthError"
+      });
 
       assert.equal(auth.isAuthenticated, false);
     });
@@ -370,7 +373,7 @@ describe("AuthSession", () => {
 
       const pair = Promise.all([ fixture.transport.send(url(host, "/one")), fixture.transport.send(url(host, "/two")) ]);
 
-      await settleUntil(() => secondRefusalSeen, { message: "expected the second request to be refused while the handshake was still in flight" });
+      await settleUntil(() => secondRefusalSeen, { description: "the second request to be refused while the handshake was still in flight" });
       handshake.release();
 
       const [ first, second ] = await pair;

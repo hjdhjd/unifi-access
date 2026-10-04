@@ -542,8 +542,8 @@ describe("the doorbell and unlock specimens", () => {
     // The outcome record really does carry the unlock detail its raw-rail residence is about, so its declining to classify is the adjudication working rather than
     // the specimen being empty.
     assert.equal(outcome.data?.["authentication_type"], "CALL");
-    assert.equal(outcome.data?.["source"], "bell");
-    assert.equal(outcome.data?.["success"], true);
+    assert.equal(outcome.data["source"], "bell");
+    assert.equal(outcome.data["success"], true);
   });
 });
 
@@ -655,7 +655,7 @@ describe("the interactive capture specimens", () => {
 
     // The door state the same packet carried reaches the event rather than being dropped alongside the fields the allowlist excludes.
     assert.equal(event.states.length, 1);
-    assert.equal(event.states[0]?.location_id, "00000000-0000-0000-0000-000000000006", "the entry names the door this hub drives");
+    assert.equal(event.states[0].location_id, "00000000-0000-0000-0000-000000000006", "the entry names the door this hub drives");
   });
 });
 
@@ -695,7 +695,7 @@ describe("door-state classification", () => {
     // A report carrying no null member is admitted as the very object the packet delivered: the copy that leaves null members out is made only when there is
     // one to leave out, and everything else is stored as delivered, the way every other wire record is.
     assert.equal(Object.is(entry, (packet.data?.["location_states"] as unknown[])[0]), true, "a null-free entry passes through as itself");
-    assert.equal(entry?.location_id, DOOR_MINI_DOOR);
+    assert.equal(entry.location_id, DOOR_MINI_DOOR);
     assert.equal(entry.lock, "locked");
     assert.equal(entry.dps, "close");
     assert.equal(entry.dps_connected, true);
@@ -722,7 +722,7 @@ describe("door-state classification", () => {
 
     // The state member itself names no door - the envelope does - so this is where the two are joined.
     assert.equal(Object.hasOwn(packet.data?.["state"] as object, "location_id"), false, "the state member carries no door identity of its own");
-    assert.equal(entry?.location_id, DOOR_MINI_DOOR);
+    assert.equal(entry.location_id, DOOR_MINI_DOOR);
     assert.equal(entry.dps, "open");
     assert.deepEqual(entry.alarms, [{ type: "force_unlock" }]);
 
@@ -759,7 +759,7 @@ describe("door-state classification", () => {
 
     assert.equal(event?.kind, "doorStateChanged");
     assert.equal(event.states.length, 1, "the entry naming no door is dropped while its sibling is admitted");
-    assert.equal(event.states[0]?.location_id, DOOR_MINI_DOOR);
+    assert.equal(event.states[0].location_id, DOOR_MINI_DOOR);
     assert.equal(event.device?.id, DOOR_MINI, "the packet's device facet is carried regardless of which entries were dropped");
   });
 
@@ -788,7 +788,7 @@ describe("door-state classification", () => {
     const event = classifyPacket(withStates([clean]));
 
     assert.equal(event?.kind, "doorStateChanged");
-    assert.deepEqual(event.states[0]?.unlock_suspend, { "status": "end", "unlock_type": "" });
+    assert.deepEqual(event.states[0].unlock_suspend, { "status": "end", "unlock_type": "" });
   });
 
   test("a device update whose door-state array is empty or wholly unreadable falls through to a device update", () => {

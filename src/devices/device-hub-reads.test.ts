@@ -8,11 +8,12 @@ import { DOOR_HUB, DOOR_MINI, DOOR_MINI_DOOR, EAH_DOOR_2, EAH_HUB, EAH_PORT_2, E
   wirePacket } from "./device.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
-import { present, topologyDevices } from "../testing.helpers.ts";
 import { accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import assert from "node:assert/strict";
 import { classifyPacket } from "../protocol/events.ts";
 import { officialDoorRecord } from "../client/census.ts";
+import { present } from "homebridge-plugin-utils/testing";
+import { topologyDevices } from "../testing.helpers.ts";
 
 describe("the door record through a hub", () => {
 
@@ -26,12 +27,17 @@ describe("the door record through a hub", () => {
      * one this handle drives could not satisfy both readings. The size assertion is what keeps that condition from quietly lapsing under a fixture edit.
      */
     assert.equal(store.snapshot().doors.size, 3);
-    assert.equal(hub.door?.unique_id, DOOR_HUB);
-    assert.equal(hub.door?.name, "Test Name 10");
-    assert.equal(hub.door?.full_name, "Test Name 11");
-    assert.equal(mini.door?.unique_id, DOOR_MINI_DOOR);
-    assert.equal(mini.door?.name, "Test Name 22");
-    assert.equal(mini.door?.full_name, "Test Name 23");
+
+    // Read into bindings of their own, so the assertions narrow those bindings rather than the getters the reads after the census go through.
+    const hubDoor = hub.door;
+    const miniDoor = mini.door;
+
+    assert.equal(hubDoor?.unique_id, DOOR_HUB);
+    assert.equal(hubDoor.name, "Test Name 10");
+    assert.equal(hubDoor.full_name, "Test Name 11");
+    assert.equal(miniDoor?.unique_id, DOOR_MINI_DOOR);
+    assert.equal(miniDoor.name, "Test Name 22");
+    assert.equal(miniDoor.full_name, "Test Name 23");
 
     // An enumerating census that no longer names one hub's door takes it out of the collection, which is the state a handle whose door was never censused is
     // in: the handle is still there and the record behind it is not.
@@ -60,7 +66,7 @@ describe("door state through a hub", () => {
     const reported = hub.doorState;
 
     assert.equal(reported?.lock, "unlocked");
-    assert.equal(reported?.location_id, DOOR_HUB, "the hub resolved its own door rather than the consumer having to");
+    assert.equal(reported.location_id, DOOR_HUB, "the hub resolved its own door rather than the consumer having to");
 
     // A second single-door hub in the same topology resolves its own door and reads nothing from the first one's report, which is what shows the resolution is
     // per-handle rather than incidental.
@@ -68,7 +74,7 @@ describe("door state through a hub", () => {
 
     assert.equal(mini.config.location_id, DOOR_MINI_DOOR);
     assert.equal(mini.doorState?.lock, "locked", "the other hub's door still shows what its own hardware established");
-    assert.equal(mini.doorState?.location_id, DOOR_MINI_DOOR);
+    assert.equal(mini.doorState.location_id, DOOR_MINI_DOOR);
   });
 
   test("an entry whose optional member is malformed leaves the previously stored one standing", () => {

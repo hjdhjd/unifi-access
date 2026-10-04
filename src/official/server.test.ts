@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 
 const rows: readonly DomainRow<OfficialApiServer>[] = [
 
-  { inspect: (request) => {
+  { inspect: (request): void => {
 
     const parts = parseMultipart(request.body, request.headers["content-type"] ?? "");
 
@@ -21,10 +21,10 @@ const rows: readonly DomainRow<OfficialApiServer>[] = [
     /* The filenames are the caller's, and these two are deliberately not the conventional `server.key` and `server.crt` the reference's sample uses - so a method
      * that invented the conventional names instead of forwarding what it was handed fails here.
      */
-    assert.equal(parts[0]?.filename, "test-name-1-private.pem");
-    assert.equal(parts[1]?.filename, "test-name-1-chain.pem");
-    assert.equal(parts[0]?.data.toString("utf8"), "PRIVATE KEY BYTES");
-    assert.deepEqual(parts[1]?.data, Buffer.from([ 45, 45, 66, 69, 71, 73, 78 ]));
+    assert.equal(parts[0].filename, "test-name-1-private.pem");
+    assert.equal(parts[1].filename, "test-name-1-chain.pem");
+    assert.equal(parts[0].data.toString("utf8"), "PRIVATE KEY BYTES");
+    assert.deepEqual(parts[1].data, Buffer.from([ 45, 45, 66, 69, 71, 73, 78 ]));
 
     // The transport's JSON stamp would name no boundary at all, so the multipart type has to be the one that reached the wire.
     assert.match(request.headers["content-type"] ?? "", (/^multipart\/form-data; boundary=/));

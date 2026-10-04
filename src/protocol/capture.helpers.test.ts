@@ -15,9 +15,10 @@ import { accessBootstrap2026Fixture, accessBootstrapEahFixture } from "./topolog
 import { accessEventPackets2024Fixture, accessEventPacketsDoorStateFixture, accessEventPacketsFixture, accessEventPacketsHistoricalFixture,
   accessEventPacketsInteractiveFixture, accessEventPacketsOfficialSocketFixture, accessEventPacketsTamperFixture } from "./events.fixtures.ts";
 import { describe, test } from "node:test";
-import { present, topologyDevices } from "../testing.helpers.ts";
+import { expectAt, present } from "homebridge-plugin-utils/testing";
 import type { AccessBootstrapConfig } from "../types/index.ts";
 import assert from "node:assert/strict";
+import { topologyDevices } from "../testing.helpers.ts";
 
 /* The port configuration entry and the extension that carries it, spelled here rather than imported for the reason capture.helpers.ts:25-27 gives: a test that
  * reached for the implementation's own names would agree with it whatever it spelled them as.
@@ -175,8 +176,8 @@ describe("the captured packet corpus", () => {
 
   test("findPacket searches only the named corpus", () => {
 
-    const inside = present(accessEventPacketsTamperFixture[0], "the tamper window's opening packet");
-    const outside = present(capturedPackets[0], "the first captured packet");
+    const inside = expectAt(accessEventPacketsTamperFixture, 0, "the tamper window's opening packet");
+    const outside = expectAt(capturedPackets, 0, "the first captured packet");
 
     // One predicate, answered inside the window it names and refused outside it, which is what says the option narrows the search rather than decorating it.
     assert.ok(Object.is(findPacket((packet) => Object.is(packet, inside), "the tamper window's opening packet", { corpus: accessEventPacketsTamperFixture }),

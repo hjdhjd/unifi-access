@@ -104,8 +104,14 @@ describe("the user group", () => {
     const joined = makeFakeClient(spec);
     const rejected = makeCommandContext({ args: [ "show", "Jane Smith" ], calls: joined.calls, client: joined.client });
 
-    await assert.rejects(async () => user.run(rejected.ctx), (error: unknown) => (error instanceof CliError) &&
-      error.message.includes("Dr. Jane Smith => user-1") && error.message.includes("Sam Jones => user-2"));
+    await assert.rejects(async () => user.run(rejected.ctx), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.match(error.message, /Dr\. Jane Smith => user-1/);
+      assert.match(error.message, /Sam Jones => user-2/);
+
+      return true;
+    });
 
     assert.deepEqual(joined.calls.official.map((call) => call.method), [ "users.fetch", "users.iterateSearch", "users.iterateAll" ]);
   });
@@ -138,8 +144,14 @@ describe("the user group", () => {
     const { calls, client } = makeFakeClient(spec);
     const { ctx } = makeCommandContext({ args: [ "show", "nobody" ], calls, client });
 
-    await assert.rejects(async () => user.run(ctx), (error: unknown) => (error instanceof CliError) &&
-      error.message.includes("Dr. Jane Smith => user-1") && error.message.includes("Sam Jones => user-2"));
+    await assert.rejects(async () => user.run(ctx), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.match(error.message, /Dr\. Jane Smith => user-1/);
+      assert.match(error.message, /Sam Jones => user-2/);
+
+      return true;
+    });
 
     assert.deepEqual(calls.official.map((call) => call.method), [ "users.fetch", "users.iterateSearch", "users.iterateAll" ]);
   });
@@ -159,7 +171,7 @@ describe("the user group", () => {
     const upload = calls.official.find((call) => call.method === "users.uploadAvatar");
 
     assert.equal(upload?.args[0], "user-1");
-    assert.deepEqual(upload?.args[1], { data: Buffer.from("jpeg-bytes"), filename: "jane.jpg" });
+    assert.deepEqual(upload.args[1], { data: Buffer.from("jpeg-bytes"), filename: "jane.jpg" });
     assert.match(lines.join(""), /\burl\b/, "the returned avatar record renders");
   });
 
@@ -168,7 +180,7 @@ describe("the user group", () => {
     const { calls, client } = makeFakeClient(spec);
     const { ctx } = makeCommandContext({ args: [ "avatar", "user-1", "/nonexistent/path.jpg" ], calls, client });
 
-    await assert.rejects(async () => user.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(async () => user.run(ctx), { exitCode: 2, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -179,8 +191,12 @@ describe("the user group", () => {
     const { calls, client } = makeFakeClient(spec);
     const { ctx } = makeCommandContext({ args: ["show"], calls, client });
 
-    await assert.rejects(async () => user.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify one user by id or full name. Run \"ufa user show --help\" for usage."));
+    await assert.rejects(async () => user.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify one user by id or full name. Run \"ufa user show --help\" for usage.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -191,8 +207,12 @@ describe("the user group", () => {
     const { calls, client } = makeFakeClient(spec);
     const { ctx } = makeCommandContext({ args: [ "avatar", "user-1" ], calls, client });
 
-    await assert.rejects(async () => user.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify one user by id or full name, and an image file. Run \"ufa user avatar --help\" for usage."));
+    await assert.rejects(async () => user.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify one user by id or full name, and an image file. Run \"ufa user avatar --help\" for usage.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -284,8 +304,12 @@ describe("the visitor group", () => {
     const { calls, client } = makeFakeClient(spec);
     const { ctx } = makeCommandContext({ args: ["show"], calls, client });
 
-    await assert.rejects(async () => visitor.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify one visitor by id or name. Run \"ufa visitor show --help\" for usage."));
+    await assert.rejects(async () => visitor.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify one visitor by id or name. Run \"ufa visitor show --help\" for usage.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -372,12 +396,11 @@ describe("the logs group", () => {
     const { calls, client } = makeFakeClient({ official: { hits: HITS } });
     const missing = makeCommandContext({ args: ["search"], calls, client });
 
-    await assert.rejects(async () => logs.run(missing.ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(async () => logs.run(missing.ctx), { exitCode: 2, name: "CliError" });
 
     const unknown = makeCommandContext({ args: [ "search", "--topic", "gossip" ], calls, client });
 
-    await assert.rejects(async () => logs.run(unknown.ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("door_openings"));
+    await assert.rejects(async () => logs.run(unknown.ctx), { exitCode: 2, message: /door_openings/, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -388,8 +411,15 @@ describe("the logs group", () => {
     const { calls, client } = makeFakeClient({ official: { hits: HITS } });
     const { ctx } = makeCommandContext({ args: [ "search", "--topic", "critical", "--since", "yesterday-ish" ], calls, client });
 
-    await assert.rejects(async () => logs.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("ISO 8601") && error.message.includes("epoch"));
+    await assert.rejects(async () => logs.run(ctx), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.equal(error.exitCode, 2);
+      assert.match(error.message, /ISO 8601/);
+      assert.match(error.message, /epoch/);
+
+      return true;
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -400,8 +430,7 @@ describe("the logs group", () => {
     const { calls, client } = makeFakeClient({ official: { hits: HITS } });
     const { ctx } = makeCommandContext({ args: [ "search", "--topic", "door_openings", "--limit", "x" ], calls, client });
 
-    await assert.rejects(async () => logs.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("--limit"));
+    await assert.rejects(async () => logs.run(ctx), { exitCode: 2, message: /--limit/, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -441,7 +470,13 @@ describe("the logs group", () => {
 
       // Sequential by intent: each missing flag is asserted on its own invocation.
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => logs.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2), args.join(" "));
+      await assert.rejects(async () => logs.run(ctx), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, args.join(" "));
+        assert.equal(error.exitCode, 2, args.join(" "));
+
+        return true;
+      }, args.join(" "));
 
       assert.equal(calls.opens.length, 0, args.join(" "));
       assert.equal(calls.credentialLoads, 0, args.join(" "));
@@ -471,7 +506,7 @@ describe("the webhook group", () => {
     const { calls, client } = makeFakeClient({ official: {} });
     const missing = makeCommandContext({ args: [ "add", "alerts", "https://example.net/hook" ], calls, client });
 
-    await assert.rejects(async () => webhook.run(missing.ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(async () => webhook.run(missing.ctx), { exitCode: 2, name: "CliError" });
 
     const { ctx, lines } = makeCommandContext({ args: [ "add", "alerts", "https://example.net/hook", "--events", "access.door.unlock,access.door.close",
       "--header", "Authorization:Bearer t0ken" ], calls, client });
@@ -490,7 +525,7 @@ describe("the webhook group", () => {
     const { calls, client } = makeFakeClient({ official: {} });
     const { ctx } = makeCommandContext({ args: [ "add", "alerts", "https://example.net/hook", "--events", "a", "--header", "no-colon" ], calls, client });
 
-    await assert.rejects(async () => webhook.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(async () => webhook.run(ctx), { exitCode: 2, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -521,8 +556,12 @@ describe("the webhook group", () => {
     const { calls, client } = makeFakeClient({ official: {} });
     const { ctx } = makeCommandContext({ args: [ "add", "alerts" ], calls, client });
 
-    await assert.rejects(async () => webhook.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify a name and a delivery URL. Run \"ufa webhook add --help\" for usage."));
+    await assert.rejects(async () => webhook.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify a name and a delivery URL. Run \"ufa webhook add --help\" for usage.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -533,8 +572,12 @@ describe("the webhook group", () => {
     const { calls, client } = makeFakeClient({ official: {} });
     const { ctx } = makeCommandContext({ args: ["remove"], calls, client });
 
-    await assert.rejects(async () => webhook.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify one webhook endpoint by id or name. Run \"ufa webhook remove --help\" for usage."));
+    await assert.rejects(async () => webhook.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify one webhook endpoint by id or name. Run \"ufa webhook remove --help\" for usage.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -623,8 +666,14 @@ describe("the api hatch", () => {
 
       // Sequential by intent: each refusal is asserted on its own invocation, and the sentence is what tells one refusal apart from the check before it.
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => api.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-        (error.message === sentence), args.join(" "));
+      await assert.rejects(async () => api.run(ctx), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, args.join(" "));
+        assert.equal(error.exitCode, 2, args.join(" "));
+        assert.equal(error.message, sentence, args.join(" "));
+
+        return true;
+      }, args.join(" "));
 
       assert.equal(calls.opens.length, 0, args.join(" "));
       assert.equal(calls.credentialLoads, 0, args.join(" "));
@@ -653,7 +702,13 @@ describe("the official surface refusals", () => {
 
       // Sequential by intent: each group is asserted on its own invocation.
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => spec.run(ctx), (error: unknown) => (error instanceof CliError) && error.message.includes("official API"), name);
+      await assert.rejects(async () => spec.run(ctx), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, name);
+        assert.match(error.message, /official API/, name);
+
+        return true;
+      }, name);
 
       assert.equal(calls.opens.length, 0, name);
       assert.equal(calls.credentialLoads, 1, name);
@@ -669,7 +724,13 @@ describe("the official surface refusals", () => {
 
       // Sequential by intent: each group is asserted on its own invocation.
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => spec.run(ctx), (error: unknown) => (error instanceof CliError) && error.message.includes("official API"), name);
+      await assert.rejects(async () => spec.run(ctx), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, name);
+        assert.match(error.message, /official API/, name);
+
+        return true;
+      }, name);
 
       assert.equal(calls.opens.length, 1, name + " connects before the runtime verdict refuses");
     }
@@ -736,8 +797,7 @@ describe("the classify command", () => {
 
   test("a non-JSON line is a usage error naming the line number", async () => {
 
-    await assert.rejects(async () => runClassify(JSON.stringify(RING) + "\n{nope\n"),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("Line 2"));
+    await assert.rejects(async () => runClassify(JSON.stringify(RING) + "\n{nope\n"), { exitCode: 2, message: /Line 2/, name: "CliError" });
   });
 
   test("two input files are a usage error", async () => {
@@ -745,8 +805,12 @@ describe("the classify command", () => {
     // Neither file needs to exist: the arity guard fires ahead of the read, which is what the refusal's own sentence tells us happened.
     const { ctx } = makeCommandContext({ args: [ "a.ndjson", "b.ndjson" ] });
 
-    await assert.rejects(async () => classify.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify at most one input file, or nothing for stdin. Run \"ufa classify --help\" for usage."));
+    await assert.rejects(async () => classify.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify at most one input file, or nothing for stdin. Run \"ufa classify --help\" for usage.",
+      name: "CliError"
+    });
   });
 
   test("an unreadable input file is a usage error naming the file", async () => {
@@ -754,8 +818,15 @@ describe("the classify command", () => {
     const missing = path.join(tmpdir(), "ufa-classify-missing-" + Date.now().toString() + ".ndjson");
     const { ctx } = makeCommandContext({ args: [missing] });
 
-    await assert.rejects(async () => classify.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      error.message.startsWith("Unable to read packets from") && error.message.includes("\"" + missing + "\""));
+    await assert.rejects(async () => classify.run(ctx), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.equal(error.exitCode, 2);
+      assert.match(error.message, /^Unable to read packets from/);
+      assert.ok(error.message.includes("\"" + missing + "\""));
+
+      return true;
+    });
   });
 
   test("stdin serves as the input when no file is named", async () => {
@@ -795,7 +866,7 @@ describe("the official-consumer connect chokepoint", () => {
     assert.equal(opened, client);
     assert.equal(calls.opens.length, 1);
     assert.equal(calls.opens[0]?.refreshIntervalMs, false);
-    assert.notEqual(calls.opens[0]?.credentials, undefined, "the pre-loaded identity threads into the connect");
+    assert.notEqual(calls.opens[0].credentials, undefined, "the pre-loaded identity threads into the connect");
   });
 });
 

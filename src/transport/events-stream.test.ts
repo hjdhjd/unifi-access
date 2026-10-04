@@ -11,12 +11,12 @@ import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessP
   formatErrorChain } from "../errors.ts";
 import type { AccessEventsClosedPayload, AccessEventsPacketPayload } from "../diagnostics.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
-import { DIAL_SETTLE_BOUND_MS, createSilentLoopback, elapsedSince, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
+import { DIAL_SETTLE_BOUND_MS, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
 import { EventStream, HEARTBEAT_FRAME } from "./events-stream.ts";
 import { FakeWebSocket, createLoopbackServer } from "./events-stream.helpers.ts";
-import { TestClock, assertNoUnhandledRejections, capturingLog, settle, silentLog, waitUntil } from "homebridge-plugin-utils/testing";
+import { TestClock, assertNoUnhandledRejections, capturingLog, errnoError, expectAt, freePort, loggedAt, settle, settleUntil, silentLog,
+  waitUntil } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
-import { errnoError, present, settleUntil, subscribeTo } from "../testing.helpers.ts";
 import { ACCESS_EVENTS_HEARTBEAT_TIMEOUT } from "../settings.ts";
 import type { AccessEventPacket } from "../types/index.ts";
 import type { AccessLogging } from "../logging.ts";
@@ -25,8 +25,8 @@ import type { AccessWireEvent } from "../protocol/events.ts";
 import type { EventStreamEvents } from "./events-stream.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
-import { createServer as createTcpServer } from "node:net";
 import { findPacket } from "../protocol/capture.helpers.ts";
+import { subscribeTo } from "../testing.helpers.ts";
 import tls from "node:tls";
 
 const HOST = "10.0.0.1";
@@ -44,7 +44,7 @@ async function openStream(options: { clock?: TestClock; log?: AccessLogging } = 
   const clock = options.clock ?? new TestClock();
   const log = options.log ?? silentLog();
   const ws = new FakeWebSocket({ autoOpen: false });
-  const stream = new EventStream({ clock, host: HOST, log, webSocket: () => ws });
+  const stream = new EventStream({ clock, host: HOST, log, webSocket: (): AccessWebSocket => ws });
 
   ws.emitOpen();
   await stream.opened;
@@ -81,18 +81,6 @@ function loopbackHost(port: number): string {
   return "127.0.0.1:" + port.toString();
 }
 
-// A loopback port nothing is listening on, obtained by binding one and letting it go: the kernel hands out a free port, and releasing it leaves an address that
-// refuses at once rather than one a firewall might silently drop.
-async function vacantPort(): Promise<number> {
-
-  const server = createTcpServer();
-  const port = await listenOnLoopback(server);
-
-  await stopListening(server);
-
-  return port;
-}
-
 // What a captured upgrade reports: the address the socket factory was given, the headers it was given alongside it, and the stream those built - which the caller
 // closes, since nothing here opens the socket.
 interface CapturedUpgrade {
@@ -118,7 +106,7 @@ function upgradeOf(options: { endpoint?: string; getAuthHeaders?: () => Record<s
     log: silentLog(),
     ...((options.endpoint !== undefined) && { endpoint: options.endpoint }),
     ...((options.getAuthHeaders !== undefined) && { getAuthHeaders: options.getAuthHeaders }),
-    webSocket: (target, headers) => {
+    webSocket: (target, headers): AccessWebSocket => {
 
       captured = { headers, url: target };
 
@@ -148,7 +136,7 @@ describe("EventStream", () => {
       let capturedUrl = "";
       const ws = new FakeWebSocket({ autoOpen: false });
 
-      await using stream = new EventStream({ host: HOST, log: silentLog(), webSocket: (target) => {
+      await using stream = new EventStream({ host: HOST, log: silentLog(), webSocket: (target): AccessWebSocket => {
 
         capturedUrl = target;
 
@@ -173,7 +161,7 @@ describe("EventStream", () => {
 
       const ws = new FakeWebSocket({ autoOpen: false });
 
-      await using stream = new EventStream({ host: HOST, log: silentLog(), webSocket: () => ws });
+      await using stream = new EventStream({ host: HOST, log: silentLog(), webSocket: (): AccessWebSocket => ws });
       const errors = collect(stream, "error");
       const closed = collect(stream, "closed");
 
@@ -202,7 +190,7 @@ describe("EventStream", () => {
 
       controller.abort();
 
-      const stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: () => ws });
+      const stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: (): AccessWebSocket => ws });
 
       await assert.rejects(stream.opened, AccessAbortedError);
       assert.equal(ws.closeRequested, true);
@@ -212,7 +200,7 @@ describe("EventStream", () => {
 
       const ws = new FakeWebSocket({ autoOpen: false });
       const controller = new AbortController();
-      const stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: () => ws });
+      const stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: (): AccessWebSocket => ws });
 
       controller.abort();
 
@@ -226,7 +214,7 @@ describe("EventStream", () => {
       await assertNoUnhandledRejections(async () => {
 
         const ws = new FakeWebSocket({ autoOpen: false });
-        const stream = new EventStream({ host: HOST, log: silentLog(), webSocket: () => ws });
+        const stream = new EventStream({ host: HOST, log: silentLog(), webSocket: (): AccessWebSocket => ws });
         const errors = collect(stream, "error");
 
         ws.emitClose(1006, "handshake failed");
@@ -468,12 +456,13 @@ describe("EventStream", () => {
       })();
 
       ws.emitMessage(frame(packet));
-      await settleUntil(() => collected.length === 1);
+      await settleUntil(() => collected.length === 1, { description: "the stream() rail to deliver the packet" });
 
       controller.abort();
 
-      // The raw stream rail rejects on abort (node:events' contract) - unlike the packets() sugar, which returns cleanly.
-      await assert.rejects(task);
+      // The raw stream rail rejects on abort (node:events' contract) - unlike the packets() sugar, which returns cleanly. The match is by name and code because Node's
+      // `AbortError` has no importable constructor.
+      await assert.rejects(task, { code: "ABORT_ERR", name: "AbortError" });
       assert.equal(collected.length, 1);
     });
 
@@ -511,7 +500,7 @@ describe("EventStream", () => {
       })();
 
       ws.emitMessage(frame(packet));
-      await settleUntil(() => collected.length === 1);
+      await settleUntil(() => collected.length === 1, { description: "packets() to yield the packet" });
 
       controller.abort();
       await task;
@@ -693,7 +682,7 @@ describe("EventStream", () => {
 
       ws.emitMessage("{not json");
       ws.emitMessage(frame(packet));
-      await settleUntil(() => collected.length === 1);
+      await settleUntil(() => collected.length === 1, { description: "the packets() iterator to yield the packet that follows the rejected frame" });
 
       controller.abort();
       await task;
@@ -727,7 +716,7 @@ describe("EventStream", () => {
     test("a socket error before the open reaches the caller on the handshake rejection alone", async () => {
 
       const ws = new FakeWebSocket({ autoOpen: false });
-      const stream = new EventStream({ host: HOST, log: silentLog(), webSocket: () => ws });
+      const stream = new EventStream({ host: HOST, log: silentLog(), webSocket: (): AccessWebSocket => ws });
       const errors = collect(stream, "error");
       const closed = collect(stream, "closed");
       const planted = new Error("connection refused");
@@ -740,11 +729,14 @@ describe("EventStream", () => {
       assert.equal(errors.length, 0, "a socket error before the open stays off the error rail");
       assert.equal(closed.length, 1);
 
-      const failure = await stream.opened.catch((error: unknown) => error);
-
       // The rejection is the fault itself rather than a generic pre-open failure, so the type says what happened and the socket's own error is still underneath it.
-      assert.ok(failure instanceof AccessNetworkError, "a socket error surfaces as a network error whether or not the socket had opened");
-      assert.equal(failure.cause, planted, "the rejection carries the socket's own error as its cause");
+      await assert.rejects(stream.opened, (error: unknown) => {
+
+        assert.ok(error instanceof AccessNetworkError, "a socket error surfaces as a network error whether or not the socket had opened");
+        assert.equal(error.cause, planted, "the rejection carries the socket's own error as its cause");
+
+        return true;
+      }, "a socket error surfaces as a network error whether or not the socket had opened");
     });
 
     test("a socket error whose listener throws still leaves the socket asked to close", async () => {
@@ -947,7 +939,7 @@ describe("EventStream", () => {
 
       const clock = new TestClock();
       const ws = new FakeWebSocket({ autoOpen: false });
-      const stream = new EventStream({ clock, host: HOST, log: silentLog(), webSocket: () => ws });
+      const stream = new EventStream({ clock, host: HOST, log: silentLog(), webSocket: (): AccessWebSocket => ws });
 
       // The watchdog arms at construction rather than at open, so a socket that never opens is torn down on the same threshold as one that opened and went quiet.
       clock.advance(ACCESS_EVENTS_HEARTBEAT_TIMEOUT);
@@ -1064,7 +1056,7 @@ describe("EventStream", () => {
 
       const controller = new AbortController();
       const ws = new FakeWebSocket({ autoOpen: false });
-      const stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: () => ws });
+      const stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: (): AccessWebSocket => ws });
 
       ws.emitOpen();
       await stream.opened;
@@ -1098,7 +1090,7 @@ describe("EventStream", () => {
         close: (): void => undefined,
         removeEventListener: (): void => undefined
       };
-      const stream = new EventStream({ host: HOST, log: silentLog(), webSocket: () => ws });
+      const stream = new EventStream({ host: HOST, log: silentLog(), webSocket: (): AccessWebSocket => ws });
       const closed = collect(stream, "closed");
       const errors = collect(stream, "error");
 
@@ -1117,7 +1109,7 @@ describe("EventStream", () => {
     test("a close() before the open is not re-entered by a socket that reports the close from inside it", async () => {
 
       const ws = new FakeWebSocket({ autoOpen: false, failsOnClose: true });
-      const stream = new EventStream({ host: HOST, log: silentLog(), webSocket: () => ws });
+      const stream = new EventStream({ host: HOST, log: silentLog(), webSocket: (): AccessWebSocket => ws });
       const closed = collect(stream, "closed");
       const errors = collect(stream, "error");
 
@@ -1138,7 +1130,7 @@ describe("EventStream", () => {
     test("a close() after the open is not re-entered by a socket that reports the close from inside it", async () => {
 
       const ws = new FakeWebSocket({ autoOpen: false, failsOnClose: true });
-      const stream = new EventStream({ host: HOST, log: silentLog(), webSocket: () => ws });
+      const stream = new EventStream({ host: HOST, log: silentLog(), webSocket: (): AccessWebSocket => ws });
 
       ws.emitOpen();
       await stream.opened;
@@ -1158,7 +1150,7 @@ describe("EventStream", () => {
 
       const controller = new AbortController();
       const ws = new FakeWebSocket({ autoOpen: false, failsOnClose: true });
-      const stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: () => ws });
+      const stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: (): AccessWebSocket => ws });
       const errors = collect(stream, "error");
 
       // The cancellation is what the caller is owed, and the CLI branches on that class to report an interrupt rather than a network failure. A close arriving
@@ -1182,9 +1174,8 @@ describe("EventStream", () => {
 
       ws.emitClose(1000, "going away");
 
-      assert.ok(log.entries.some((entry) => (entry.level === "debug") && entry.message.includes("Connected to the UniFi Access realtime notification API.")),
-        "the connect line must log at debug, not info");
-      assert.ok(log.entries.some((entry) => (entry.level === "debug") && entry.message.includes("connection closed.")), "the close line must log at debug");
+      assert.ok(loggedAt(log.entries, "debug", "Connected to the UniFi Access realtime notification API."), "the connect line must log at debug, not info");
+      assert.ok(loggedAt(log.entries, "debug", "connection closed."), "the close line must log at debug");
       assert.equal(log.entries.some((entry) => entry.level === "info"), false, "a per-connection lifecycle event is not an info-level event");
     });
 
@@ -1482,12 +1473,15 @@ describe("EventStream", () => {
        * pre-open failure reaches the caller on the handshake rejection exactly as every other one does - naming the listener, the address dialed, and the
        * verifier's own code, which the socket's own error event never carried at all.
        */
-      const failure = await verified.opened.catch((error: unknown) => error);
+      await assert.rejects(verified.opened, (error: unknown) => {
 
-      assert.ok(failure instanceof AccessCertificateError, "a certificate the verifier refused reaches the caller as the refusal it is");
-      assert.equal(failure.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
-      assert.equal(failure.host, loopbackHost(server.port), "the address reported is the one the stream dialed");
-      assert.equal(failure.identity, "credentials");
+        assert.ok(error instanceof AccessCertificateError, "a certificate the verifier refused reaches the caller as the refusal it is");
+        assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
+        assert.equal(error.host, loopbackHost(server.port), "the address reported is the one the stream dialed");
+        assert.equal(error.identity, "credentials");
+
+        return true;
+      }, "a certificate the verifier refused reaches the caller as the refusal it is");
 
       await verified.close();
     });
@@ -1502,28 +1496,34 @@ describe("EventStream", () => {
       /* The official socket answers on the developer API's own port, which an endpoint override is what names. The address reported is therefore read from the
        * endpoint rather than from `host`, which stays the controller this stream is an identity for.
        */
-      const failure = await stream.opened.catch((error: unknown) => error);
+      await assert.rejects(stream.opened, (error: unknown) => {
 
-      assert.ok(failure instanceof AccessCertificateError);
-      assert.equal(failure.identity, "token");
-      assert.equal(failure.host, loopbackHost(server.port), "the endpoint's own host and port is what was dialed");
-      assert.ok(failure.message.startsWith("The UniFi Access developer API at "), "the token leg names the listener a certificate has to be installed on");
+        assert.ok(error instanceof AccessCertificateError);
+        assert.equal(error.identity, "token");
+        assert.equal(error.host, loopbackHost(server.port), "the endpoint's own host and port is what was dialed");
+        assert.ok(error.message.startsWith("The UniFi Access developer API at "), "the token leg names the listener a certificate has to be installed on");
+
+        return true;
+      });
 
       await stream.close();
     });
 
     test("a dial nothing is listening for carries the platform's own errno to the caller", async () => {
 
-      const stream = new EventStream({ clock: new TestClock(), host: loopbackHost(await vacantPort()), log: silentLog() });
+      const stream = new EventStream({ clock: new TestClock(), host: loopbackHost(await freePort()), log: silentLog() });
 
       /* Every dial failure loses its errno on the way to the socket's error event, not a certificate refusal alone, so a refused port arrives as an empty failure
        * unless the connector's record is read first. This is the row that says the record serves the whole class rather than the certificate case.
        */
-      const failure = await stream.opened.catch((error: unknown) => error);
+      await assert.rejects(stream.opened, (error: unknown) => {
 
-      assert.ok(failure instanceof AccessNetworkError, "a refused dial is a reachability failure");
-      assert.ok(!(failure instanceof AccessCertificateError), "and nothing about a certificate, since no handshake was reached to present one");
-      assert.equal(failure.code, "ECONNREFUSED");
+        assert.ok(error instanceof AccessNetworkError, "a refused dial is a reachability failure");
+        assert.ok(!(error instanceof AccessCertificateError), "and nothing about a certificate, since no handshake was reached to present one");
+        assert.equal(error.code, "ECONNREFUSED");
+
+        return true;
+      }, "a refused dial is a reachability failure");
 
       await stream.close();
     });
@@ -1557,16 +1557,20 @@ describe("EventStream", () => {
       await peer.connection(0);
       clock.advance(elapsedMs);
 
-      present(dials[0], "the dial the owned connector vended").destroy(Object.assign(new AggregateError([errnoError("connect ETIMEDOUT " + peer.host,
+      expectAt(dials, 0, "the dial the owned connector vended").destroy(Object.assign(new AggregateError([errnoError("connect ETIMEDOUT " + peer.host,
         "ETIMEDOUT")], "connect ETIMEDOUT"), { code: "ETIMEDOUT" }));
 
-      const failure = await stream.opened.catch((error: unknown) => error);
+      await assert.rejects(stream.opened, (error: unknown) => {
 
-      assert.ok(failure instanceof AccessTimeoutError, "a connection attempt that timed out reads as a timeout, as it does on the request path");
-      assert.equal(failure.elapsedMs, elapsedMs, "the elapsed time is the injected clock's own measure from the start of the attempt");
-      assert.ok(failure.cause instanceof Error, "the cause is the dial's own failure");
-      assert.equal(failure.cause.name, "ConnectTimeoutError", "undici's normalization is what the stream read, from the connector's record of the dial");
-      assert.equal((failure.cause as NodeJS.ErrnoException).code, "UND_ERR_CONNECT_TIMEOUT");
+        assert.ok(error instanceof AccessTimeoutError, "a connection attempt that timed out reads as a timeout, as it does on the request path");
+        assert.equal(error.elapsedMs, elapsedMs, "the elapsed time is the injected clock's own measure from the start of the attempt");
+        assert.ok(error.cause instanceof Error, "the cause is the dial's own failure");
+        assert.equal(error.cause.name, "ConnectTimeoutError", "undici's normalization is what the stream read, from the connector's record of the dial");
+        assert.equal((error.cause as NodeJS.ErrnoException).code, "UND_ERR_CONNECT_TIMEOUT");
+
+        return true;
+      }, "a connection attempt that timed out reads as a timeout, as it does on the request path");
+
       assert.equal(log.entries.some((entry) => entry.level === "error"), false, "a failure before the open leaves no error-level line from the stream itself");
 
       await stream.close();
@@ -1575,7 +1579,7 @@ describe("EventStream", () => {
     test("a failure before the open leaves no error-level line from the stream itself", async () => {
 
       const log = capturingLog();
-      const stream = new EventStream({ clock: new TestClock(), host: loopbackHost(await vacantPort()), log });
+      const stream = new EventStream({ clock: new TestClock(), host: loopbackHost(await freePort()), log });
 
       await assert.rejects(async () => stream.opened, AccessNetworkError);
 

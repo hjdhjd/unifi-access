@@ -8,14 +8,13 @@
  */
 import { AccessApiError, AccessAuthorizationError, AccessNetworkError, AccessProtocolError, AccessRequestError } from "../errors.ts";
 import { HOST, RecordingTransport, captureRequest, officialPath, parseMultipart } from "./domain.helpers.ts";
-import { assertRejectsWith, present } from "../testing.helpers.ts";
+import { TestClock, expectAt } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { officialEndpoint, officialHost } from "./endpoints.ts";
 import type { AccessKnownJsonValue } from "../types/index.ts";
 import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
 import { OfficialDispatch } from "./dispatch.ts";
-import { TestClock } from "homebridge-plugin-utils/testing";
 import { Transport } from "../transport/http.ts";
 import assert from "node:assert/strict";
 import { createHttpsLoopback } from "../transport/loopback.helpers.ts";
@@ -203,15 +202,15 @@ describe("OfficialDispatch", () => {
       pool.intercept({ method: "GET", path: officialPath("/doors/nope") })
         .reply(200, { "code": "CODE_RESOURCE_NOT_FOUND", "msg": "The requested resource was not found." });
 
-      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/doors/nope")), AccessApiError, { check: (error) => {
+      // The documented dialect carries no diagnostic member, so there is nothing to report as a detail, and no refusal of either dialect chains an exception.
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors/nope")), {
 
-        assert.equal(error.code, "CODE_RESOURCE_NOT_FOUND");
-        assert.equal(error.message, "The requested resource was not found.");
-
-        // The documented dialect carries no diagnostic member, so there is nothing to report as a detail, and no refusal of either dialect chains an exception.
-        assert.equal(error.cause, undefined);
-        assert.equal(error.detail, undefined);
-      } });
+        cause: undefined,
+        code: "CODE_RESOURCE_NOT_FOUND",
+        detail: undefined,
+        message: "The requested resource was not found.",
+        name: "AccessApiError"
+      });
     });
 
     test("tells the two capability signals apart by their code rather than by their message", async () => {
@@ -222,19 +221,28 @@ describe("OfficialDispatch", () => {
        * device is below the endpoint's firmware floor. Both responses here carry the identical message, so a consumer that read the message could not tell them
        * apart, and only the typed code distinguishes them.
        */
-      const message = "The API is currently not available.";
+      const sharedMessage = "The API is currently not available.";
 
-      pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "code": "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED", "msg": message });
-      pool.intercept({ method: "GET", path: officialPath("/devices/abc/settings") }).reply(200, { "code": "CODE_DEVICE_API_NOT_SUPPORTED", "msg": message });
+      pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "code": "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED", "msg": sharedMessage });
+      pool.intercept({ method: "GET", path: officialPath("/devices/abc/settings") }).reply(200, { "code": "CODE_DEVICE_API_NOT_SUPPORTED", "msg": sharedMessage });
 
-      const identityLocked = await dispatch.request(officialEndpoint(HOST, "/doors")).catch((error: unknown) => error);
-      const belowFloor = await dispatch.request(officialEndpoint(HOST, "/devices/abc/settings")).catch((error: unknown) => error);
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), (error: unknown) => {
 
-      assert.ok(identityLocked instanceof AccessApiError, "the identity-locked refusal is an official API error");
-      assert.ok(belowFloor instanceof AccessApiError, "the below-floor refusal is an official API error");
-      assert.equal(identityLocked.message, belowFloor.message, "the messages are identical, so the code is the only thing telling these apart");
-      assert.equal(identityLocked.code, "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED");
-      assert.equal(belowFloor.code, "CODE_DEVICE_API_NOT_SUPPORTED");
+        assert.ok(error instanceof AccessApiError, "the identity-locked refusal is an official API error");
+        assert.equal(error.message, sharedMessage);
+        assert.equal(error.code, "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED");
+
+        return true;
+      }, "the identity-locked refusal is an official API error");
+
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/devices/abc/settings")), (error: unknown) => {
+
+        assert.ok(error instanceof AccessApiError, "the below-floor refusal is an official API error");
+        assert.equal(error.message, sharedMessage, "the messages are identical, so the code is the only thing telling these apart");
+        assert.equal(error.code, "CODE_DEVICE_API_NOT_SUPPORTED");
+
+        return true;
+      }, "the below-floor refusal is an official API error");
     });
 
     test("carries a code the documentation does not list, rather than rejecting it", async () => {
@@ -245,10 +253,7 @@ describe("OfficialDispatch", () => {
       // and intact rather than being flattened into a generic failure.
       pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "code": "CODE_SOMETHING_UNDOCUMENTED", "msg": "Something went wrong." });
 
-      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/doors")), AccessApiError, { check: (error) => {
-
-        assert.equal(error.code, "CODE_SOMETHING_UNDOCUMENTED");
-      } });
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), { code: "CODE_SOMETHING_UNDOCUMENTED", name: "AccessApiError" });
     });
 
     test("still says something when a refusal arrives without a message", async () => {
@@ -257,11 +262,7 @@ describe("OfficialDispatch", () => {
 
       pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "code": "CODE_SYSTEM_ERROR" });
 
-      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/doors")), AccessApiError, { check: (error) => {
-
-        assert.equal(error.code, "CODE_SYSTEM_ERROR");
-        assert.equal(error.message, FALLBACK_REFUSAL_MESSAGE);
-      } });
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), { code: "CODE_SYSTEM_ERROR", message: FALLBACK_REFUSAL_MESSAGE, name: "AccessApiError" });
     });
 
     test("reads a native-dialect refusal, carrying the controller's code, its message and its diagnostic", async () => {
@@ -276,16 +277,15 @@ describe("OfficialDispatch", () => {
         .reply(200, { "code": 180005, "codeS": "CODE_USER_IMAGE_INVALID",
           "error": "CODE[180005];Mesg:Invalid img file format;CauseBy:image: unknown format", "msg": "Invalid image.", "source": "" });
 
-      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/users/abc/profile_picture"), { method: "POST" }), AccessApiError,
-        { check: (error) => {
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/users/abc/profile_picture"), { method: "POST" }), {
 
-          assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
-          assert.equal(error.message, "Invalid image.");
-          assert.equal(error.detail, "CODE[180005];Mesg:Invalid img file format;CauseBy:image: unknown format");
-
-          // The diagnostic is a fact the controller reported, not an exception this library caught, so it reaches the caller as a detail and the chain stays empty.
-          assert.equal(error.cause, undefined);
-        } });
+        // The diagnostic is a fact the controller reported, not an exception this library caught, so it reaches the caller as a detail and the chain stays empty.
+        cause: undefined,
+        code: "CODE_USER_IMAGE_INVALID",
+        detail: "CODE[180005];Mesg:Invalid img file format;CauseBy:image: unknown format",
+        message: "Invalid image.",
+        name: "AccessApiError"
+      });
     });
 
     test("falls back to the same sentence when a native-dialect refusal arrives without a message", async () => {
@@ -295,12 +295,13 @@ describe("OfficialDispatch", () => {
       // A refusal carrying neither member: the message falls back exactly as it does in the documented dialect, and an absent diagnostic is reported as absent.
       pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(200, { "code": 180005, "codeS": "CODE_USER_IMAGE_INVALID" });
 
-      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/doors")), AccessApiError, { check: (error) => {
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), {
 
-        assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
-        assert.equal(error.message, FALLBACK_REFUSAL_MESSAGE);
-        assert.equal(error.detail, undefined);
-      } });
+        code: "CODE_USER_IMAGE_INVALID",
+        detail: undefined,
+        message: FALLBACK_REFUSAL_MESSAGE,
+        name: "AccessApiError"
+      });
     });
 
     test("reports no diagnostic when a native-dialect refusal's error member is not a string", async () => {
@@ -312,13 +313,13 @@ describe("OfficialDispatch", () => {
       pool.intercept({ method: "POST", path: officialPath("/users/abc/profile_picture") })
         .reply(200, { "code": 180005, "codeS": "CODE_USER_IMAGE_INVALID", "error": {}, "msg": "Invalid image." });
 
-      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/users/abc/profile_picture"), { method: "POST" }), AccessApiError,
-        { check: (error) => {
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/users/abc/profile_picture"), { method: "POST" }), {
 
-          assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
-          assert.equal(error.message, "Invalid image.");
-          assert.equal(error.detail, undefined);
-        } });
+        code: "CODE_USER_IMAGE_INVALID",
+        detail: undefined,
+        message: "Invalid image.",
+        name: "AccessApiError"
+      });
     });
 
     test("reports no diagnostic when a native-dialect refusal's error member is empty", async () => {
@@ -329,13 +330,13 @@ describe("OfficialDispatch", () => {
       pool.intercept({ method: "POST", path: officialPath("/users/abc/profile_picture") })
         .reply(200, { "code": 180005, "codeS": "CODE_USER_IMAGE_INVALID", "error": "", "msg": "Invalid image." });
 
-      await assertRejectsWith(dispatch.request(officialEndpoint(HOST, "/users/abc/profile_picture"), { method: "POST" }), AccessApiError,
-        { check: (error) => {
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/users/abc/profile_picture"), { method: "POST" }), {
 
-          assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
-          assert.equal(error.message, "Invalid image.");
-          assert.equal(error.detail, undefined);
-        } });
+        code: "CODE_USER_IMAGE_INVALID",
+        detail: undefined,
+        message: "Invalid image.",
+        name: "AccessApiError"
+      });
     });
   });
 
@@ -463,10 +464,7 @@ describe("OfficialDispatch: the void-mutation arm", () => {
     pool.intercept({ method: "DELETE", path: officialPath("/users/abc") }).reply(200, { "code": "CODE_OPERATION_FORBIDDEN",
       "msg": "The requested operation is not allowed." });
 
-    await assertRejectsWith(dispatch.command(officialEndpoint(HOST, "/users/abc"), { method: "DELETE" }), AccessApiError, { check: (error) => {
-
-      assert.equal(error.code, "CODE_OPERATION_FORBIDDEN");
-    } });
+    await assert.rejects(dispatch.command(officialEndpoint(HOST, "/users/abc"), { method: "DELETE" }), { code: "CODE_OPERATION_FORBIDDEN", name: "AccessApiError" });
   });
 
   test("throws the typed official error on a native-dialect refusal, exactly as it does on a documented one", async () => {
@@ -477,11 +475,12 @@ describe("OfficialDispatch: the void-mutation arm", () => {
     pool.intercept({ method: "DELETE", path: officialPath("/users/abc") }).reply(200, { "code": 180005, "codeS": "CODE_USER_IMAGE_INVALID",
       "msg": "Invalid image." });
 
-    await assertRejectsWith(dispatch.command(officialEndpoint(HOST, "/users/abc"), { method: "DELETE" }), AccessApiError, { check: (error) => {
+    await assert.rejects(dispatch.command(officialEndpoint(HOST, "/users/abc"), { method: "DELETE" }), {
 
-      assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
-      assert.equal(error.message, "Invalid image.");
-    } });
+      code: "CODE_USER_IMAGE_INVALID",
+      message: "Invalid image.",
+      name: "AccessApiError"
+    });
   });
 
   test("throws a protocol error on a document that is not an envelope", async () => {
@@ -515,10 +514,7 @@ describe("OfficialDispatch: the binary arm", () => {
     pool.intercept({ method: "GET", path: officialPath("/credentials/qr_codes/download/v-1") }).reply(200, { "code": "CODE_RESOURCE_NOT_FOUND",
       "msg": "The requested resource was not found." }, { headers: { "content-type": "application/json" } });
 
-    await assertRejectsWith(dispatch.download(officialEndpoint(HOST, "/credentials/qr_codes/download/v-1")), AccessApiError, { check: (error) => {
-
-      assert.equal(error.code, "CODE_RESOURCE_NOT_FOUND");
-    } });
+    await assert.rejects(dispatch.download(officialEndpoint(HOST, "/credentials/qr_codes/download/v-1")), { code: "CODE_RESOURCE_NOT_FOUND", name: "AccessApiError" });
   });
 
   test("throws the typed official error when a binary endpoint answers a native-dialect refusal", async () => {
@@ -530,11 +526,12 @@ describe("OfficialDispatch: the binary arm", () => {
     pool.intercept({ method: "GET", path: officialPath("/credentials/qr_codes/download/v-1") }).reply(200, { "code": 180005,
       "codeS": "CODE_USER_IMAGE_INVALID", "msg": "Invalid image." }, { headers: { "content-type": "application/json" } });
 
-    await assertRejectsWith(dispatch.download(officialEndpoint(HOST, "/credentials/qr_codes/download/v-1")), AccessApiError, { check: (error) => {
+    await assert.rejects(dispatch.download(officialEndpoint(HOST, "/credentials/qr_codes/download/v-1")), {
 
-      assert.equal(error.code, "CODE_USER_IMAGE_INVALID");
-      assert.equal(error.message, "Invalid image.");
-    } });
+      code: "CODE_USER_IMAGE_INVALID",
+      message: "Invalid image.",
+      name: "AccessApiError"
+    });
   });
 
   test("throws a protocol error when a binary endpoint answers a success envelope", async () => {
@@ -559,10 +556,7 @@ describe("OfficialDispatch: the binary arm", () => {
     pool.intercept({ method: "GET", path: officialPath("/credentials/qr_codes/download/v-1") }).reply(200, { "code": "CODE_RESOURCE_NOT_FOUND",
       "msg": "The requested resource was not found." }, { headers: { "content-type": [ "application/json", "application/json" ] } });
 
-    await assertRejectsWith(dispatch.download(officialEndpoint(HOST, "/credentials/qr_codes/download/v-1")), AccessApiError, { check: (error) => {
-
-      assert.equal(error.code, "CODE_RESOURCE_NOT_FOUND");
-    } });
+    await assert.rejects(dispatch.download(officialEndpoint(HOST, "/credentials/qr_codes/download/v-1")), { code: "CODE_RESOURCE_NOT_FOUND", name: "AccessApiError" });
 
     pool.intercept({ method: "GET", path: officialPath("/credentials/qr_codes/download/v-1") }).reply(200, { "code": "SUCCESS", "data": "success",
       "msg": "success" }, { headers: { "content-type": [ "application/json", "application/json" ] } });
@@ -651,9 +645,9 @@ describe("OfficialDispatch: outbound encoding", () => {
 
       assert.equal(parts.length, 1);
       assert.equal(parts[0]?.field, "file");
-      assert.equal(parts[0]?.filename, "cards.csv");
-      assert.equal(parts[0]?.contentType, "application/octet-stream");
-      assert.deepEqual(parts[0]?.data, expected);
+      assert.equal(parts[0].filename, "cards.csv");
+      assert.equal(parts[0].contentType, "application/octet-stream");
+      assert.deepEqual(parts[0].data, expected);
     });
   }
 
@@ -827,7 +821,7 @@ describe("OfficialDispatch: the per-call options merge", () => {
     await dispatch.request(officialEndpoint(HOST, "/doors"), { signal: requestController.signal }, { signal: callController.signal });
 
     assert.equal(transport.sends[0]?.signal, callController.signal, "the call options' own controller reached the transport");
-    assert.notEqual(transport.sends[0]?.signal, requestController.signal);
+    assert.notEqual(transport.sends[0].signal, requestController.signal);
   });
 });
 
@@ -890,7 +884,7 @@ describe("OfficialDispatch: over a real socket", () => {
 
     assert.equal(loopback.hits.length, 1);
 
-    const hit = present(loopback.hits[0], "the loopback's one request");
+    const hit = expectAt(loopback.hits, 0, "the loopback's one request");
 
     /* The bytes as a real server received them, parsed against the content type that really arrived. A mocked agent cannot reach this: it replaces undici's
      * dispatch wholesale, so everything below it - the socket write included - is out of its view.

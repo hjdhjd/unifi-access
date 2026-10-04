@@ -9,7 +9,7 @@ import type { TransportFailure } from "./failure.ts";
 import assert from "node:assert/strict";
 import { classifyTransportError } from "./failure.ts";
 import { classifyTransportError as classifyWithPluginUtils } from "homebridge-plugin-utils";
-import { errnoError } from "../testing.helpers.ts";
+import { errnoError } from "homebridge-plugin-utils/testing";
 import { errors } from "undici";
 
 interface ClassificationCase {
@@ -63,14 +63,13 @@ function classificationTable(): ClassificationCase[] {
 
     // Timeouts, and what they outrank.
     { name: "the platform's deadline reason", value: timeout() },
-    { name: "a timeout one link below a coded wrapper", value: Object.assign(new Error("read ECONNRESET", { cause: timeout() }), { code: "ECONNRESET" }) },
+    { name: "a timeout one link below a coded wrapper", value: errnoError("read ECONNRESET", "ECONNRESET", timeout()) },
     { name: "a timeout two links down", value: new Error("aborted", { cause: new Error("timed out", { cause: timeout() }) }) },
 
     // Cancellations that are not the lifetime signal's, and what they outrank.
     { name: "the platform's cancellation", value: cancellation() },
     { name: "undici's aborted-request class, which the signal gate raises", value: new errors.RequestAbortedError() },
-    { name: "a cancellation one link below a coded wrapper", value: Object.assign(new Error("connect ECONNREFUSED", { cause: cancellation() }),
-      { code: "ECONNREFUSED" }) },
+    { name: "a cancellation one link below a coded wrapper", value: errnoError("connect ECONNREFUSED", "ECONNREFUSED", cancellation()) },
 
     // undici's own failures.
     { name: "undici's connect timer", value: new errors.ConnectTimeoutError() },
@@ -98,14 +97,12 @@ function classificationTable(): ClassificationCase[] {
     { name: "a leaf signature that does not verify", value: errnoError("unable to verify the first certificate", "UNABLE_TO_VERIFY_LEAF_SIGNATURE") },
     { name: "a hostname mismatch", value: errnoError("hostname mismatch", "ERR_TLS_CERT_ALTNAME_INVALID") },
     { name: "an expired certificate one hop down", value: new Error("fetch failed", { cause: errnoError("certificate has expired", "CERT_HAS_EXPIRED") }) },
-    { name: "a certificate verdict one link below a coded wrapper", value: Object.assign(new Error("other side closed", { cause: selfSigned() }),
-      { code: "UND_ERR_SOCKET" }) },
+    { name: "a certificate verdict one link below a coded wrapper", value: errnoError("other side closed", "UND_ERR_SOCKET", selfSigned()) },
     { name: "the verifier running out of room", value: errnoError("out of memory", "OUT_OF_MEM") },
 
     // The descent, and values that are not errors.
     { name: "a content-free socket failure", value: new TypeError("terminated") },
-    { name: "a code that is not a string above an errno", value: Object.assign(new Error("wrapper.", { cause: errnoError("read ECONNRESET", "ECONNRESET") }),
-      { code: 42 }) },
+    { name: "a code that is not a string above an errno", value: errnoError("wrapper.", 42, errnoError("read ECONNRESET", "ECONNRESET")) },
     { name: "a code two links down", value: buried(2) },
     { name: "a code at the depth bound", value: buried(8) },
     { name: "a code one past the depth bound", value: buried(9) },

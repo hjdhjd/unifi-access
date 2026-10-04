@@ -129,7 +129,7 @@ describe("ACCESS_DOORBELL_REASON_CODES", () => {
      * answered somewhere other than here - which may well be somewhere else the same person is signed in.
      */
     assert.equal(ACCESS_DOORBELL_REASON_CODES[400], "The call was answered somewhere other than here.");
-    assert.equal(ACCESS_DOORBELL_REASON_CODES[400]?.includes("another admin"), false, "the reference's wording must not reach a consumer");
+    assert.equal(ACCESS_DOORBELL_REASON_CODES[400].includes("another admin"), false, "the reference's wording must not reach a consumer");
   });
 
   test("names every code the reference documents, and no others", () => {

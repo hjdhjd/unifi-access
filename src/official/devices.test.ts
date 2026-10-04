@@ -74,7 +74,7 @@ describe("OfficialDevices wire truths", () => {
     assert.equal(groups.length, 2);
     assert.equal(groups[0]?.length, 2);
     assert.equal(groups[1]?.length, 1);
-    assert.equal(groups[0]?.[0]?.id, "02ffee000000");
+    assert.equal(groups[0][0]?.id, "02ffee000000");
   });
 
   /* The three specimens, each from its own live capture and each a different hardware class: a hub with no reader at all, an Ultra with four methods, and a G2 Pro

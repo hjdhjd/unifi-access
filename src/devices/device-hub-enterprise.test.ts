@@ -6,9 +6,8 @@
 import { DOOR_MINI, EAH_DOOR_2, EAH_HUB, EAH_PORT_2, EAH_PORT_3, HUB, READER, deviceFixture, doorStateEvent, intercept } from "./device.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
-import { present, settleUntil } from "../testing.helpers.ts";
+import { expectAt, present, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
-import { settle } from "homebridge-plugin-utils/testing";
 
 describe("the Enterprise Access Hub port matrix", () => {
 
@@ -83,9 +82,9 @@ describe("the Enterprise Access Hub port matrix", () => {
     store.dispatch(doorStateEvent(door3, "locked"));
 
     assert.equal(port2.doorState?.lock, "unlocked");
-    assert.equal(port2.doorState?.location_id, door2);
+    assert.equal(port2.doorState.location_id, door2);
     assert.equal(port3.doorState?.lock, "locked");
-    assert.equal(port3.doorState?.location_id, door3);
+    assert.equal(port3.doorState.location_id, door3);
   });
 
   test("a port handle observes through the expansion and survives an unrelated device's change", async () => {
@@ -112,7 +111,7 @@ describe("the Enterprise Access Hub port matrix", () => {
 
     // Its own hub changing does wake it.
     store.dispatch({ eventName: "access.data.device.update", id: EAH_HUB, kind: "deviceChanged", payload: { "ip": "172.16.9.8" } });
-    await settleUntil(() => seen.length === 1);
+    await settleUntil(() => seen.length === 1, { description: "port 2's observer to see its own hub's change" });
     assert.deepEqual(seen, ["172.16.9.8"]);
 
     ac.abort();
@@ -149,8 +148,8 @@ describe("the Enterprise Access Hub port matrix", () => {
   test("an empty uplink field reads as a device that connects in its own right", () => {
 
     const bootstrap = structuredClone(accessBootstrap2026Fixture);
-    const group = present(bootstrap.floors?.[0]?.doors?.[1]?.device_groups?.[0], "the second door's device group");
-    const reader = present(group[1], "the reader");
+    const group = present(bootstrap.floors?.[0]?.doors?.[1]?.device_groups[0], "the second door's device group");
+    const reader = expectAt(group, 1, "the reader");
 
     assert.equal(reader.unique_id, READER);
 
@@ -165,8 +164,8 @@ describe("the Enterprise Access Hub port matrix", () => {
   test("a hub-capable device still reports the device that carries it", () => {
 
     const bootstrap = structuredClone(accessBootstrap2026Fixture);
-    const group = present(bootstrap.floors?.[0]?.doors?.[1]?.device_groups?.[0], "the second door's device group");
-    const hub = present(group[0], "the hub");
+    const group = present(bootstrap.floors?.[0]?.doors?.[1]?.device_groups[0], "the second door's device group");
+    const hub = expectAt(group, 0, "the hub");
 
     assert.equal(hub.unique_id, HUB);
     assert.ok(hub.capabilities.includes("is_hub"), "this assertion needs a record the controller marks hub-capable");

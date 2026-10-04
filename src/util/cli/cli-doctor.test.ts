@@ -9,6 +9,7 @@ import type { FakeClientSpec } from "./cli.helpers.ts";
 import { accessEventPacketsInteractiveFixture } from "../../protocol/events.fixtures.ts";
 import assert from "node:assert/strict";
 import { doctor } from "./commands/doctor.ts";
+import { expectAt } from "homebridge-plugin-utils/testing";
 import { findPacket } from "../../protocol/capture.helpers.ts";
 
 const RING = findPacket((packet) => packet.event === "access.remote_view", "an interactive ring", { corpus: accessEventPacketsInteractiveFixture });
@@ -115,13 +116,13 @@ describe("the mode-aware check sets", () => {
     const passRow = passing.report.results.find((result) => result.name === "Official API facade");
 
     assert.equal(passRow?.status, "pass");
-    assert.equal(passRow?.detail, "2 doors visible through the official API");
+    assert.equal(passRow.detail, "2 doors visible through the official API");
 
     const failing = await runDoctor({ ...healthy, official: { doorsError: new Error("the token was revoked") }, packets: [] });
     const failRow = failing.report.results.find((result) => result.name === "Official API facade");
 
     assert.equal(failRow?.status, "fail");
-    assert.match(failRow?.detail ?? "", /the token was revoked/);
+    assert.match(failRow.detail ?? "", /the token was revoked/);
     assert.equal(failing.report.ok, false);
   });
 
@@ -131,7 +132,7 @@ describe("the mode-aware check sets", () => {
     const row = report.results.find((result) => result.name === "Door states");
 
     assert.equal(row?.status, "pass");
-    assert.match(row?.detail ?? "", /0 doors carry established state/);
+    assert.match(row.detail ?? "", /0 doors carry established state/);
   });
 });
 
@@ -143,7 +144,7 @@ describe("the doctor's carried posture", () => {
     const passRow = withPacket.report.results.find((result) => result.name === "Realtime event firehose");
 
     assert.equal(passRow?.status, "pass");
-    assert.match(passRow?.detail ?? "", /first packet: access\.remote_view/);
+    assert.match(passRow.detail ?? "", /first packet: access\.remote_view/);
 
     const quiet = await runDoctor({ ...healthy, packets: [] });
 
@@ -168,7 +169,7 @@ describe("the doctor's carried posture", () => {
     const row = report.results.find((result) => result.name === "Event classification");
 
     assert.equal(row?.status, "pass");
-    assert.match(row?.detail ?? "", /is not modeled/);
+    assert.match(row.detail ?? "", /is not modeled/);
     assert.equal(report.ok, true);
   });
 
@@ -210,7 +211,7 @@ describe("the doctor's carried posture", () => {
     const row = report.results.find((result) => result.name === "Realtime event firehose");
 
     assert.equal(row?.status, "fail");
-    assert.match(row?.detail ?? "", /socket is closed/);
+    assert.match(row.detail ?? "", /socket is closed/);
   });
 
   test("a failing check's detail carries the diagnosis its cause held", async () => {
@@ -221,7 +222,7 @@ describe("the doctor's carried posture", () => {
     const row = report.results.find((result) => result.name === "Door states");
 
     assert.equal(row?.status, "fail");
-    assert.equal(row?.detail, "The door-state rail is unreadable: the hub answered with no ports",
+    assert.equal(row.detail, "The door-state rail is unreadable: the hub answered with no ports",
       "the row carries the wrapper's sentence and the cause's words below it");
   });
 
@@ -247,7 +248,7 @@ describe("the doctor's carried posture", () => {
     const row = report.results.find((result) => result.name === "Realtime event firehose");
 
     assert.equal(row?.status, "fail");
-    assert.equal(row?.detail, "The notification socket is closed: connect ECONNREFUSED", "the firehose row carries the errno the cause held");
+    assert.equal(row.detail, "The notification socket is closed: connect ECONNREFUSED", "the firehose row carries the errno the cause held");
   });
 
   test("a stop during connect ends the run through the cascade", async () => {
@@ -357,6 +358,6 @@ describe("the doctor's carried posture", () => {
 
     await withExitCode(async () => doctor.run(ctx));
 
-    assert.equal(calls.opens[0]?.refreshIntervalMs, undefined);
+    assert.equal(expectAt(calls.opens, 0, "the options the doctor opened its client with").refreshIntervalMs, undefined);
   });
 });

@@ -11,7 +11,7 @@ import { firstPortBinding, portExtensionsOf, readPortBindings } from "./port-bin
 import type { AccessDeviceConfig } from "../types/index.ts";
 import { accessBootstrapEahFixture } from "./topology.fixtures.ts";
 import assert from "node:assert/strict";
-import { present } from "../testing.helpers.ts";
+import { expectAt } from "homebridge-plugin-utils/testing";
 
 // The UA Ultra's one binding, as the 2026 document delivers it: its single port, the door that port serves, and the name the controller wrote beside it.
 const ULTRA_BINDING: AccessPortBinding = { doorId: "00000000-0000-0000-0000-000000000002", name: "Test Name 4", port: "port1" };
@@ -55,7 +55,7 @@ describe("readPortBindings", () => {
     // The two members named in the destructure exist to be discarded, which is what the underscore prefixes say; the rest is the extension without them.
     const { source_id: _sourceId, target_name: _targetName, ...bare } = extension;
     const bindings = readPortBindings({ ...ultra, "extensions": [bare] });
-    const binding = present(bindings[0], "the binding");
+    const binding = expectAt(bindings, 0, "the binding");
 
     assert.deepEqual(bindings, [{ doorId: ULTRA_BINDING.doorId }]);
     assert.equal(Object.hasOwn(binding, "name"), false, "a name nothing established is absent from the object rather than present and undefined");

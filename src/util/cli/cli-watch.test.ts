@@ -12,6 +12,7 @@ import { asAccessClient, makeCommandContext, makeFakeClient, rendered } from "./
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { buildDeviceResolution } from "./lookup.ts";
+import { expectAt } from "homebridge-plugin-utils/testing";
 import { findPacket } from "../../protocol/capture.helpers.ts";
 import { watch } from "./commands/watch.ts";
 import { watchEvents } from "./commands/watch-events.ts";
@@ -130,9 +131,15 @@ describe("the filter engine", () => {
     const { calls, client } = makeFakeClient({ packets: [RING] });
     const { ctx } = makeCommandContext({ args: ["event~/[/"], calls, client });
 
-    await assert.rejects(async () => watchEvents.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("/[/") &&
-        error.message.includes("regular expression"));
+    await assert.rejects(async () => watchEvents.run(ctx), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.equal(error.exitCode, 2);
+      assert.match(error.message, /\/\[\//);
+      assert.match(error.message, /regular expression/);
+
+      return true;
+    });
   });
 
   test("a path the packet does not carry matches only the negated operators", async () => {
@@ -255,7 +262,7 @@ describe("the filter engine", () => {
 
     assert.equal(filters.length, 1);
     assert.equal(filters[0]?.(RING), true);
-    assert.equal(filters[0]?.(CANCEL), false);
+    assert.equal(filters[0](CANCEL), false);
   });
 });
 
@@ -293,7 +300,13 @@ describe("the watch events command", () => {
 
       // Sequential by intent: each pair is asserted on its own invocation.
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => watchEvents.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2), args.join(" "));
+      await assert.rejects(async () => watchEvents.run(ctx), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, args.join(" "));
+        assert.equal(error.exitCode, 2, args.join(" "));
+
+        return true;
+      }, args.join(" "));
     }
   });
 
@@ -340,7 +353,7 @@ describe("the watch events command", () => {
     const { calls, client } = makeFakeClient({ packets: [RING] });
     const { ctx } = makeCommandContext({ args: ["--duration=0s"], calls, client });
 
-    await assert.rejects(async () => watchEvents.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(async () => watchEvents.run(ctx), { exitCode: 2, name: "CliError" });
 
     assert.equal(calls.opens.length, 0, "the refusal happens before anything connects");
     assert.equal(calls.credentialLoads, 0, "the refusal never reaches for the identity file");
@@ -355,7 +368,13 @@ describe("the watch events command", () => {
 
       // Sequential by intent: each value is asserted on its own invocation.
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => watchEvents.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2), value);
+      await assert.rejects(async () => watchEvents.run(ctx), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, value);
+        assert.equal(error.exitCode, 2, value);
+
+        return true;
+      }, value);
     }
   });
 
@@ -388,7 +407,7 @@ describe("the watch events command", () => {
 
     await watchEvents.run(ctx);
 
-    assert.equal(calls.opens[0]?.refreshIntervalMs, undefined);
+    assert.equal(expectAt(calls.opens, 0, "the options the streaming command opened its client with").refreshIntervalMs, undefined);
   });
 });
 
@@ -497,8 +516,12 @@ describe("the watch capture scrub", () => {
     const { calls, client } = makeFakeClient({ packets: [RING] });
     const { ctx } = makeCommandContext({ args: [ "--stats", "--scrub" ], calls, client });
 
-    await assert.rejects(async () => watchEvents.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "The --stats tally counts event names rather than printing packets, so --scrub has nothing to act on."));
+    await assert.rejects(async () => watchEvents.run(ctx), {
+
+      exitCode: 2,
+      message: "The --stats tally counts event names rather than printing packets, so --scrub has nothing to act on.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -538,8 +561,12 @@ describe("the watch raw command", () => {
     const { calls, client } = makeFakeClient({ packets: [RING] });
     const { ctx } = makeCommandContext({ args: ["--count=x"], calls, client });
 
-    await assert.rejects(async () => watchRaw.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "The --count value must be a non-negative integer, but received \"x\"."));
+    await assert.rejects(async () => watchRaw.run(ctx), {
+
+      exitCode: 2,
+      message: "The --count value must be a non-negative integer, but received \"x\".",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0, "the refusal happens before anything connects");
     assert.equal(calls.credentialLoads, 0, "the refusal never reaches for the identity file");
@@ -658,7 +685,7 @@ describe("the watch state command", () => {
 
     await watchState.run(ctx);
 
-    assert.equal(calls.opens[0]?.refreshIntervalMs, undefined);
+    assert.equal(expectAt(calls.opens, 0, "the options the state command opened its client with").refreshIntervalMs, undefined);
   });
 });
 
@@ -682,7 +709,6 @@ describe("the watch group", () => {
 
     const { ctx } = makeCommandContext({ args: ["firehose"] });
 
-    await assert.rejects(async () => watch.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("events, raw, state"));
+    await assert.rejects(async () => watch.run(ctx), { exitCode: 2, message: /events, raw, state/, name: "CliError" });
   });
 });

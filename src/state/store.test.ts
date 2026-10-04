@@ -9,10 +9,10 @@ import type { AccessRefreshDocuments, StateStoreOptions } from "./store.ts";
 import type { AccessState, AccessStateDevice } from "../protocol/reducer.ts";
 import type { CapturingLog, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { StateStore, createStateStore } from "./store.ts";
-import { TestClock, capturingLog, settle, silentLog } from "homebridge-plugin-utils/testing";
+import { TestClock, capturingLog, loggedAt, present, settle, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
-import { present, settleUntil, topologyDevices } from "../testing.helpers.ts";
+import { refuseRefresh, topologyDevices } from "../testing.helpers.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
 import { selectHubs } from "./selectors.ts";
@@ -46,7 +46,7 @@ const controllerDocument = (): AccessControllerConfig => JSON.parse(JSON.stringi
 const capabilityLessTopology = (): AccessBootstrapConfig => {
 
   const bootstrap = topologyDocument();
-  const template = bootstrap.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0];
+  const template = bootstrap.floors?.[0]?.doors?.[0]?.device_groups[0]?.[0];
 
   assert.ok(template, "the topology document should carry a device record to clone");
 
@@ -166,7 +166,7 @@ describe("StateStore", () => {
       assert.equal(values.length, 0, "iteration seeds a baseline rather than re-emitting the current value");
 
       store.dispatch(renameDoor("Renamed"));
-      await settleUntil(() => values.length === 1);
+      await settleUntil(() => values.length === 1, { description: "the observer to yield the state after the rename" });
 
       const afterSecond = store.snapshot();
 
@@ -193,7 +193,7 @@ describe("StateStore", () => {
       assert.equal(values.length, 0, "an activity signal changes no state, so no observer wakes");
 
       store.dispatch(renameDoor("Renamed"));
-      await settleUntil(() => values.length === 1);
+      await settleUntil(() => values.length === 1, { description: "the doors observer to wake on the rename" });
       assert.equal(values[0]?.get(DOOR_HUB)?.name, "Renamed");
 
       ac.abort();
@@ -224,7 +224,7 @@ describe("StateStore", () => {
 
       // The same observer wakes on a real change to the same record, which is what shows the silence above was the fold's doing rather than a dead observer.
       store.dispatch({ eventName: "access.data.device.update", id: HUB_2026, kind: "deviceChanged", payload: { "firmware": "v9.9.9" } });
-      await settleUntil(() => values.length === 1);
+      await settleUntil(() => values.length === 1, { description: "the devices observer to wake on the firmware change" });
       assert.equal(values[0]?.get(HUB_2026)?.mac, "AABBCC000001");
 
       ac.abort();
@@ -264,7 +264,7 @@ describe("StateStore", () => {
 
       // A real change to a collection this selection does not read: the state reference advances, the observer runs, and its own comparison is what keeps it quiet.
       store.dispatch(renameDoor("Renamed"));
-      await settleUntil(() => evaluations > atRegistration);
+      await settleUntil(() => evaluations > atRegistration, { description: "the observer to evaluate its selector on the rename" });
       await settle();
 
       assert.ok(!Object.is(before, store.snapshot()), "a door rename is a real state change");
@@ -286,13 +286,13 @@ describe("StateStore", () => {
       await settle();
 
       const drifted = topologyDocument();
-      const device = drifted.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0];
+      const device = drifted.floors?.[0]?.doors?.[0]?.device_groups[0]?.[0];
 
       assert.ok(device, "the document should carry a device to drift");
       device.alias = "Renamed Hardware";
 
       store.dispatch(bootstrapEvent(drifted));
-      await settleUntil(() => values.length === 1);
+      await settleUntil(() => values.length === 1, { description: "the devices observer to wake on the drifted bootstrap" });
       assert.equal(store.snapshot().devices.size, DEVICE_COUNT_2026);
 
       ac.abort();
@@ -320,7 +320,7 @@ describe("StateStore", () => {
 
       await settle();
       store.dispatch(bootstrapEvent(topologyDocument()));
-      await settleUntil(() => values.length === 1);
+      await settleUntil(() => values.length === 1, { description: "the observer to yield the bootstrapped state" });
 
       ac.abort();
 
@@ -350,7 +350,7 @@ describe("StateStore", () => {
 
       await settle();
       store.dispatch(bootstrapEvent(topologyDocument()));
-      await settleUntil(() => values.length === 1);
+      await settleUntil(() => values.length === 1, { description: "the slow consumer to receive its first value" });
 
       // Two further changes land behind the parked consumer.
       store.dispatch(renameDoor("Second"));
@@ -406,7 +406,7 @@ describe("StateStore", () => {
 
       clock.advance(1000);
       await settle();
-      await settleUntil(() => store.snapshot().devices.size === DEVICE_COUNT_2026);
+      await settleUntil(() => store.snapshot().devices.size === DEVICE_COUNT_2026, { description: "the refresh to apply its document" });
       assert.equal(refreshes, 1);
     });
 
@@ -427,13 +427,13 @@ describe("StateStore", () => {
       // The first wake fails: the loop logs at debug and stays alive.
       clock.advance(1000);
       await settle();
-      await settleUntil(() => log.entries.some((entry) => (entry.level === "debug") && entry.message.includes("Bootstrap refresh failed")));
+      await settleUntil(() => loggedAt(log.entries, "debug", "Bootstrap refresh failed"), { description: "the failed refresh to be logged at debug" });
       assert.equal(store.snapshot().devices.size, 0);
 
       // The second wake succeeds, and the failsafe applies the document as if nothing had gone wrong.
       clock.advance(1000);
       await settle();
-      await settleUntil(() => store.snapshot().devices.size === DEVICE_COUNT_2026);
+      await settleUntil(() => store.snapshot().devices.size === DEVICE_COUNT_2026, { description: "the second wake to apply its document" });
     });
 
     test("stops on disposal", async () => {
@@ -449,7 +449,7 @@ describe("StateStore", () => {
 
       clock.advance(1000);
       await settle();
-      await settleUntil(() => refreshes === 1);
+      await settleUntil(() => refreshes === 1, { description: "the first wake to run the refresh" });
 
       await store[Symbol.asyncDispose]();
 
@@ -476,10 +476,10 @@ describe("StateStore", () => {
 
       clock.advance(1000);
       await settle();
-      await settleUntil(() => seen.length === 1);
+      await settleUntil(() => seen.length === 1, { description: "the first wake to receive the loop's signal" });
       clock.advance(1000);
       await settle();
-      await settleUntil(() => seen.length === 2);
+      await settleUntil(() => seen.length === 2, { description: "the second wake to receive the loop's signal" });
 
       assert.ok(seen[0], "the loop handed its signal to the first wake");
       assert.equal(seen[0], seen[1], "one signal across both wakes, so it belongs to the loop rather than to a wake");
@@ -512,7 +512,7 @@ describe("StateStore", () => {
       clock.advance(1000);
       await settle();
       await store[Symbol.asyncDispose]();
-      await settleUntil(() => released);
+      await settleUntil(() => released, { description: "disposal to release the read in flight" });
       await settle();
 
       assert.ok(!log.entries.some((entry) => entry.message.includes("Bootstrap refresh failed")), "the shutdown path logged no retry promise");
@@ -666,7 +666,7 @@ describe("StateStore", () => {
 
       clock.advance(1000);
       await settle();
-      await settleUntil(() => store.snapshot().devices.size === DEVICE_COUNT_2026);
+      await settleUntil(() => store.snapshot().devices.size === DEVICE_COUNT_2026, { description: "the failsafe to apply its pair" });
 
       assert.deepEqual(seen, [ "controllerChanged", "bootstrapLoaded" ], "the failsafe seeds in the order the store owns rather than one of its own");
     });
@@ -783,8 +783,11 @@ describe("StateStore", () => {
 
       const order: string[] = [];
       const store = new StateStore({ clock: new TestClock(), log: silentLog(),
-        onDispatch: () => order.push("hook:" + String(store.snapshot().doors.get(DOOR_HUB)?.name)),
-        refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
+        onDispatch: (): void => {
+
+          order.push("hook:" + String(store.snapshot().doors.get(DOOR_HUB)?.name));
+        },
+        refresh: refuseRefresh, refreshIntervalMs: false });
 
       store.dispatch(bootstrapEvent(topologyDocument()));
 
@@ -799,7 +802,7 @@ describe("StateStore", () => {
 
       await settle();
       store.dispatch(renameDoor("Renamed"));
-      await settleUntil(() => order.includes("observer"));
+      await settleUntil(() => order.includes("observer"), { description: "the observer to run behind the hook" });
 
       assert.deepEqual(order.slice(-2), [ "hook:Renamed", "observer" ], "the hook sees the committed state and runs ahead of the observers");
 
@@ -888,7 +891,7 @@ describe("StateStore", () => {
       // Wake the loop into the refresh and leave it parked there.
       clock.advance(1000);
       await settle();
-      await settleUntil(() => refreshes === 1);
+      await settleUntil(() => refreshes === 1, { description: "the wake to start the refresh" });
 
       const before = store.snapshot();
 
@@ -927,8 +930,7 @@ describe("createStateStore", () => {
 
   test("constructs the real engine: an observer wakes on the selected change and stays asleep on an unrelated one", async () => {
 
-    const store = createStateStore({ clock: new TestClock(),
-      refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
+    const store = createStateStore({ clock: new TestClock(), refresh: refuseRefresh, refreshIntervalMs: false });
 
     store.dispatch(bootstrapEvent(topologyDocument()));
 
@@ -943,13 +945,13 @@ describe("createStateStore", () => {
     assert.equal(values.length, 0, "an unrelated change is deduped");
 
     const drifted = topologyDocument();
-    const device = drifted.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0];
+    const device = drifted.floors?.[0]?.doors?.[0]?.device_groups[0]?.[0];
 
     assert.ok(device, "the document should carry a device to drift");
     device.alias = "Renamed Hardware";
 
     store.dispatch(bootstrapEvent(drifted));
-    await settleUntil(() => values.length === 1);
+    await settleUntil(() => values.length === 1, { description: "the devices observer to wake on the drifted bootstrap" });
 
     ac.abort();
     await done;
@@ -962,8 +964,7 @@ describe("createStateStore", () => {
 
     seed.dispatch(bootstrapEvent(topologyDocument()));
 
-    const store = createStateStore({ initialState: seed.snapshot(),
-      refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
+    const store = createStateStore({ initialState: seed.snapshot(), refresh: refuseRefresh, refreshIntervalMs: false });
 
     assert.ok(Object.is(seed.snapshot(), store.snapshot()), "the supplied initial state reached the new store");
     assert.equal(store.snapshot().devices.size, DEVICE_COUNT_2026);

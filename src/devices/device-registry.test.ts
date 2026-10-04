@@ -6,9 +6,8 @@
  * so a read that reached for the wire would fail loudly rather than pass unnoticed.
  */
 import { DOOR_HUB, DOOR_MINI, HUB, READER, deviceFixture } from "./device.helpers.ts";
-import { TestClock, silentLog } from "homebridge-plugin-utils/testing";
+import { TestClock, present, silentLog } from "homebridge-plugin-utils/testing";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
-import { assertRejectsWith, present } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "../client/census.ts";
 import { AccessCapabilityError } from "../errors.ts";
@@ -18,6 +17,7 @@ import { AccessRoutingService } from "../client/routing.ts";
 import { StateStore } from "../state/store.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
+import { refuseRefresh } from "../testing.helpers.ts";
 
 describe("the registry's three views", () => {
 
@@ -51,8 +51,7 @@ describe("a projection over a token-only client's census", () => {
    */
   function tokenFixture(): { registry: AccessDeviceRegistry; store: StateStore } {
 
-    const store = new StateStore({ clock: new TestClock(), log: silentLog(),
-      refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
+    const store = new StateStore({ clock: new TestClock(), log: silentLog(), refresh: refuseRefresh, refreshIntervalMs: false });
 
     store.applyCensus({ devices: accessOfficialDevicesFixture.flat().map(officialDeviceRecord), doorStates: accessOfficialDoorsFixture.map(doorStateEntry),
       doors: accessOfficialDoorsFixture.map(officialDoorRecord) }, { complete: true });
@@ -90,11 +89,14 @@ describe("a projection over a token-only client's census", () => {
     const { registry } = tokenFixture();
     const hub = present(registry.device(HUB), "the hub");
 
-    await assertRejectsWith(async () => hub.restart(), AccessCapabilityError, { check: (error) => {
+    await assert.rejects(async () => hub.restart(), (error: unknown) => {
 
+      assert.ok(error instanceof AccessCapabilityError);
       assert.match(error.message, /a restart for device "Test alias 13"/);
       assert.match(error.message, /holds no credentials for the Access application's own endpoints/);
-    } });
+
+      return true;
+    });
   });
 
   test("refuses a configuration write and a close on the same terms", async () => {

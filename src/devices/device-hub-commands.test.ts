@@ -4,12 +4,12 @@
  * reads before resolving. Every command test asserts the wire shape through an intercepted request rather than through the projection's own return value, so what
  * is being checked is what the controller would actually receive.
  */
-import { AccessApiError, AccessCapabilityError, AccessProtocolError } from "../errors.ts";
 import { DOOR_HUB, DOOR_MINI_DOOR, HUB, READER, REFUSED, deviceFixture, intercept } from "./device.helpers.ts";
-import { assertRejectsWith, present } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
+import { AccessProtocolError } from "../errors.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
+import { present } from "homebridge-plugin-utils/testing";
 
 describe("the hub commands", () => {
 
@@ -92,18 +92,18 @@ describe("the hub commands", () => {
 
     const hub = present(fixture.registry.hub(HUB), "the hub");
 
-    await assertRejectsWith(() => hub.unlock(), AccessApiError, { check: (error) => {
-
-      /* What reaches the caller is what the controller said: its own result code as the vocabulary string rather than the number beside it, its own message with
-       * the wire's trailing space removed, and the structured diagnostic it sent alongside, byte for byte.
-       */
-      assert.equal(error.code, "CODE_SYSTEM_ERROR");
-      assert.equal(error.message, "Server system error.");
-      assert.equal(error.detail, "CODE[-3];Mesg:;CauseBy:");
+    /* What reaches the caller is what the controller said: its own result code as the vocabulary string rather than the number beside it, its own message with
+     * the wire's trailing space removed, and the structured diagnostic it sent alongside, byte for byte.
+     */
+    await assert.rejects(() => hub.unlock(), {
 
       // The diagnostic is a fact the controller reported rather than an exception this library caught, so the chain stays empty.
-      assert.equal(error.cause, undefined);
-    } });
+      cause: undefined,
+      code: "CODE_SYSTEM_ERROR",
+      detail: "CODE[-3];Mesg:;CauseBy:",
+      message: "Server system error.",
+      name: "AccessApiError"
+    });
   });
 
   test("a refusal that carries no message of its own falls back to the door commands' own sentence", async () => {
@@ -116,12 +116,13 @@ describe("the hub commands", () => {
 
     const hub = present(fixture.registry.hub(HUB), "the hub");
 
-    await assertRejectsWith(() => hub.unlock(), AccessApiError, { check: (error) => {
+    await assert.rejects(() => hub.unlock(), {
 
-      assert.equal(error.code, "CODE_SYSTEM_ERROR");
-      assert.equal(error.message, "The UniFi Access controller refused the door command.");
-      assert.equal(error.detail, undefined);
-    } });
+      code: "CODE_SYSTEM_ERROR",
+      detail: undefined,
+      message: "The UniFi Access controller refused the door command.",
+      name: "AccessApiError"
+    });
   });
 
   test("a 200 carrying a document that is not an envelope is a protocol error rather than a refusal or a success", async () => {
@@ -148,11 +149,7 @@ describe("the hub commands", () => {
 
     const hub = present(fixture.registry.hub(HUB), "the hub");
 
-    await assertRejectsWith(() => hub.unlock(), AccessApiError, { check: (error) => {
-
-      assert.equal(error.code, "CODE_SYSTEM_ERROR");
-      assert.equal(error.message, "Server system error.");
-    } });
+    await assert.rejects(() => hub.unlock(), { code: "CODE_SYSTEM_ERROR", message: "Server system error.", name: "AccessApiError" });
   });
 
   test("a 200 carrying no envelope at all is a protocol error rather than a quiet success", async () => {
@@ -185,12 +182,7 @@ describe("the hub commands", () => {
     for(const command of [ (): Promise<void> => hub.close(), (): Promise<void> => hub.setLockRule({ type: "reset" }) ]) {
 
       // eslint-disable-next-line no-await-in-loop
-      await assertRejectsWith(command, AccessApiError, { check: (error) => {
-
-        assert.equal(error.code, "CODE_SYSTEM_ERROR");
-        assert.equal(error.message, "Server system error.");
-        assert.equal(error.detail, "CODE[-3];Mesg:;CauseBy:");
-      } });
+      await assert.rejects(command, { code: "CODE_SYSTEM_ERROR", detail: "CODE[-3];Mesg:;CauseBy:", message: "Server system error.", name: "AccessApiError" });
     }
   });
 
@@ -255,12 +247,13 @@ describe("the hub commands", () => {
 
     const reader = present(fixture.registry.device(READER), "the reader");
 
-    await assertRejectsWith(async () => reader.restart(), AccessApiError, { check: (error) => {
+    await assert.rejects(async () => reader.restart(), {
 
-      assert.equal(error.code, "CODE_SYSTEM_ERROR");
-      assert.equal(error.message, "Server system error.");
-      assert.equal(error.detail, "CODE[-3];Mesg:;CauseBy:");
-    } });
+      code: "CODE_SYSTEM_ERROR",
+      detail: "CODE[-3];Mesg:;CauseBy:",
+      message: "Server system error.",
+      name: "AccessApiError"
+    });
   });
 
   test("a refused restart that carries no message falls back to the restart's own sentence rather than the door commands'", async () => {
@@ -273,11 +266,7 @@ describe("the hub commands", () => {
 
     const reader = present(fixture.registry.device(READER), "the reader");
 
-    await assertRejectsWith(async () => reader.restart(), AccessApiError, { check: (error) => {
-
-      assert.equal(error.message, "The UniFi Access controller refused the device restart.");
-      assert.equal(error.detail, undefined);
-    } });
+    await assert.rejects(async () => reader.restart(), { detail: undefined, message: "The UniFi Access controller refused the device restart.", name: "AccessApiError" });
   });
 
   test("unlocks the door the caller named rather than the hub's own", async () => {
@@ -341,10 +330,12 @@ describe("the hub commands", () => {
     const hub = present(fixture.registry.hub(HUB), "the hub");
 
     assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
-    await assertRejectsWith(async () => hub.setLockRule({ interval: 2, type: "custom" }, { doorId: DOOR_MINI_DOOR }), AccessCapabilityError, { check: (error) => {
+    await assert.rejects(async () => hub.setLockRule({ interval: 2, type: "custom" }, { doorId: DOOR_MINI_DOOR }), {
 
-      assert.match(error.message, /the custom lock rule for door "Test Name 23"/, "and the refusal names the door the rule was aimed at");
-    } });
+      // The refusal names the door the rule was aimed at.
+      message: /the custom lock rule for door "Test Name 23"/,
+      name: "AccessCapabilityError"
+    });
 
     assert.equal(fixture.captured.length, 0, "and nothing reached the direct transport, which could only have addressed this device's own door");
   });

@@ -12,13 +12,12 @@
  */
 import type { AccessOfficialCallOptions, AccessOfficialRequestOptions, OfficialDomainOptions } from "./dispatch.ts";
 import { HOST, RecordingDispatch, RecordingTransport, VOID_OK, domainRig, officialPath, parseMultipart } from "./domain.helpers.ts";
+import { TestClock, expectAt } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { MockAgent } from "undici";
-import { TestClock } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
 import { officialHost } from "./endpoints.ts";
-import { present } from "../testing.helpers.ts";
 
 // The boundary every multipart case below is framed around, the content type that declares it, and the one part they all carry.
 const BOUNDARY = "----probe";
@@ -137,7 +136,7 @@ describe("parseMultipart", () => {
   test("parseMultipart reads each part's field, filename, content type, and bytes", () => {
 
     const parts = parseMultipart(multipartBody(), MULTIPART_CONTENT_TYPE);
-    const part = present(parts[0], "the one part");
+    const part = expectAt(parts, 0, "the one part");
 
     assert.equal(parts.length, 1);
     assert.equal(part.contentType, "text/csv");

@@ -16,12 +16,12 @@
 import { CONTROLLER_PATH, DEVICES_PATH, DOORS_PATH, DOOR_MINI, HOST, LOGIN_PATH, SELF_PATH, TOPOLOGY_PATH, connectCapturing, connectCapturingWithDispatch,
   devicesBody, doorsBody, interceptCredentialPass, interceptOfficialPass, mockController, officialDoor } from "./client-modes.helpers.ts";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
+import { capturingLog, logCount } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
+import { mockErrors, request } from "undici";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import assert from "node:assert/strict";
-import { capturingLog } from "homebridge-plugin-utils/testing";
 import { channels } from "../diagnostics.ts";
-import { request } from "undici";
 
 // The two addresses the rig's controller answers on, spelled out here rather than imported, so a test reads the address it expects rather than the one the rig
 // composed for itself.
@@ -42,7 +42,7 @@ describe("mockController", () => {
     agent.assertNoPendingInterceptors();
 
     // Net connect is off, so a request to any third origin is refused locally rather than leaving the process to find out whether anything is there.
-    await assert.rejects(async () => request("https://10.9.9.8/elsewhere", { dispatcher: agent }));
+    await assert.rejects(async () => request("https://10.9.9.8/elsewhere", { dispatcher: agent }), mockErrors.MockNotMatchedError);
   });
 });
 
@@ -117,7 +117,7 @@ describe("connectCapturing", () => {
 
     assert.ok(captured.ws instanceof FakeWebSocket, "the socket handed back is the one the injected factory built");
     assert.equal(captured.url, "wss://" + HOST + ":12445/api/v1/developer/devices/notifications");
-    assert.equal(log.entries.filter((entry) => (entry.level === "warn") && entry.message.includes("refused this token the device listing")).length, 1,
+    assert.equal(logCount(log.entries, "warn", "refused this token the device listing"), 1,
       "and the refusal the client reported went to the supplied logger rather than to the silent default");
     assert.equal(client.devices.length, 0, "which is the refusal that warning describes");
   });

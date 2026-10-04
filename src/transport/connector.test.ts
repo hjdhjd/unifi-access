@@ -8,12 +8,12 @@
  * test needs it, and the https responder is what supplies an established one.
  */
 import { Agent, errors, request } from "undici";
-import { DIAL_SETTLE_BOUND_MS, createHttpsLoopback, createSilentLoopback, elapsedSince, listenOnLoopback, stopListening } from "./loopback.helpers.ts";
+import { DIAL_SETTLE_BOUND_MS, createHttpsLoopback, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createLoopbackServer } from "./events-stream.helpers.ts";
 import { createOwnedConnector } from "./connector.ts";
-import { createServer as createTcpServer } from "node:net";
+import { freePort } from "homebridge-plugin-utils/testing";
 import { resolveErrnoCause } from "../errors.ts";
 
 // What the https responder answers every request with. The body is never read for its content - what these tests need from it is a request that completes, which
@@ -70,16 +70,18 @@ describe("createOwnedConnector", () => {
     /* A port that was listening and is not any more, so a dial against it is refused at once rather than left hanging. The connector's record is the only place
      * that error survives for a WebSocket caller, which is what this row is about.
      */
-    const vacant = createTcpServer();
-    const vacantPort = await listenOnLoopback(vacant);
-
-    await stopListening(vacant);
+    const vacantPort = await freePort();
 
     const connector = createOwnedConnector({ allowH2: false, verifyTls: false });
     const refusingAgent = new Agent({ connect: connector.connect });
 
-    assert.equal(connector.lastDialFailure, undefined, "a connector that has dialed nothing has nothing to report");
+    // Read into a binding of its own, so the assertion narrows that binding rather than the getter every later read of the record goes through.
+    const beforeAnyDial = connector.lastDialFailure;
 
+    assert.equal(beforeAnyDial, undefined, "a connector that has dialed nothing has nothing to report");
+
+    // The request rejects with the dial's own platform error, a plain `Error` and the very object the connector records, so the record read below is the assertion and
+    // the rejection is only awaited.
     await assert.rejects(request("https://127.0.0.1:" + vacantPort.toString() + "/x", { dispatcher: refusingAgent }));
 
     const refusal = connector.lastDialFailure;

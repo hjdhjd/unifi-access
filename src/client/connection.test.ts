@@ -10,7 +10,8 @@ import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizatio
   AccessStallError } from "../errors.ts";
 import type { AccessControllerConfig, AccessEventPacket, Nullable } from "../types/index.ts";
 import type { ConnectionState, ConnectionTransition, ThrottleSource } from "./connection.ts";
-import { TestClock, advanceThroughSchedule, assertNoUnhandledRejections, capturingLog, logCount, settle, silentLog } from "homebridge-plugin-utils/testing";
+import { TestClock, advanceThroughSchedule, assertNoUnhandledRejections, capturingLog, logCount, loggedAt, settle, settleUntil,
+  silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
 import type { AccessLogging } from "../logging.ts";
@@ -21,7 +22,6 @@ import { EventStream } from "../transport/events-stream.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import { StateStore } from "../state/store.ts";
 import assert from "node:assert/strict";
-import { settleUntil } from "../testing.helpers.ts";
 
 const HOST = "10.0.0.1";
 
@@ -423,11 +423,15 @@ describe("ConnectionMonitor", () => {
       controller.abort();
 
       const thrown = await opening.catch((error: unknown) => error);
-      const observed = await handshake.catch((error: unknown) => error);
 
       // Identity rather than type: a deferred handshake that manufactured its own failure would still be an abort, and would still hide what actually went wrong.
-      assert.ok(thrown instanceof AccessAbortedError, "the open rejects with the abort the caller's signal raised");
-      assert.equal(observed, thrown, "the published handshake carries the very failure the open reported");
+      await assert.rejects(handshake, (error: unknown) => {
+
+        assert.ok(error instanceof AccessAbortedError, "the handshake rejects with the abort the caller's signal raised");
+        assert.equal(error, thrown, "the published handshake carries the very failure the open reported");
+
+        return true;
+      }, "the handshake rejects with the abort the caller's signal raised");
     });
 
     test("disposing before the channel opens releases a reader parked on the handshake", async () => {
@@ -558,7 +562,7 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "lost");
+      await settleUntil(() => monitor.state === "lost", { description: "the failing probe to drop the monitor to lost" });
 
       // The breaker opening during recovery does not mask the phase: the monitor rather than the breaker owns re-probing here, so lost is the more actionable answer.
       throttle.set(true);
@@ -584,7 +588,7 @@ describe("ConnectionMonitor", () => {
       // A real restart returns the uptime to near zero, which is a drop of the controller's whole prior uptime.
       store.applyRefreshDocuments({ controller: controllerAt(12), topology: structuredClone(accessBootstrap2026Fixture) });
 
-      await settleUntil(() => events.rebooted.length === 1, { message: "expected the restart to be detected" });
+      await settleUntil(() => events.rebooted.length === 1, { description: "the restart to be detected" });
       assert.deepEqual(events.rebooted[0], { newUptime: 12, previousUptime: BASE_UPTIME });
     });
 
@@ -609,7 +613,7 @@ describe("ConnectionMonitor", () => {
       store.applyRefreshDocuments({ controller: controllerAt(BASE_UPTIME - (2 * ACCESS_REBOOT_UPTIME_DROP_MINIMUM) - 1),
         topology: structuredClone(accessBootstrap2026Fixture) });
 
-      await settleUntil(() => events.rebooted.length === 1, { message: "expected a drop past the minimum to fire" });
+      await settleUntil(() => events.rebooted.length === 1, { description: "a drop past the minimum to fire" });
     });
 
     test("a sub-minimum decrease fires nothing", async () => {
@@ -689,7 +693,7 @@ describe("ConnectionMonitor", () => {
 
       store.applyRefreshDocuments({ controller: controllerAt(30), topology: structuredClone(accessBootstrap2026Fixture) });
 
-      await settleUntil(() => events.rebooted.length === 1, { message: "expected the first-window restart to be detected" });
+      await settleUntil(() => events.rebooted.length === 1, { description: "the first-window restart to be detected" });
       assert.equal(events.rebooted[0]?.previousUptime, BASE_UPTIME, "measured against the reading present at construction");
     });
 
@@ -714,7 +718,7 @@ describe("ConnectionMonitor", () => {
       control.setNextUptime(20);
       store.applyRefreshDocuments({ controller: controllerAt(20), topology: structuredClone(accessBootstrap2026Fixture) });
 
-      await settleUntil(() => monitor.state === "healthy", { message: "expected the detected restart to wake recovery and relaunch at once" });
+      await settleUntil(() => monitor.state === "healthy", { description: "the detected restart to wake recovery and relaunch at once" });
 
       assert.equal(streams.length, 2, "recovery relaunched rather than sleeping out its backoff");
       assert.equal(events.rebooted.length, 1);
@@ -740,7 +744,7 @@ describe("ConnectionMonitor", () => {
 
       // The schedule opens with a zero delay, so the first attempt runs at once; it succeeds, and recovery walks straight back to healthy.
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
-      await settleUntil(() => monitor.state === "healthy", { message: "expected recovery back to healthy" });
+      await settleUntil(() => monitor.state === "healthy", { description: "recovery to return the monitor to healthy" });
 
       assert.equal(events.lost.length, 0, "a reachable controller is never reported lost");
       assert.equal(events.recovered, 0, "and recovery is announced only after a genuine loss");
@@ -749,7 +753,7 @@ describe("ConnectionMonitor", () => {
       assert.deepEqual(events.transitions.map((transition) => transition.to), [ "degraded", "reconnecting", "healthy" ]);
 
       // The transient case confirms itself at the stream level rather than announcing a controller-level recovery that did not happen.
-      assert.ok(log.entries.some((entry) => (entry.level === "info") && entry.message.includes("Reconnected the UniFi Access realtime notification channel.")),
+      assert.ok(loggedAt(log.entries, "info", "Reconnected the UniFi Access realtime notification channel."),
         "the transient drop confirms itself as a reconnected notification channel");
       assert.ok(!log.entries.some((entry) => entry.message.includes("Recovered the connection to the UniFi Access controller.")),
         "no controller-level recovery is announced for a drop that never reached lost");
@@ -770,7 +774,7 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "lost", { message: "expected the connection to be reported lost" });
+      await settleUntil(() => monitor.state === "lost", { description: "the connection to be reported lost" });
       assert.equal(events.lost.length, 1);
       assert.ok(events.lost[0] instanceof AccessError, "the lost announcement carries the typed error that ended the connection");
 
@@ -784,9 +788,9 @@ describe("ConnectionMonitor", () => {
       control.setVerifyError(null);
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "healthy", { message: "expected recovery once the controller returned" });
+      await settleUntil(() => monitor.state === "healthy", { description: "recovery to complete once the controller returned" });
       assert.equal(events.recovered, 1);
-      assert.ok(log.entries.some((entry) => (entry.level === "info") && entry.message.includes("Recovered the connection to the UniFi Access controller.")),
+      assert.ok(loggedAt(log.entries, "info", "Recovered the connection to the UniFi Access controller."),
         "the recovery is announced at info once the controller returns");
     });
 
@@ -803,7 +807,7 @@ describe("ConnectionMonitor", () => {
       control.setVerifyError(new AccessNetworkError("sluggish"));
       streams[0]?.emitError(new Error("socket dropped"));
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
-      await settleUntil(() => monitor.state === "lost");
+      await settleUntil(() => monitor.state === "lost", { description: "the failing probes to drop the monitor to lost" });
 
       for(let i = 0; i < 15; i++) {
 
@@ -817,7 +821,7 @@ describe("ConnectionMonitor", () => {
       control.setVerifyError(null);
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "healthy");
+      await settleUntil(() => monitor.state === "healthy", { description: "recovery to complete once the probe succeeds" });
       assert.equal(events.recovered, 1);
     });
 
@@ -836,13 +840,13 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "lost");
+      await settleUntil(() => monitor.state === "lost", { description: "the failed re-bootstrap to drop the monitor to lost" });
       assert.ok(control.reBootstrapCalls() >= 1, "recovery reached the document re-fetch that failed");
 
       control.setReBootstrapError(null);
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "healthy");
+      await settleUntil(() => monitor.state === "healthy", { description: "the retried re-bootstrap to return the monitor to healthy" });
     });
 
     test("a failure at the relaunch step that is not an AccessError is announced as a network error carrying it", async () => {
@@ -865,7 +869,7 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "lost");
+      await settleUntil(() => monitor.state === "lost", { description: "the failed relaunch to drop the monitor to lost" });
       assert.equal(events.lost.length, 1);
 
       const fault = events.lost[0];
@@ -901,7 +905,7 @@ describe("ConnectionMonitor", () => {
           relaunch: (): boolean => (monitor.state === "reconnecting") && (streams.length === 2)
         };
 
-        await settleUntil(arrived[step], { message: "expected the attempt to park inside the " + step + " step" });
+        await settleUntil(arrived[step], { description: "the attempt to park inside the " + step + " step" });
 
         const phaseAtDisposal = monitor.state;
         const transitionsBefore = events.transitions.length;
@@ -1294,7 +1298,7 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "lost", { message: "expected the connection to be reported lost" });
+      await settleUntil(() => monitor.state === "lost", { description: "the connection to be reported lost" });
 
       const warned = log.entries.find((entry) => (entry.level === "warn") && entry.message.includes("the connection is lost"));
 
@@ -1324,7 +1328,7 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => (monitor.state === "degraded") && (control.verifyCalls() >= 1), { message: "expected the attempt to park inside the probe step" });
+      await settleUntil(() => (monitor.state === "degraded") && (control.verifyCalls() >= 1), { description: "the attempt to park inside the probe step" });
 
       await monitor[Symbol.asyncDispose]();
       await settle();
@@ -1359,7 +1363,7 @@ describe("ConnectionMonitor", () => {
       await settle();
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "healthy", { message: "recovery must complete without waiting on the privilege check" });
+      await settleUntil(() => monitor.state === "healthy", { description: "recovery to complete without waiting on the privilege check" });
 
       assert.equal(control.adminCalls(), 1, "issued exactly once for the recovery cycle");
 
@@ -1388,7 +1392,7 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "lost");
+      await settleUntil(() => monitor.state === "lost", { description: "the failing probe to drop the monitor to lost" });
       assert.equal(control.adminCalls(), 0, "a failed attempt re-checks nothing");
     });
 
@@ -1410,7 +1414,7 @@ describe("ConnectionMonitor", () => {
         await settle();
         await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-        await settleUntil(() => monitor.state === "healthy", { message: "expected recovery to complete and issue the re-check" });
+        await settleUntil(() => monitor.state === "healthy", { description: "recovery to complete and issue the re-check" });
         assert.equal(control.adminCalls(), 1);
 
         await monitor[Symbol.asyncDispose]();
@@ -1440,7 +1444,7 @@ describe("ConnectionMonitor", () => {
         await settle();
         await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-        await settleUntil(() => monitor.state === "healthy", { message: "the re-check gates nothing, so recovery completes either way" });
+        await settleUntil(() => monitor.state === "healthy", { description: "recovery to complete either way, since the re-check gates nothing" });
         await settle();
       });
 
@@ -1467,7 +1471,7 @@ describe("ConnectionMonitor", () => {
       await settle();
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "healthy", { message: "expected the relaunch to complete" });
+      await settleUntil(() => monitor.state === "healthy", { description: "the relaunch to complete" });
       assert.equal(streams.length, 2, "a fresh socket was built");
 
       // A frame on the live socket reaches both sinks; one on the dead socket reaches neither, which is the detach working.
@@ -1523,7 +1527,7 @@ describe("ConnectionMonitor", () => {
       throttle.set(true);
       throttle.set(false);
 
-      await settleUntil(() => seen.length === 2);
+      await settleUntil(() => seen.length === 2, { description: "observe to yield the throttled and healthy transitions" });
       assert.deepEqual(seen, [ "throttled", "healthy" ]);
 
       controller.abort();
@@ -1591,7 +1595,7 @@ describe("ConnectionMonitor", () => {
       await settle();
       throttle.set(false);
 
-      await settleUntil(() => seen.length === 1);
+      await settleUntil(() => seen.length === 1, { description: "the raw rail to deliver the transition" });
       assert.deepEqual(seen, ["healthy"]);
 
       controller.abort();
@@ -1635,7 +1639,7 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
 
-      await settleUntil(() => monitor.state === "lost");
+      await settleUntil(() => monitor.state === "lost", { description: "the failing probe to drop the monitor to lost" });
 
       const before = streams.length;
 
@@ -1659,7 +1663,7 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await advanceThroughSchedule(clock, ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1));
 
-      await settleUntil(() => monitor.state === "lost");
+      await settleUntil(() => monitor.state === "lost", { description: "the refused probe to drop the monitor to lost" });
 
       const attempts = control.verifyCalls();
       const before = streams.length;

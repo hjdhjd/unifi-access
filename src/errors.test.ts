@@ -10,7 +10,7 @@ import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizatio
   isSignInRefusal, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { errnoError } from "./testing.helpers.ts";
+import { errnoError } from "homebridge-plugin-utils/testing";
 
 describe("AccessError hierarchy", () => {
 
@@ -250,8 +250,8 @@ describe("resolveErrnoCause", () => {
 
   test("returns undefined for an error whose code is not a string", () => {
 
-    // Built by hand rather than through the shared factory, whose code is a string: a code of the wrong type is the whole of what this row drives.
-    assert.equal(resolveErrnoCause(Object.assign(new Error("x"), { code: 42 })), undefined);
+    // A numeric code is what this row drives: the error carries a code, so only the guard on the code's type can turn it away.
+    assert.equal(resolveErrnoCause(errnoError("x", 42)), undefined);
   });
 
   test("returns undefined for non-error and code-less inputs", () => {

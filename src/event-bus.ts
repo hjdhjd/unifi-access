@@ -104,18 +104,19 @@ export class EventBus<EventMap extends Record<keyof EventMap, readonly unknown[]
   }
 
   /**
-   * Unbounded async iterable of every subsequent emission of `event`, until `opts.signal` aborts or the consumer stops iterating. Each yielded value is the
-   * event's argument tuple. The queue is unbounded by default - a slow consumer accumulates pending emissions rather than dropping them.
+   * Unbounded async iterable of every subsequent emission of `event`, until the consumer stops iterating or `opts.signal` aborts, which ends the iteration by
+   * rejecting with the platform's `AbortError`. Each yielded value is the event's argument tuple. The queue is unbounded by default - a slow consumer accumulates
+   * pending emissions rather than dropping them.
    *
    * @param event - The event name to stream.
-   * @param opts  - Optional abort signal that terminates the iteration.
+   * @param opts  - Optional abort signal; aborting it ends the iteration with an `AbortError`.
    *
    * @returns An async iterable yielding the argument tuple of each emission.
    */
   stream<K extends keyof EventMap & string>(event: K, opts: StreamOptions = {}): AsyncIterable<EventMap[K]> {
 
-    // node:events' `on` returns an async iterator that buffers emissions and terminates cleanly when the signal aborts - precisely our stream contract. The yielded
-    // values are the argument arrays, which are our tuple type at the boundary.
+    // node:events' `on` returns an async iterator that buffers emissions and, when the signal aborts, rejects the pending read with the platform's `AbortError` -
+    // precisely our stream contract. The yielded values are the argument arrays, which are our tuple type at the boundary.
     return subscribeIterator(this.#emitter, EVENT_NAME_PREFIX + event, opts.signal ? { signal: opts.signal } : undefined) as AsyncIterable<EventMap[K]>;
   }
 

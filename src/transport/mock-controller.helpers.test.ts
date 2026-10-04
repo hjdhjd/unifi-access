@@ -26,7 +26,7 @@ describe("makeMockTransport", () => {
     mock.agent.assertNoPendingInterceptors();
 
     // Net connect is off, so a request to any other origin is refused locally rather than leaving the process to find out whether anything is there.
-    await assert.rejects(async () => mock.transport.send(url("10.9.9.8", "/elsewhere")));
+    await assert.rejects(async () => mock.transport.send(url("10.9.9.8", "/elsewhere")), { code: "UND_MOCK_ERR_MOCK_NOT_MATCHED", name: "AccessNetworkError" });
   });
 
   test("makeMockTransport forwards an auth-header hook only when supplied", async () => {

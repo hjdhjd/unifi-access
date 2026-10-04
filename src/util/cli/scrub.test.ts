@@ -710,8 +710,8 @@ describe("the capture scrub", () => {
     assert.match(row?.device_id ?? "", /^[0-9a-f]{12}$/, "the device the row belongs to is identity and takes the address stand-in");
     assert.notEqual(row?.device_id, "02ffee000001");
     assert.equal(row?.key, "ssh_password", "the key text names what the row is about and is evidence, not identity");
-    assert.equal(row?.tag, "credential");
-    assert.ok(!(row?.value ?? "").includes("9fK2pQ7mVx4LrT8nBwZq"), "the credential row's value does not survive the scrub");
+    assert.equal(row.tag, "credential");
+    assert.ok(!row.value.includes("9fK2pQ7mVx4LrT8nBwZq"), "the credential row's value does not survive the scrub");
   });
 
   test("a config row whose value is a container clears every string beneath it", () => {

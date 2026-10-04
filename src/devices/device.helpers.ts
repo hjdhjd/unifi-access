@@ -17,6 +17,7 @@ import type { AccessTypedEvent } from "../protocol/events.ts";
 import type { MockTransport } from "../transport/mock-controller.helpers.ts";
 import { StateStore } from "../state/store.ts";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
+import { refuseRefresh } from "../testing.helpers.ts";
 
 // Named entries from the 2026 document: a single-door hub, the door it drives, and a reader that is not hub-capable.
 export const HUB = "aabbcc000001";
@@ -67,8 +68,7 @@ interface DeviceFixture {
 export function deviceFixture(bootstrap: AccessBootstrapConfig): DeviceFixture {
 
   const mock = makeMockTransport();
-  const store = new StateStore({ clock: new TestClock(), log: silentLog(),
-    refresh: () => Promise.reject(new Error("the refresh callback must not be called")), refreshIntervalMs: false });
+  const store = new StateStore({ clock: new TestClock(), log: silentLog(), refresh: refuseRefresh, refreshIntervalMs: false });
 
   store.dispatch({ data: structuredClone(bootstrap), kind: "bootstrapLoaded" });
 
@@ -96,7 +96,7 @@ export function intercept(fixture: DeviceFixture, options: InterceptOptions): vo
 
   fixture.mock.pool.intercept({ method: options.method, path: options.path }).reply(options.status ?? 200, (opts): string => {
 
-    fixture.captured.push({ body: opts.body, method: opts.method ?? "", path: opts.path });
+    fixture.captured.push({ body: opts.body, method: opts.method, path: opts.path });
 
     return options.body ?? SUCCESS;
   });

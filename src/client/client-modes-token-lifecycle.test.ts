@@ -4,15 +4,15 @@
  * recovers.
  */
 import { DOORS_PATH, DOOR_HUB, DOOR_MINI, HOST, connectCapturing, doorsBody, interceptOfficialPass, mockController, officialDoor } from "./client-modes.helpers.ts";
-import { capturingLog, silentLog } from "homebridge-plugin-utils/testing";
+import { capturingLog, present, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
-import { present, settleUntil, subscribeTo } from "../testing.helpers.ts";
 import { ACCESS_API_ERROR_LIMIT } from "../settings.ts";
 import { AccessAbortedError } from "../errors.ts";
 import { AccessClient } from "./client.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
+import { subscribeTo } from "../testing.helpers.ts";
 
 describe("a token-only client's lifecycle signals", () => {
 
@@ -43,7 +43,7 @@ describe("a token-only client's lifecycle signals", () => {
     const pending = AccessClient.connect({ dispatcher: agent, host: HOST, log: silentLog(), refreshIntervalMs: false, signal: controller.signal,
       token: "t0ken", webSocket: () => new FakeWebSocket() });
 
-    await settleUntil(() => starts === 1, { message: "expected the seed's read to be dispatched" });
+    await settleUntil(() => starts === 1, { description: "the seed's read to be dispatched" });
     controller.abort();
 
     await assert.rejects(pending, AccessAbortedError);
@@ -102,7 +102,7 @@ describe("a token-only client's lifecycle signals", () => {
 
     const pending = client.connection.verify({ signal: controller.signal });
 
-    await settleUntil(() => starts === 1, { message: "expected the probe's read to be dispatched" });
+    await settleUntil(() => starts === 1, { description: "the probe's read to be dispatched" });
     controller.abort();
 
     await assert.rejects(pending, AccessAbortedError);
@@ -184,11 +184,12 @@ describe("a token-only client's lifecycle signals", () => {
 
     captured.ws.emitError(new Error("socket dropped"));
 
-    await settleUntil(() => log.entries.some((entry) => entry.message.includes("beginning recovery")));
-    await settleUntil(() => starts === 2, { message: "expected the probe and the re-seed behind it to be dispatched" });
+    await settleUntil(() => log.entries.some((entry) => entry.message.includes("beginning recovery")), { description: "the recovery to announce that it is beginning" });
+    await settleUntil(() => starts === 2, { description: "the probe and the re-seed behind it to be dispatched" });
     await client[Symbol.asyncDispose]();
 
-    await settleUntil(() => log.entries.some((entry) => entry.message.includes("ended with its disposal")));
+    await settleUntil(() => log.entries.some((entry) => entry.message.includes("ended with its disposal")),
+      { description: "the re-seed to report that it ended with the disposal" });
 
     const interrupted = present(log.entries.find((entry) => entry.message.includes("ended with its disposal")), "the interrupted re-seed entry");
 

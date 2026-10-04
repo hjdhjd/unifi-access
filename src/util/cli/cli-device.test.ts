@@ -97,7 +97,13 @@ describe("the device restart command", () => {
     const { calls, client } = makeFakeClient({ devices: [{ id: HUB_ID, name: "Acme Name 6" }] });
     const { ctx } = makeCommandContext({ args: [ "restart", "Nothing" ], calls, client });
 
-    await assert.rejects(async () => device.run(ctx), (error: unknown) => (error instanceof CliError) && error.message.includes("Acme Name 6 => " + HUB_ID));
+    await assert.rejects(async () => device.run(ctx), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.ok(error.message.includes("Acme Name 6 => " + HUB_ID));
+
+      return true;
+    });
   });
 
   test("a failed restart is reported and the run continues", async () => {
@@ -167,7 +173,7 @@ describe("the device restart command", () => {
     const { client } = makeFakeClient({ devices: [] });
     const { ctx } = makeCommandContext({ args: ["restart"], client });
 
-    await assert.rejects(async () => device.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(async () => device.run(ctx), { exitCode: 2, name: "CliError" });
   });
 
   test("a token-only identity is refused before anything connects, and the one-shot convention holds", async () => {
@@ -175,8 +181,7 @@ describe("the device restart command", () => {
     const { calls, client } = makeFakeClient({ devices: [{ id: HUB_ID, name: "Acme Name 6" }] });
     const refused = makeCommandContext({ args: [ "restart", "all" ], calls, client, credentials: CREDENTIALS_TOKEN });
 
-    await assert.rejects(async () => device.run(refused.ctx),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("device restart command"));
+    await assert.rejects(async () => device.run(refused.ctx), { message: /device restart command/, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 1);
@@ -194,7 +199,7 @@ describe("the device restart command", () => {
     const { calls, client } = makeFakeClient({ devices: [{ id: HUB_ID, name: "Acme Name 6" }] });
     const { ctx } = makeCommandContext({ args: [ "restart", "all", "--api", "auto" ], calls, client });
 
-    await assert.rejects(async () => device.run(ctx), (error: NodeJS.ErrnoException) => error.code === "ERR_PARSE_ARGS_UNKNOWN_OPTION");
+    await assert.rejects(async () => device.run(ctx), { code: "ERR_PARSE_ARGS_UNKNOWN_OPTION" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -308,8 +313,8 @@ describe("the device state command", () => {
     const parsed = parsedJson<Record<string, Record<string, unknown>>>(lines);
 
     assert.deepEqual(parsed[HUB_ID]?.["terminals"], { "rel": { "wired": false }, "rex": { "state": true, "wired": true } });
-    assert.deepEqual(parsed[HUB_ID]?.["bindings"], [], "a hub carrying no extensions binds no door, which is a list rather than an absent member");
-    assert.deepEqual(Object.keys(parsed[HUB_ID] ?? {}), [ "bindings", "online", "tamper", "terminals", "uplink" ]);
+    assert.deepEqual(parsed[HUB_ID]["bindings"], [], "a hub carrying no extensions binds no door, which is a list rather than an absent member");
+    assert.deepEqual(Object.keys(parsed[HUB_ID]), [ "bindings", "online", "tamper", "terminals", "uplink" ]);
   });
 
   test("a terminal in service with no reading established renders unreported and crosses JSON as null", async () => {
@@ -407,7 +412,7 @@ describe("the device state command", () => {
     const parsed = parsedJson<Record<string, Record<string, unknown>>>(lines);
 
     assert.deepEqual(parsed[HUB_ID]?.["bindings"], [{ "doorId": "d-1", "name": "Front Door", "port": "port1" }]);
-    assert.deepEqual(Object.keys(parsed[HUB_ID] ?? {}), [ "bindings", "online", "tamper", "terminals", "uplink" ]);
+    assert.deepEqual(Object.keys(parsed[HUB_ID]), [ "bindings", "online", "tamper", "terminals", "uplink" ]);
   });
 
   test("it reports one named device, and lists what the controller has when nothing matches", async () => {
@@ -423,7 +428,13 @@ describe("the device state command", () => {
 
     const { ctx: missing } = makeCommandContext({ args: [ "state", "Nothing" ], calls, client });
 
-    await assert.rejects(async () => device.run(missing), (error: unknown) => (error instanceof CliError) && error.message.includes("Front Ultra => " + ULTRA_ID));
+    await assert.rejects(async () => device.run(missing), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.ok(error.message.includes("Front Ultra => " + ULTRA_ID));
+
+      return true;
+    });
   });
 
   test("it prints its own usage on request, and refuses more than one target before connecting", async () => {
@@ -439,7 +450,7 @@ describe("the device state command", () => {
 
     const { ctx: tooMany } = makeCommandContext({ args: [ "state", "One", "Two" ], calls, client });
 
-    await assert.rejects(async () => device.run(tooMany), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(async () => device.run(tooMany), { exitCode: 2, name: "CliError" });
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
   });
@@ -469,8 +480,12 @@ describe("the device settings command", () => {
     const { client } = makeFakeClient({ devices: [] });
     const { ctx } = makeCommandContext({ args: ["settings"], client });
 
-    await assert.rejects(async () => device.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify one device by name or id. Run \"ufa device settings --help\" for usage."));
+    await assert.rejects(async () => device.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify one device by name or id. Run \"ufa device settings --help\" for usage.",
+      name: "CliError"
+    });
   });
 
   test("with no flags the settings read renders", async () => {
@@ -577,13 +592,11 @@ describe("the device settings command", () => {
     const { calls, client } = makeFakeClient(officialSpec);
     const unknown = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "telepathy" ], calls, client });
 
-    await assert.rejects(async () => device.run(unknown.ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("bt_button"));
+    await assert.rejects(async () => device.run(unknown.ctx), { exitCode: 2, message: /bt_button/, name: "CliError" });
 
     const contradiction = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "nfc", "--disable", "nfc" ], calls, client });
 
-    await assert.rejects(async () => device.run(contradiction.ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("nfc"));
+    await assert.rejects(async () => device.run(contradiction.ctx), { exitCode: 2, message: /nfc/, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -594,8 +607,14 @@ describe("the device settings command", () => {
     const { calls, client } = makeFakeClient(officialSpec);
     const { ctx } = makeCommandContext({ args: [ "settings", "Front Reader" ], calls, client, credentials: CREDENTIALS_PAIR });
 
-    await assert.rejects(async () => device.run(ctx),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("device settings command") && error.message.includes("official API"));
+    await assert.rejects(async () => device.run(ctx), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.match(error.message, /device settings command/);
+      assert.match(error.message, /official API/);
+
+      return true;
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 1);
@@ -649,8 +668,12 @@ describe("the device update command", () => {
     const { client } = makeFakeClient({ devices: [] });
     const { ctx } = makeCommandContext({ args: ["update"], client });
 
-    await assert.rejects(async () => device.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "Specify one device by name or id. Run \"ufa device update --help\" for usage."));
+    await assert.rejects(async () => device.run(ctx), {
+
+      exitCode: 2,
+      message: "Specify one device by name or id. Run \"ufa device update --help\" for usage.",
+      name: "CliError"
+    });
   });
 
   test("a missing, malformed, or non-object payload is refused before anything connects", async () => {
@@ -664,7 +687,13 @@ describe("the device update command", () => {
 
       // Sequential by intent: each payload shape is asserted on its own invocation.
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => device.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2), args.join(" "));
+      await assert.rejects(async () => device.run(ctx), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, args.join(" "));
+        assert.equal(error.exitCode, 2, args.join(" "));
+
+        return true;
+      }, args.join(" "));
 
       assert.equal(calls.opens.length, 0, args.join(" "));
       assert.equal(calls.credentialLoads, 0, args.join(" "));
@@ -676,8 +705,7 @@ describe("the device update command", () => {
     const { calls, client } = makeFakeClient(spec);
     const { ctx } = makeCommandContext({ args: [ "update", "Front Reader", "--json", "{}" ], calls, client, credentials: CREDENTIALS_TOKEN });
 
-    await assert.rejects(async () => device.run(ctx),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("device update command"));
+    await assert.rejects(async () => device.run(ctx), { message: /device update command/, name: "CliError" });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 1);
@@ -733,8 +761,12 @@ describe("the device capture scrub", () => {
     const { calls, client } = makeFakeClient({ devices: [{ id: READER_ID, name: "Front Reader" }] });
     const { ctx } = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "nfc", "--scrub" ], calls, client });
 
-    await assert.rejects(async () => device.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "A settings change reports each method rather than printing a document, so --scrub applies to the settings read only."));
+    await assert.rejects(async () => device.run(ctx), {
+
+      exitCode: 2,
+      message: "A settings change reports each method rather than printing a document, so --scrub applies to the settings read only.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -745,8 +777,12 @@ describe("the device capture scrub", () => {
     const { calls, client } = makeFakeClient({ devices: [{ id: READER_ID, name: "Front Reader" }] });
     const { ctx } = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "nfc", "--json" ], calls, client });
 
-    await assert.rejects(async () => device.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "A settings change reports each method rather than printing a document, so --json applies to the settings read only."));
+    await assert.rejects(async () => device.run(ctx), {
+
+      exitCode: 2,
+      message: "A settings change reports each method rather than printing a document, so --json applies to the settings read only.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);
@@ -757,8 +793,12 @@ describe("the device capture scrub", () => {
     const { calls, client } = makeFakeClient({ devices: [{ id: READER_ID, name: "Front Reader" }] });
     const { ctx } = makeCommandContext({ args: [ "update", "Front Reader", "--json", "{\"name\": \"Lobby Reader\"}", "--dry-run", "--scrub" ], calls, client });
 
-    await assert.rejects(async () => device.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-      (error.message === "A dry run prints the payload you supplied rather than a controller document, so --scrub has nothing to act on."));
+    await assert.rejects(async () => device.run(ctx), {
+
+      exitCode: 2,
+      message: "A dry run prints the payload you supplied rather than a controller document, so --scrub has nothing to act on.",
+      name: "CliError"
+    });
 
     assert.equal(calls.opens.length, 0);
     assert.equal(calls.credentialLoads, 0);

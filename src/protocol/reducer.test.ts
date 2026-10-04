@@ -12,7 +12,6 @@ import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../off
 import { applyBootstrap, createInitialState, reduce } from "./reducer.ts";
 import { describe, test } from "node:test";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "../client/census.ts";
-import { present, topologyDevices } from "../testing.helpers.ts";
 import type { AccessOfficialDevice } from "../official/devices.ts";
 import type { AccessOfficialDoor } from "../official/spaces.ts";
 import { AccessProtocolError } from "../errors.ts";
@@ -20,6 +19,8 @@ import type { AccessState } from "./reducer.ts";
 import type { AccessTypedEvent } from "./events.ts";
 import assert from "node:assert/strict";
 import { classifyPacket } from "./events.ts";
+import { present } from "homebridge-plugin-utils/testing";
+import { topologyDevices } from "../testing.helpers.ts";
 
 // The identity the captured camera-class doorbell reports. It appears throughout the notification corpus while being absent from every real topology document, which
 // is why a state that needs it present has to seed it deliberately.
@@ -100,7 +101,7 @@ const syntheticDoorState = (locationId: string): AccessTypedEvent => ({ device: 
 const seededBootstrap = (): AccessBootstrapConfig => {
 
   const bootstrap = structuredClone(accessBootstrap2026Fixture);
-  const template = structuredClone(bootstrap.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0]);
+  const template = structuredClone(bootstrap.floors?.[0]?.doors?.[0]?.device_groups[0]?.[0]);
 
   assert.ok(template, "the 2026 document should carry a device record to clone");
 
@@ -117,7 +118,7 @@ const seededBootstrap = (): AccessBootstrapConfig => {
  */
 const capabilityLessDevice = (): AccessDeviceConfig => {
 
-  const template = structuredClone(accessBootstrap2026Fixture.floors?.[0]?.doors?.[0]?.device_groups?.[0]?.[0]);
+  const template = structuredClone(accessBootstrap2026Fixture.floors?.[0]?.doors?.[0]?.device_groups[0]?.[0]);
 
   assert.ok(template, "the 2026 document should carry a device record to clone");
 
@@ -162,7 +163,7 @@ describe("applyBootstrap flattening", () => {
 
     assert.equal(state.doors.get(DOOR_HUB)?.name, "Test Name 10");
     assert.equal(state.root?.unique_id, ROOT_2026);
-    assert.equal(state.root?.name, "Test Name 1");
+    assert.equal(state.root.name, "Test Name 1");
   });
 
   test("flattens the building-hosted device of the 2024 document, which attaches hardware to its root", () => {
@@ -386,7 +387,7 @@ describe("applyBootstrap reconciliation", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
     const drifted = structuredClone(accessBootstrap2026Fixture);
-    const target = present(drifted.floors?.[0]?.doors?.[1]?.device_groups?.[0]?.[0], "the hub record");
+    const target = present(drifted.floors?.[0]?.doors?.[1]?.device_groups[0]?.[0], "the hub record");
 
     assert.equal(target.unique_id, HUB_ID);
 
@@ -446,7 +447,7 @@ describe("applyBootstrap capability normalization", () => {
   test("a record arriving without a capabilities array is admitted carrying an empty one", () => {
 
     const document = capabilityLessBootstrap();
-    const carrier = present(document.floors?.[0]?.doors?.[1]?.device_groups?.[0]?.[0], "the hub record");
+    const carrier = present(document.floors?.[0]?.doors?.[1]?.device_groups[0]?.[0], "the hub record");
 
     assert.equal(carrier.unique_id, HUB_ID);
 
@@ -610,7 +611,7 @@ describe("deviceChanged", () => {
     const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === DOORBELL_ID), "the legacy doorbell update");
 
     assert.equal(packet.data?.["revision"], null, "this specimen really does null the field");
-    assert.equal(packet.data?.["last_seen"], null);
+    assert.equal(packet.data["last_seen"], null);
 
     const next = reduce(state, classify(packet));
     const merged = present(next.devices.get(DOORBELL_ID), "the merged doorbell");
@@ -1029,9 +1030,9 @@ describe("locationChanged", () => {
     const next = reduce(state, event);
 
     assert.equal(next.root?.name, "Acme HQ Campus");
-    assert.equal(next.root?.unique_id, ROOT_2026);
-    assert.equal(Object.hasOwn(next.root ?? {}, "floors"), false, "merging must not re-introduce the pruned collections");
-    assert.equal(Object.hasOwn(next.root ?? {}, "device_groups"), false);
+    assert.equal(next.root.unique_id, ROOT_2026);
+    assert.equal(Object.hasOwn(next.root, "floors"), false, "merging must not re-introduce the pruned collections");
+    assert.equal(Object.hasOwn(next.root, "device_groups"), false);
     assert.equal(Object.is(next.floors, state.floors), true);
   });
 
@@ -1141,7 +1142,7 @@ describe("doorStateChanged", () => {
     assert.equal(seeded.dps, "none");
     assert.equal(Object.hasOwn(seeded, "emergency"), false, "a seeded entry states only what its source answered");
 
-    const next = reduce(state, classifyDoorState((entry) => entry.states[0]?.dps === "close"));
+    const next = reduce(state, classifyDoorState((entry) => entry.states[0].dps === "close"));
     const stored = next.doorStates.get(DOOR_MINI_DOOR);
 
     // The report replaces it wholesale, which is how a live reading always wins over an interpretation of hardware flags.
@@ -1155,8 +1156,8 @@ describe("doorStateChanged", () => {
   test("re-applying the same report keeps the stored entry and the map reference", () => {
 
     // Two independent parses of the same specimen, so a pass here cannot come from the two events sharing an object.
-    const state = reduce(stateFrom(accessBootstrap2026Fixture), classifyDoorState((entry) => entry.states[0]?.dps === "close"));
-    const again = reduce(state, classifyDoorState((entry) => entry.states[0]?.dps === "close"));
+    const state = reduce(stateFrom(accessBootstrap2026Fixture), classifyDoorState((entry) => entry.states[0].dps === "close"));
+    const again = reduce(state, classifyDoorState((entry) => entry.states[0].dps === "close"));
 
     assert.equal(Object.is(again, state), true, "a door reporting what it already reported changes nothing");
     assert.equal(Object.is(again.doorStates, state.doorStates), true);
@@ -1169,11 +1170,11 @@ describe("doorStateChanged", () => {
      * report mean the alarm cleared - a merge would leave the alarm standing forever, because there is no way for the wire to say "and no alarms" other than by
      * omitting the member.
      */
-    const alarmed = reduce(stateFrom(accessBootstrap2026Fixture), classifyDoorState((entry) => entry.states[0]?.alarms !== undefined));
+    const alarmed = reduce(stateFrom(accessBootstrap2026Fixture), classifyDoorState((entry) => entry.states[0].alarms !== undefined));
 
     assert.deepEqual(alarmed.doorStates.get(DOOR_MINI_DOOR)?.alarms, [{ type: "force_unlock" }]);
 
-    const cleared = reduce(alarmed, classifyDoorState((entry) => (entry.states[0]?.alarms === undefined) && (entry.states[0]?.lock === "unlocked")));
+    const cleared = reduce(alarmed, classifyDoorState((entry) => (entry.states[0].alarms === undefined) && (entry.states[0].lock === "unlocked")));
     const stored = present(cleared.doorStates.get(DOOR_MINI_DOOR), "the Door Mini's cleared door state");
 
     assert.equal(stored.alarms, undefined, "the omitted optional reads as cleared rather than as unmentioned");
@@ -1185,7 +1186,7 @@ describe("doorStateChanged", () => {
     /* A report is the door's whole current statement, so a member it omits is not established rather than carried over from what the door said before. That is the
      * same rule the omitted optional above rests on, read against a report that states fewer members than a door hub sends.
      */
-    const reported = reduce(stateFrom(accessBootstrap2026Fixture), classifyDoorState((entry) => entry.states[0]?.dps === "close"));
+    const reported = reduce(stateFrom(accessBootstrap2026Fixture), classifyDoorState((entry) => entry.states[0].dps === "close"));
 
     assert.ok(reported.doorStates.get(DOOR_MINI_DOOR)?.emergency, "the full report established the members only a report carries");
 
@@ -1203,7 +1204,7 @@ describe("doorStateChanged", () => {
     const stored = present(state.devices.get(DOOR_MINI), "the stored Door Mini");
 
     const before = stored.revision;
-    const event = classifyDoorState((entry) => entry.states[0]?.dps === "close");
+    const event = classifyDoorState((entry) => entry.states[0].dps === "close");
 
     assert.equal(event.kind, "doorStateChanged");
     assert.ok(event.device, "this specimen is the device carrier");
@@ -1361,13 +1362,14 @@ describe("controllerChanged", () => {
 
 describe("the door state entry's honest unknowns", () => {
 
-  /* These rows are compile-surface rather than behavior: they assert that a consumer cannot read a member of a door state entry as though it were always there. A
-   * seeded entry states only what its source established, so every member but the door's own identity may be absent, and the compiler is what makes a consumer reckon
-   * with that rather than reading a value the entry never carried.
+  /* These rows hold the compile surface of a door state entry: a consumer cannot read a member as though it were always there, the door's own identity excepted, and
+   * where a row asserts runtime values, those values are what the seeded entry actually established. A seeded entry states only what its source established, so every
+   * member but the door's own identity may be absent, and the compiler is what makes a consumer reckon with that rather than reading a value the entry never carried.
    */
   test("refuses an unguarded read of a member a seeded entry may not carry", () => {
 
-    // The duty-less Ultra, whose hardware establishes its lock and nothing else, so each guarded read below has a genuinely absent member to fall back from.
+    // The entry belongs to the duty-less Ultra, whose hardware establishes its lock and nothing else. Every read below is refused at compile time, while at runtime
+    // the lock is present and the position and the sensor connection are absent.
     const entry = present(stateFrom(documentWith(accessBootstrap2026Fixture, withDuty(ULTRA_ID, undefined))).doorStates.get(DOOR_ULTRA),
       "the duty-less Ultra's door state");
 
@@ -1380,10 +1382,10 @@ describe("the door state entry's honest unknowns", () => {
     // @ts-expect-error - whether the sensor is connected is the member the widening exists for, because hardware exists that carries no wiring evidence at all.
     const connected: boolean = entry.dps_connected;
 
-    // The guarded read is what a consumer writes instead, and the values it produces are what this entry actually established.
-    assert.equal(lock ?? "locked", "locked");
-    assert.equal(dps ?? "none", "none");
-    assert.equal(connected ?? false, false);
+    // What the entry established, member by member: its lock at rest, and neither a position nor a sensor connection, each of which reads as absent.
+    assert.equal(lock, "locked");
+    assert.equal(dps, undefined);
+    assert.equal(connected, undefined);
   });
 
   test("keeps the door's own identity required, because an entry that names no door addresses nothing", () => {

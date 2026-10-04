@@ -35,7 +35,7 @@ describe("wallClock", () => {
 
     controller.abort();
 
-    await assert.rejects(pending, (error: unknown) => (error as Error).name === "AbortError", "aborting the signal rejects the delay with an AbortError");
+    await assert.rejects(pending, { code: "ABORT_ERR", name: "AbortError" });
   });
 
   test("timeout aborts with a TimeoutError once its duration elapses", async () => {

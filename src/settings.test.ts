@@ -44,7 +44,12 @@ describe("settings", () => {
   test("ACCESS_API_TIMEOUT is 3500 ms and at most 5000 ms", () => {
 
     assert.equal(ACCESS_API_TIMEOUT, 3500, "API timeout must be 3500 ms");
-    assert.ok(ACCESS_API_TIMEOUT <= 5000, "API timeout must never exceed the documented 5000 ms ceiling");
+
+    // The ceiling is compared through a binding widened to number, because the constant's literal type lets the type checker decide the comparison statically,
+    // while the assertion exists for the retuning that changes the value.
+    const timeoutMs: number = ACCESS_API_TIMEOUT;
+
+    assert.ok(timeoutMs <= 5000, "API timeout must never exceed the documented 5000 ms ceiling");
   });
 
   test("ACCESS_BOOTSTRAP_REFRESH_INTERVAL is 120000 ms", () => {
@@ -89,8 +94,13 @@ describe("settings", () => {
     // one of our own exported constants.
     const heartbeatCadenceMs = 5000;
 
+    // The request deadline and the watchdog window are compared through bindings widened to number, because their literal types let the type checker decide the
+    // comparison statically, while the assertion exists for the retuning that changes them.
+    const requestDeadlineMs: number = ACCESS_API_TIMEOUT;
+    const watchdogWindowMs: number = ACCESS_EVENTS_HEARTBEAT_TIMEOUT;
+
     assert.ok(ACCESS_EVENTS_HEARTBEAT_TIMEOUT >= (heartbeatCadenceMs * 2), "the watchdog window must tolerate at least one missed heartbeat");
-    assert.ok(ACCESS_API_TIMEOUT < ACCESS_EVENTS_HEARTBEAT_TIMEOUT, "a request deadline must expire well before the channel watchdog declares the stream dead");
+    assert.ok(requestDeadlineMs < watchdogWindowMs, "a request deadline must expire well before the channel watchdog declares the stream dead");
     assert.ok((ACCESS_API_RETRY_INTERVAL * 1000) > ACCESS_API_TIMEOUT, "the backoff cooldown must be far longer than the request deadline that feeds it");
   });
 

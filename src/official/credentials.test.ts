@@ -89,15 +89,15 @@ const rows: readonly DomainRow<OfficialCredentials>[] = [
   { expected: [ { "alias": "alias1", "nfc_id": "068E2836", "token": "tok-1" }, { "alias": "alias2", "nfc_id": "068E2837", "token": "" } ],
 
     // The filename deliberately differs from anything the method could hard-code, so a method that invented one instead of forwarding the caller's fails here.
-    inspect: (request) => {
+    inspect: (request): void => {
 
       const parts = parseMultipart(request.body, request.headers["content-type"] ?? "");
 
       assert.equal(parts.length, 1);
       assert.equal(parts[0]?.field, "file");
-      assert.equal(parts[0]?.filename, "third-party-cards.csv");
-      assert.equal(parts[0]?.contentType, "application/octet-stream");
-      assert.equal(parts[0]?.data.toString("utf8"), "068E2836,alias1\n068E2837,alias2\n");
+      assert.equal(parts[0].filename, "third-party-cards.csv");
+      assert.equal(parts[0].contentType, "application/octet-stream");
+      assert.equal(parts[0].data.toString("utf8"), "068E2836,alias1\n068E2837,alias2\n");
     },
     method: "importNfcCards", path: officialPath("/credentials/nfc_cards/import"), reply: { "code": "SUCCESS", "data": [ { "alias": "alias1",
       "nfc_id": "068E2836", "token": "tok-1" }, { "alias": "alias2", "nfc_id": "068E2837", "token": "" } ], "msg": "success" },

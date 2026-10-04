@@ -116,7 +116,7 @@ describe("EventBus", () => {
 
       controller.abort();
 
-      await assert.rejects(pending, (error: unknown) => (error as Error).name === "AbortError");
+      await assert.rejects(pending, { code: "ABORT_ERR", name: "AbortError" });
     });
 
     test("rejects at once when the signal is already aborted", async () => {
@@ -128,7 +128,7 @@ describe("EventBus", () => {
 
       // A signal that fired before the wait was registered is refused on the spot rather than waited on, which is what keeps a caller that aborts early from
       // hanging on an emission that will never be looked for.
-      await assert.rejects(bus.once("ping", { signal: controller.signal }), { name: "AbortError" });
+      await assert.rejects(bus.once("ping", { signal: controller.signal }), { code: "ABORT_ERR", name: "AbortError" });
     });
   });
 
@@ -184,7 +184,7 @@ describe("EventBus", () => {
        * firehose relies on exactly that to end quietly - it wraps the construction in the same try its catch reads the aborted signal from, so a consumer that
        * hands in a spent signal gets an empty loop instead of a throw.
        */
-      assert.throws(() => bus.stream("ping", { signal: controller.signal }), { name: "AbortError" });
+      assert.throws(() => bus.stream("ping", { signal: controller.signal }), { code: "ABORT_ERR", name: "AbortError" });
     });
 
     test("streams without a signal until the consumer stops iterating", async () => {

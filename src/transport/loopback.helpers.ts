@@ -1,14 +1,15 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * loopback.helpers.ts: The loopback peers these suites drive real sockets against - a recording https responder, a silent peer that answers nothing, and a silent
- * peer that resets every connection it accepts - plus the accept-order ledger and the listen-and-stop lifecycle every loopback server here shares.
+ * peer that resets every connection it accepts - plus the accept-order ledger every loopback peer records its connections in.
  *
  * A peer lives here when more than one suite needs it, or when its lifecycle is the plumbing rather than the point. The notification stream's hand-rolled
- * WebSocket upgrade stays beside its own tests instead: it speaks raw TLS sockets and shares no server shape with an https responder, so only its listen and stop
- * are common ground.
+ * WebSocket upgrade stays beside its own tests instead: it speaks raw TLS sockets and shares no server shape with an https responder, so the accept-order ledger
+ * is all it takes from here.
  */
-import type { Server, Socket } from "node:net";
+import { listenOnLoopback, stopListening } from "homebridge-plugin-utils/testing";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
+import type { Socket } from "node:net";
 import { createServer } from "node:https";
 import { createServer as createTcpServer } from "node:net";
 import { setTimeout as setTimeoutAsync } from "node:timers/promises";
@@ -227,48 +228,6 @@ export interface HttpsLoopback extends AsyncDisposable {
   host: string;
   origin: string;
   connection(index: number): Promise<AcceptedConnection>;
-}
-
-/** Listen on an ephemeral loopback port, and report the port the operating system assigned.
- *
- * Port zero is what lets these suites run anywhere and in parallel: the kernel hands out a free port and the caller reads it back off the bound address rather
- * than trusting a constant that something else may already hold. A listening TCP server always reports an address record - the string form belongs to a pipe or a
- * domain socket - so anything else is a fault in the caller's setup rather than a condition to recover from.
- *
- * @param server - Any server that listens on a socket: the https responder below, and the TLS peer the notification-stream suite stands up.
- *
- * @returns The port the server is listening on.
- */
-export async function listenOnLoopback(server: Server): Promise<number> {
-
-  const listening = Promise.withResolvers<undefined>();
-
-  server.listen(0, "127.0.0.1", () => listening.resolve(undefined));
-
-  await listening.promise;
-
-  const address = server.address();
-
-  if((address === null) || (typeof address === "string")) {
-
-    throw new Error("The loopback server did not report a TCP address.");
-  }
-
-  return address.port;
-}
-
-/**
- * Stop accepting, and resolve once the server has released its handle.
- *
- * @param server - The server to stop.
- */
-export async function stopListening(server: Server): Promise<void> {
-
-  const stopped = Promise.withResolvers<undefined>();
-
-  server.close(() => stopped.resolve(undefined));
-
-  await stopped.promise;
 }
 
 /** An https peer on loopback that records what every request carried and answers each one however the caller says, presenting the same throwaway self-signed

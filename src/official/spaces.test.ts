@@ -11,7 +11,7 @@ import { AccessAbortedError } from "../errors.ts";
 import type { DomainRow } from "./domain.helpers.ts";
 import { OfficialSpaces } from "./spaces.ts";
 import assert from "node:assert/strict";
-import { present } from "../testing.helpers.ts";
+import { expectAt } from "homebridge-plugin-utils/testing";
 
 // Transcribed from a live controller: the UA Hub, whose position sensor is unwired and which reports the DPS triplet on its own door record.
 const DOOR_HUB = { "door_lock_relay_status": "lock", "door_position_status": "none",
@@ -224,7 +224,7 @@ describe("the caller's abort signal on a door command", () => {
 
     await rig.domain.unlock("d-1", {}, { signal: controller.signal });
 
-    const call = present(rig.dispatch.calls[0], "the dispatched call");
+    const call = expectAt(rig.dispatch.calls, 0, "the dispatched call");
 
     /* A cancellation is something the request is steered by rather than something the controller is told, so it belongs to the call options alone. The body and
      * the query must read exactly as they would have without it - a signal that reached either would be a caller's control leaking onto the wire.
@@ -244,7 +244,7 @@ describe("the caller's abort signal on a door command", () => {
 
     await rig.domain.setLockRule("d-1", { type: "reset" }, { signal: controller.signal });
 
-    const call = present(rig.dispatch.calls[0], "the dispatched call");
+    const call = expectAt(rig.dispatch.calls, 0, "the dispatched call");
 
     assert.equal(call.call.signal, controller.signal);
     assert.deepEqual(call.opts.json, { type: "reset" }, "the rule alone is what was sent");

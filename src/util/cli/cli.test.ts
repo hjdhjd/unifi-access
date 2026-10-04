@@ -23,7 +23,7 @@ import { classify } from "./commands/classify.ts";
 import { device } from "./commands/device.ts";
 import { doctor } from "./commands/doctor.ts";
 import { door } from "./commands/door.ts";
-import { errnoError } from "../../testing.helpers.ts";
+import { errnoError } from "homebridge-plugin-utils/testing";
 import { info } from "./commands/info.ts";
 import { loadCredentials } from "./credentials.ts";
 import { logs } from "./commands/logs.ts";
@@ -138,7 +138,7 @@ describe("the command surface", () => {
 
     const { ctx } = offlineContext(["--nope"]);
 
-    await assert.rejects(async () => info.run(ctx), (error: NodeJS.ErrnoException) => error.code === "ERR_PARSE_ARGS_UNKNOWN_OPTION");
+    await assert.rejects(async () => info.run(ctx), { code: "ERR_PARSE_ARGS_UNKNOWN_OPTION" });
   });
 });
 
@@ -185,8 +185,7 @@ describe("the group dispatcher", () => {
 
     const { ctx } = makeCommandContext({ args: ["gamma"] });
 
-    await assert.rejects(async () => group.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("alpha, beta"));
+    await assert.rejects(async () => group.run(ctx), { exitCode: 2, message: /alpha, beta/, name: "CliError" });
   });
 });
 
@@ -206,7 +205,13 @@ describe("the duration grammar", () => {
 
     for(const value of [ "30", "5x", "1.5s", "-5s", "1h30m", "soon", "" ]) {
 
-      assert.throws(() => parseDuration(value, "--duration"), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2), value);
+      assert.throws(() => parseDuration(value, "--duration"), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, value);
+        assert.equal(error.exitCode, 2, value);
+
+        return true;
+      }, value);
     }
   });
 
@@ -214,7 +219,13 @@ describe("the duration grammar", () => {
 
     for(const value of [ "0s", "0ms", "0m", "0h" ]) {
 
-      assert.throws(() => parseDuration(value, "--duration"), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2), value);
+      assert.throws(() => parseDuration(value, "--duration"), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, value);
+        assert.equal(error.exitCode, 2, value);
+
+        return true;
+      }, value);
     }
   });
 
@@ -229,8 +240,14 @@ describe("the duration grammar", () => {
 
     for(const value of [ "90s", "59s", "61s", "30s", "500ms" ]) {
 
-      assert.throws(() => parseWholeMinutes(value, "--duration"),
-        (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("whole-minute"), value);
+      assert.throws(() => parseWholeMinutes(value, "--duration"), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, value);
+        assert.equal(error.exitCode, 2, value);
+        assert.ok(error.message.includes("whole-minute"), value);
+
+        return true;
+      }, value);
     }
   });
 });
@@ -255,15 +272,24 @@ describe("the document-only flag rule", () => {
 
     for(const [ flag, values ] of table) {
 
-      assert.throws(() => refuseDocumentFlags(values, { ...opts, changing: true }), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-        (error.message === "A rule change prints a confirmation rather than a document, so --" + flag + " applies to the rule read only."), flag);
+      assert.throws(() => refuseDocumentFlags(values, { ...opts, changing: true }), (error: unknown) => {
+
+        assert.ok(error instanceof CliError, flag);
+        assert.equal(error.exitCode, 2, flag);
+        assert.equal(error.message, "A rule change prints a confirmation rather than a document, so --" + flag + " applies to the rule read only.", flag);
+
+        return true;
+      }, flag);
     }
   });
 
   test("a change arm given both document-only flags names the JSON form, the order the rule reads them in", () => {
 
-    assert.throws(() => refuseDocumentFlags({ json: true, scrub: true }, { ...opts, changing: true }), (error: unknown) => (error instanceof CliError) &&
-      (error.message === "A rule change prints a confirmation rather than a document, so --json applies to the rule read only."));
+    assert.throws(() => refuseDocumentFlags({ json: true, scrub: true }, { ...opts, changing: true }), {
+
+      message: "A rule change prints a confirmation rather than a document, so --json applies to the rule read only.",
+      name: "CliError"
+    });
   });
 });
 
@@ -392,8 +418,14 @@ describe("credential loading", () => {
 
     const empty = await mkdtemp(path.join(tmpdir(), "ufa-none-"));
 
-    await assert.rejects(async () => loadCredentials({ cwd: empty, home: empty }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("./ufa.json or ~/.ufa.json") && error.message.includes("\"tokens.access\""));
+    await assert.rejects(async () => loadCredentials({ cwd: empty, home: empty }), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.match(error.message, /\.\/ufa\.json or ~\/\.ufa\.json/);
+      assert.match(error.message, /"tokens\.access"/);
+
+      return true;
+    });
   });
 
   test("a present but malformed configuration is a hard error", async () => {
@@ -402,8 +434,7 @@ describe("credential loading", () => {
 
     await writeFile(path.join(cwd, "ufa.json"), "{not json");
 
-    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("not valid JSON"));
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), { message: /not valid JSON/, name: "CliError" });
   });
 
   test("a configuration that is valid JSON but not an object is refused", async () => {
@@ -412,8 +443,7 @@ describe("credential loading", () => {
 
     await writeFile(path.join(cwd, "ufa.json"), "3");
 
-    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("must be a JSON object"));
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), { message: /must be a JSON object/, name: "CliError" });
   });
 
   test("a partial credential pair names the missing half rather than falling through", async () => {
@@ -422,13 +452,18 @@ describe("credential loading", () => {
 
     await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", username: "u" }));
 
-    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("\"password\"") && error.message.includes("credential pair"));
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.match(error.message, /"password"/);
+      assert.match(error.message, /credential pair/);
+
+      return true;
+    });
 
     await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", password: "p", tokens: { access: "t" } }));
 
-    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("\"username\""));
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), { message: /"username"/, name: "CliError" });
   });
 
   test("a file with no identity at all names what it must carry", async () => {
@@ -437,8 +472,7 @@ describe("credential loading", () => {
 
     await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1" }));
 
-    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("must carry an identity"));
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), { message: /must carry an identity/, name: "CliError" });
   });
 
   test("an empty token entry is refused rather than treated as absent", async () => {
@@ -447,15 +481,20 @@ describe("credential loading", () => {
 
     await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", tokens: { access: "" } }));
 
-    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("\"tokens.access\""));
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), { message: /"tokens\.access"/, name: "CliError" });
   });
 
   test("a tokens field that is not an application map is refused by name", async () => {
 
     const cwd = await mkdtemp(path.join(tmpdir(), "ufa-shape-"));
-    const refused = async (): Promise<void> => assert.rejects(async () => loadCredentials({ cwd, home: cwd }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("\"tokens\"") && error.message.includes("keyed by UniFi application"));
+    const refused = async (): Promise<void> => assert.rejects(async () => loadCredentials({ cwd, home: cwd }), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.match(error.message, /"tokens"/);
+      assert.match(error.message, /keyed by UniFi application/);
+
+      return true;
+    });
 
     /* The two shapes a hand-edited file reaches for when it means the map: a bare token where the map belongs, and a list of them. Neither can be read as an
      * application-keyed map, so each is named rather than quietly ignored...ignoring it would report a file carrying no identity at all, which is a more confusing
@@ -475,8 +514,7 @@ describe("credential loading", () => {
     // A map carrying only a sibling application's token holds no Access identity, so the file is refused for the identity it lacks rather than for a shape fault.
     await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", tokens: { network: "n" } }));
 
-    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("must carry an identity"));
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), { message: /must carry an identity/, name: "CliError" });
 
     // The same map beside a credential pair is simply a pair. That a sibling application's entry passes through untouched is the whole point of keying the map by
     // application: this loader reads the one key it has a use for and leaves the rest alone.
@@ -493,8 +531,7 @@ describe("credential loading", () => {
     // where the identity is composed.
     await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", password: "", username: "u" }));
 
-    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("missing the required \"password\" field"));
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), { message: /missing the required "password" field/, name: "CliError" });
   });
 
   test("a bare token field is not an identity, and the diagnostic names the shape that is", async () => {
@@ -505,8 +542,14 @@ describe("credential loading", () => {
     // worth of that answer is that it points at the fix rather than at the symptom.
     await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", token: "t" }));
 
-    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("must carry an identity") && error.message.includes("\"tokens.access\""));
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.match(error.message, /must carry an identity/);
+      assert.match(error.message, /"tokens\.access"/);
+
+      return true;
+    });
   });
 
   test("a non-boolean strict-TLS value is refused rather than coerced", async () => {
@@ -517,8 +560,14 @@ describe("credential loading", () => {
     // rather than interpreted.
     await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "10.0.0.1", password: "p", username: "u", verifyTls: "false" }));
 
-    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("\"verifyTls\"") && error.message.includes("boolean"));
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.match(error.message, /"verifyTls"/);
+      assert.match(error.message, /boolean/);
+
+      return true;
+    });
   });
 });
 
@@ -526,20 +575,38 @@ describe("the surface gates", () => {
 
   test("the credential arm refuses a token-only identity, naming the operation and the token-mode surface", () => {
 
-    assert.throws(() => requireSurface(CREDENTIALS_TOKEN, "credential", "info command"),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("info command") && error.message.includes("door group") &&
-        error.message.includes("api hatch"));
+    assert.throws(() => requireSurface(CREDENTIALS_TOKEN, "credential", "info command"), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.ok(error.message.includes("info command"));
+      assert.ok(error.message.includes("door group"));
+      assert.ok(error.message.includes("api hatch"));
+
+      return true;
+    });
 
     assert.doesNotThrow(() => requireSurface(CREDENTIALS_PAIR, "credential", "info command"));
   });
 
   test("the official arm refuses a credential-only identity and honors a direct-only pin as a usage error", () => {
 
-    assert.throws(() => requireSurface(CREDENTIALS_PAIR, "official", "lock-rule read"),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("lock-rule read") && error.message.includes("official API"));
+    assert.throws(() => requireSurface(CREDENTIALS_PAIR, "official", "lock-rule read"), (error: unknown) => {
 
-    assert.throws(() => requireSurface(CREDENTIALS_TOKEN, "official", "lock-rule read", "direct-only"),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("--api direct-only"));
+      assert.ok(error instanceof CliError);
+      assert.ok(error.message.includes("lock-rule read"));
+      assert.ok(error.message.includes("official API"));
+
+      return true;
+    });
+
+    assert.throws(() => requireSurface(CREDENTIALS_TOKEN, "official", "lock-rule read", "direct-only"), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.equal(error.exitCode, 2);
+      assert.ok(error.message.includes("--api direct-only"));
+
+      return true;
+    });
 
     assert.doesNotThrow(() => requireSurface(CREDENTIALS_TOKEN, "official", "lock-rule read"));
     assert.doesNotThrow(() => requireSurface(CREDENTIALS_TOKEN, "official", "lock-rule read", "official-only"));
@@ -549,8 +616,14 @@ describe("the surface gates", () => {
 
     const folded = makeFakeClient({ capabilities: { mode: "dual", official: false, override: "auto" } });
 
-    assert.throws(() => requireOfficial(asAccessClient(folded.client), "user commands"),
-      (error: unknown) => (error instanceof CliError) && error.message.includes("user commands") && error.message.includes("official API"));
+    assert.throws(() => requireOfficial(asAccessClient(folded.client), "user commands"), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.ok(error.message.includes("user commands"));
+      assert.ok(error.message.includes("official API"));
+
+      return true;
+    });
 
     const up = makeFakeClient({ official: {} });
 
@@ -559,11 +632,9 @@ describe("the surface gates", () => {
 
   test("the opener refuses an api override the identities contradict, before anything connects", async () => {
 
-    await assert.rejects(async () => openClient({ api: "direct-only", credentials: CREDENTIALS_TOKEN }),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("direct-only"));
+    await assert.rejects(async () => openClient({ api: "direct-only", credentials: CREDENTIALS_TOKEN }), { exitCode: 2, message: /direct-only/, name: "CliError" });
 
-    await assert.rejects(async () => openClient({ api: "official-only", credentials: CREDENTIALS_PAIR }),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("official-only"));
+    await assert.rejects(async () => openClient({ api: "official-only", credentials: CREDENTIALS_PAIR }), { exitCode: 2, message: /official-only/, name: "CliError" });
   });
 
   test("the identity loader hands back what credential discovery finds", async () => {
@@ -587,18 +658,24 @@ describe("the surface gates", () => {
     /* Each refusal names the identity the discovered file carried, which is what tells discovery apart from a caller-supplied pair: the opener was handed no
      * credentials, so the only way it can refuse on the file's contents is by having read the file itself. Both land before anything connects.
      */
-    await assert.rejects(async () => openClient({ api: "direct-only", cwd: tokenCwd, home: tokenHome }),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-        (error.message === "The --api direct-only pin requires credentials, and the ufa.json configuration carries only a token."));
+    await assert.rejects(async () => openClient({ api: "direct-only", cwd: tokenCwd, home: tokenHome }), {
+
+      exitCode: 2,
+      message: "The --api direct-only pin requires credentials, and the ufa.json configuration carries only a token.",
+      name: "CliError"
+    });
 
     const pairCwd = await mkdtemp(path.join(tmpdir(), "ufa-open-pair-"));
     const pairHome = await mkdtemp(path.join(tmpdir(), "ufa-open-pair-home-"));
 
     await writeFile(path.join(pairHome, ".ufa.json"), JSON.stringify({ controller: "10.0.0.2", password: "p", username: "u" }));
 
-    await assert.rejects(async () => openClient({ api: "official-only", cwd: pairCwd, home: pairHome }),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-        (error.message === "The --api official-only pin requires a token, and the ufa.json configuration carries only credentials."));
+    await assert.rejects(async () => openClient({ api: "official-only", cwd: pairCwd, home: pairHome }), {
+
+      exitCode: 2,
+      message: "The --api official-only pin requires a token, and the ufa.json configuration carries only credentials.",
+      name: "CliError"
+    });
   });
 
   test("the opener builds the standard logger when the caller supplies none", async () => {
@@ -779,8 +856,7 @@ describe("the read commands", () => {
     const { calls, client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: ["everything"], calls, client });
 
-    await assert.rejects(async () => info.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("access-points"));
+    await assert.rejects(async () => info.run(ctx), { exitCode: 2, message: /access-points/, name: "CliError" });
 
     assert.equal(calls.opens.length, 0, "a category refusal never opens a client");
     assert.equal(calls.credentialLoads, 0, "a category refusal never reaches for the identity file");
@@ -791,9 +867,7 @@ describe("the read commands", () => {
     const { calls, client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [ "doors", "hubs" ], calls, client });
 
-    await assert.rejects(async () => info.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) &&
-        (error.message === "Specify at most one category. Run \"ufa info --help\" for usage."));
+    await assert.rejects(async () => info.run(ctx), { exitCode: 2, message: "Specify at most one category. Run \"ufa info --help\" for usage.", name: "CliError" });
 
     assert.equal(calls.opens.length, 0, "an arity refusal never opens a client");
     assert.equal(calls.credentialLoads, 0, "an arity refusal never reaches for the identity file");
@@ -808,8 +882,14 @@ describe("the read commands", () => {
 
       // Sequential by intent: each command's refusal is asserted against its own context.
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => spec.run(ctx),
-        (error: unknown) => (error instanceof CliError) && error.message.includes("door group") && error.message.includes("api hatch"));
+      await assert.rejects(async () => spec.run(ctx), (error: unknown) => {
+
+        assert.ok(error instanceof CliError);
+        assert.match(error.message, /door group/);
+        assert.match(error.message, /api hatch/);
+
+        return true;
+      });
 
       assert.equal(calls.opens.length, 0, "the refusal happens before anything connects");
       assert.equal(calls.credentialLoads, 1, "the refusal is thrown from the identity file, read once");
@@ -993,8 +1073,7 @@ describe("the output layer", () => {
 
     try {
 
-      await assert.rejects(async () => writeByteSink(output, Buffer.from("payload"), undefined),
-        (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+      await assert.rejects(async () => writeByteSink(output, Buffer.from("payload"), undefined), { exitCode: 2, name: "CliError" });
     } finally {
 
       process.stdout.isTTY = isTTY;
@@ -1229,7 +1308,7 @@ describe("the entry point", () => {
 
     try {
 
-      await assert.rejects(async () => entry.main(), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+      await assert.rejects(async () => entry.main(), { exitCode: 2, name: "CliError" });
     } finally {
 
       process.argv = argv;

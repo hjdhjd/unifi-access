@@ -5,10 +5,8 @@
  */
 import { CONTROLLER_PATH, DEVICES_PATH, DOORS_PATH, DOOR_HUB, DOOR_MINI, HUB, TOPOLOGY_PATH, connectCapturing, connectCapturingWithDispatch, controllerBody, devicesBody,
   doorsBody, identityEnterpriseBody, interceptCredentialPass, mockController, officialDoor, topologyBody } from "./client-modes.helpers.ts";
-import { assertRejectsWith, present } from "../testing.helpers.ts";
-import { capturingLog, loggedAt } from "homebridge-plugin-utils/testing";
+import { capturingLog, loggedAt, present } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
-import { AccessAuthError } from "../errors.ts";
 import assert from "node:assert/strict";
 
 describe("a dual-mode client", () => {
@@ -158,12 +156,12 @@ describe("a dual-mode client", () => {
     interceptCredentialPass(pool);
     official.intercept({ method: "GET", path: DOORS_PATH }).reply(401, "");
 
-    await assertRejectsWith(async () => connectCapturing(agent, { api: "official-only", password: "p", token: "t0ken", username: "u" }), AccessAuthError,
-      { check: (error) => {
+    await assert.rejects(async () => connectCapturing(agent, { api: "official-only", password: "p", token: "t0ken", username: "u" }), {
 
-        assert.equal(error.identity, "token", "the login completed before the refused read, so the leg the controller refused is the token");
-        assert.equal(error.message, "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.");
-      } });
+      identity: "token",
+      message: "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.",
+      name: "AccessAuthError"
+    });
   });
 
   test("never reads the device listing, because the topology is its census", async () => {

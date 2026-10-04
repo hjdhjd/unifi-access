@@ -6,11 +6,10 @@
  */
 import { HUB, READER, ULTRA, deviceFixture, intercept } from "./device.helpers.ts";
 import { describe, test } from "node:test";
-import { present, settleUntil } from "../testing.helpers.ts";
+import { present, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import { AccessAuthorizationError } from "../errors.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
-import { settle } from "homebridge-plugin-utils/testing";
 
 describe("liveness and read-through", () => {
 
@@ -94,7 +93,7 @@ describe("liveness and read-through", () => {
     assert.equal(seen.length, 0);
 
     store.dispatch({ eventName: "access.data.device.update", id: HUB, kind: "deviceChanged", payload: { "alias": "Renamed" } });
-    await settleUntil(() => seen.length === 1);
+    await settleUntil(() => seen.length === 1, { description: "the hub's observer to see the rename" });
     assert.deepEqual(seen, ["Renamed"]);
 
     ac.abort();

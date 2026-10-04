@@ -137,14 +137,14 @@ const rows: readonly DomainRow<OfficialUsers>[] = [
 
   { expected: { "url": "/avatar/u-1.png" },
 
-    inspect: (request) => {
+    inspect: (request): void => {
 
       const parts = parseMultipart(request.body, request.headers["content-type"] ?? "");
 
       assert.equal(parts.length, 1);
       assert.equal(parts[0]?.field, "file");
-      assert.equal(parts[0]?.filename, "portrait.png");
-      assert.deepEqual(parts[0]?.data, Buffer.from([ 137, 80, 78, 71 ]));
+      assert.equal(parts[0].filename, "portrait.png");
+      assert.deepEqual(parts[0].data, Buffer.from([ 137, 80, 78, 71 ]));
     },
     method: "uploadAvatar", path: officialPath("/users/" + PATH_ID_ENCODED + "/avatar"), reply: { "code": "SUCCESS", "data": { "url": "/avatar/u-1.png" },
       "msg": "success" }, run: async (domain, call) => domain.uploadAvatar(PATH_ID, { data: new Uint8Array([ 137, 80, 78, 71 ]), filename: "portrait.png" }, call),

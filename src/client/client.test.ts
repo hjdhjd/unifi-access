@@ -4,19 +4,19 @@
  * real controller document, the typed error for each failure stage, the diagnostics the client publishes, and clean teardown. Driven against a mocked controller
  * and an injected notification socket, so the whole composition runs without a live controller.
  */
-import { AccessApiError, AccessAuthError, AccessBootstrapError, AccessProtocolError } from "../errors.ts";
+import { AccessApiError, AccessBootstrapError, AccessNetworkError, AccessProtocolError } from "../errors.ts";
 import type { AccessConnectionTransitionPayload, AccessStoreDispatchPayload } from "../diagnostics.ts";
 import { CONTROLLER_PATH, DOOR_HUB, HOST, HUB, LOGIN_PATH, SELF_PATH, TOPOLOGY_PATH, mockController } from "./client-modes.helpers.ts";
 import type { Interceptable, MockAgent } from "undici";
-import { TestClock, capturingLog, settle, silentLog } from "homebridge-plugin-utils/testing";
+import { TestClock, capturingLog, expectAt, present, settle, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
-import { assertRejectsWith, present, settleUntil, subscribeTo } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { AccessClient } from "./client.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
+import { subscribeTo } from "../testing.helpers.ts";
 
 // The controller wraps every REST result in an envelope, and the two documents sit in it differently: the controller's own information is the payload itself, while
 // the topology arrives as a single-element collection. Both unwraps are what connect has to get right.
@@ -33,7 +33,7 @@ const poisonedTopology = (): unknown => {
 
   const document = JSON.parse(JSON.stringify(accessBootstrap2026Fixture)) as { floors: { doors: unknown[] }[] };
 
-  present(document.floors[0], "the first floor").doors.unshift(null);
+  expectAt(document.floors, 0, "the first floor").doors.unshift(null);
 
   return document;
 };
@@ -244,10 +244,8 @@ describe("AccessClient.connect", () => {
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad");
       pool.intercept({ method: "GET", path: "/" }).reply(500, "unavailable");
 
-      await assertRejectsWith(connect(agent), AccessAuthError, { check: (error) => {
-
-        assert.equal(error.identity, "credentials", "a credential-only connect can only have been refused its credentials");
-      } });
+      // A credential-only connect can only have been refused its credentials.
+      await assert.rejects(connect(agent), { identity: "credentials", name: "AccessAuthError" });
     });
 
     test("a refused document fetch rejects at the fetch stage", async () => {
@@ -258,10 +256,7 @@ describe("AccessClient.connect", () => {
       pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody());
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(500, "boom");
 
-      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
-
-        assert.equal(error.stage, "fetch");
-      } });
+      await assert.rejects(connect(agent), { name: "AccessBootstrapError", stage: "fetch" });
     });
 
     test("a topology collection with no document rejects at the parse stage", async () => {
@@ -275,10 +270,7 @@ describe("AccessClient.connect", () => {
       // failure instead.
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody([]));
 
-      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
-
-        assert.equal(error.stage, "parse");
-      } });
+      await assert.rejects(connect(agent), { name: "AccessBootstrapError", stage: "parse" });
     });
 
     test("a body that will not parse rejects at the parse stage", async () => {
@@ -289,10 +281,7 @@ describe("AccessClient.connect", () => {
       pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody());
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, "not-json{");
 
-      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
-
-        assert.equal(error.stage, "parse");
-      } });
+      await assert.rejects(connect(agent), { name: "AccessBootstrapError", stage: "parse" });
     });
 
     test("a document read the controller refuses inside a 200 rejects at the fetch stage, with the refusal as the cause", async () => {
@@ -306,12 +295,15 @@ describe("AccessClient.connect", () => {
       pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, REFUSAL_BODY);
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());
 
-      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
+      await assert.rejects(connect(agent), (error: unknown) => {
 
+        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "fetch");
         assert.ok(error.cause instanceof AccessApiError, "the controller's refusal is the cause rather than a message this layer composed");
         assert.equal(error.cause.code, "CODE_SYSTEM_ERROR");
-      } });
+
+        return true;
+      });
     });
 
     test("a refused topology read rejects at the fetch stage exactly as a refused controller read does", async () => {
@@ -323,12 +315,15 @@ describe("AccessClient.connect", () => {
       pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody());
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, REFUSAL_BODY);
 
-      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
+      await assert.rejects(connect(agent), (error: unknown) => {
 
+        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "fetch");
         assert.ok(error.cause instanceof AccessApiError, "the controller's refusal is the cause");
         assert.equal(error.cause.code, "CODE_SYSTEM_ERROR");
-      } });
+
+        return true;
+      });
     });
 
     test("a 200 carrying a document that is not an envelope rejects at the parse stage", async () => {
@@ -340,11 +335,14 @@ describe("AccessClient.connect", () => {
       pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, "{}");
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());
 
-      await assertRejectsWith(connect(agent), AccessBootstrapError, { check: (error) => {
+      await assert.rejects(connect(agent), (error: unknown) => {
 
+        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "parse");
         assert.ok(error.cause instanceof AccessProtocolError, "a body that is not an envelope surfaces as the protocol error the reader raised");
-      } });
+
+        return true;
+      });
     });
 
     test("a success envelope carrying no document rejects at the parse stage, for either document", async () => {
@@ -358,11 +356,14 @@ describe("AccessClient.connect", () => {
       first.pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, DOCUMENTLESS_BODY);
       first.pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());
 
-      await assertRejectsWith(connect(first.agent), AccessBootstrapError, { check: (error) => {
+      await assert.rejects(connect(first.agent), (error: unknown) => {
 
+        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "parse");
         assert.ok(error.cause instanceof TypeError, "the absent controller document surfaces as the presence test's own refusal");
-      } });
+
+        return true;
+      });
 
       const second = mockController();
 
@@ -370,11 +371,14 @@ describe("AccessClient.connect", () => {
       second.pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody());
       second.pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, DOCUMENTLESS_BODY);
 
-      await assertRejectsWith(connect(second.agent), AccessBootstrapError, { check: (error) => {
+      await assert.rejects(connect(second.agent), (error: unknown) => {
 
+        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "parse");
         assert.ok(error.cause instanceof TypeError, "the absent topology document surfaces the same way");
-      } });
+
+        return true;
+      });
     });
 
     test("a notification socket that never opens rejects and leaves nothing behind", async () => {
@@ -392,7 +396,7 @@ describe("AccessClient.connect", () => {
           queueMicrotask(() => ws.emitClose(1006, "connection refused"));
 
           return ws;
-        } }));
+        } }), AccessNetworkError);
     });
 
     test("a topology document the store cannot apply rejects at the apply stage and stops the refresh failsafe it started", async () => {
@@ -416,11 +420,14 @@ describe("AccessClient.connect", () => {
         return topologyBody([poisoned]);
       }).persist();
 
-      await assertRejectsWith(connect(agent, { clock, refreshIntervalMs: 1000 }), AccessBootstrapError, { check: (error) => {
+      await assert.rejects(connect(agent, { clock, refreshIntervalMs: 1000 }), (error: unknown) => {
 
+        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "apply");
         assert.ok(error.cause instanceof TypeError, "the reducer's own throw is the cause rather than a message this layer composed");
-      } });
+
+        return true;
+      });
       assert.equal(topologyRequests, 1, "the connect read the topology once");
 
       clock.advance(5000);
@@ -493,14 +500,14 @@ describe("AccessClient.connect", () => {
         clock.advance(0);
 
         return phases.includes("reconnecting");
-      }, { message: "expected recovery to reach the re-bootstrap" });
+      }, { description: "recovery to reach the re-bootstrap" });
       await settle();
 
       assert.equal(controllerRequests, 1, "the second caller joined the fetch already in flight rather than dispatching its own");
 
       release.resolve(undefined);
 
-      await settleUntil(() => client.connection.state === "healthy", { message: "expected recovery to complete" });
+      await settleUntil(() => client.connection.state === "healthy", { description: "recovery to complete" });
 
       assert.equal(controllerRequests, 1, "and the shared pass settled both callers without a second fetch");
     });
@@ -548,7 +555,7 @@ describe("AccessClient.connect", () => {
       // The refusal has to settle before the next pass can start fresh: the slot clears when the refused fetch rejects, and the transport announces every
       // request's end on one signal whatever its outcome. Waiting on that signal rather than on the wall clock makes the second dispatch a measurement of the
       // slot, not of timing.
-      await settleUntil(() => controllerSettled === 1, { message: "expected the refused fetch to settle" });
+      await settleUntil(() => controllerSettled === 1, { description: "the refused fetch to settle" });
       await settle();
 
       clock.advance(1000);
@@ -556,7 +563,7 @@ describe("AccessClient.connect", () => {
       assert.equal(controllerRequests, 2, "the pass after a failure must dispatch its own fetch rather than joining the failed one");
 
       await settleUntil(() => client.controllerInfo?.host.uptime === (accessControllerInfoFixture.host.uptime + 3600),
-        { message: "the second pass's documents reached the state model" });
+        { description: "the second pass's documents to reach the state model" });
     });
 
     test("a refreshed topology the store cannot apply is reported at the apply stage, and the client carries on", async () => {
@@ -580,7 +587,7 @@ describe("AccessClient.connect", () => {
 
       const failure = (): unknown => log.entries.find((entry) => (entry.level === "debug") && entry.message.startsWith("Bootstrap refresh failed"))?.params[0];
 
-      await settleUntil(() => failure() !== undefined, { message: "expected the refresh pass to report its failure" });
+      await settleUntil(() => failure() !== undefined, { description: "the refresh pass to report its failure" });
 
       const error = failure();
 
@@ -637,7 +644,7 @@ describe("AccessClient.connect", () => {
       await client[Symbol.asyncDispose]();
       release.resolve(undefined);
 
-      await settleUntil(() => settled === 2, { message: "expected both of the pass's requests to settle" });
+      await settleUntil(() => settled === 2, { description: "both of the pass's requests to settle" });
       await settle();
 
       assert.equal(wakes.length, 0, "the late settlement woke no observer");
@@ -690,7 +697,7 @@ describe("AccessClient.connect", () => {
       const before = hub.doorState;
 
       assert.equal(before?.lock, "locked");
-      assert.equal(Object.hasOwn(before ?? {}, "emergency"), false);
+      assert.equal(Object.hasOwn(before, "emergency"), false);
 
       ws.emitMessage(doorStateFrame(DOOR_HUB, "unlocked"));
 
@@ -730,7 +737,7 @@ describe("AccessClient.connect", () => {
 
       ws.emitMessage(deviceFrame(HUB, { "alias": "Observed" }));
 
-      await settleUntil(() => seen.length === 1);
+      await settleUntil(() => seen.length === 1, { description: "the hub's observer to see the frame" });
       assert.deepEqual(seen, ["Observed"]);
 
       ac.abort();
@@ -762,7 +769,7 @@ describe("AccessClient.connect", () => {
       ws.emitMessage(deviceFrame(HUB));
       ws.emitMessage(unmodeledFrame());
 
-      await settleUntil(() => raw.length === 2);
+      await settleUntil(() => raw.length === 2, { description: "the raw firehose to carry the modeled frame and the unmodeled one" });
 
       controller.abort();
       await task;
@@ -792,7 +799,7 @@ describe("AccessClient.connect", () => {
       })();
 
       ws.emitMessage(deviceFrame(HUB));
-      await settleUntil(() => collected.length === 1);
+      await settleUntil(() => collected.length === 1, { description: "the typed firehose to deliver the frame" });
 
       controller.abort();
       await task;
@@ -894,7 +901,7 @@ describe("AccessClient.connect", () => {
       await settle();
       ws.emitMessage(deviceFrame(HUB, { "alias": "Streamed" }));
 
-      await settleUntil(() => seen.length === 1);
+      await settleUntil(() => seen.length === 1, { description: "the raw stream rail to deliver the frame" });
       assert.deepEqual(seen, ["deviceChanged"]);
 
       controller.abort();
@@ -940,17 +947,11 @@ describe("AccessClient.connect", () => {
 
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(500, "boom");
 
-      await assertRejectsWith(() => client.fetchBootstrap(), AccessBootstrapError, { check: (error) => {
-
-        assert.equal(error.stage, "fetch");
-      } });
+      await assert.rejects(() => client.fetchBootstrap(), { name: "AccessBootstrapError", stage: "fetch" });
 
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, "not-json{");
 
-      await assertRejectsWith(() => client.fetchBootstrap(), AccessBootstrapError, { check: (error) => {
-
-        assert.equal(error.stage, "parse");
-      } });
+      await assert.rejects(() => client.fetchBootstrap(), { name: "AccessBootstrapError", stage: "parse" });
     });
 
     test("fetchBootstrap reports a refusal inside a 200 at the fetch stage, carrying the controller's code", async () => {
@@ -965,12 +966,15 @@ describe("AccessClient.connect", () => {
       // The on-demand read of the topology document judges the envelope by the same rule the connect-time read does, so one endpoint is not read two ways.
       pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, REFUSAL_BODY);
 
-      await assertRejectsWith(() => client.fetchBootstrap(), AccessBootstrapError, { check: (error) => {
+      await assert.rejects(() => client.fetchBootstrap(), (error: unknown) => {
 
+        assert.ok(error instanceof AccessBootstrapError);
         assert.equal(error.stage, "fetch");
         assert.ok(error.cause instanceof AccessApiError, "the controller's refusal is the cause");
         assert.equal(error.cause.code, "CODE_SYSTEM_ERROR");
-      } });
+
+        return true;
+      });
     });
 
     test("the static classifier runs without a connection", () => {
@@ -1061,7 +1065,7 @@ describe("AccessClient.connect", () => {
         clock.advance(0);
 
         return client.connection.state === "healthy";
-      }, { message: "expected recovery to complete" });
+      }, { description: "recovery to complete" });
 
       assert.deepEqual(payloads.map((payload) => payload.to), [ "degraded", "reconnecting", "healthy" ]);
       assert.ok(payloads.every((payload) => payload.host === HOST), "every edge carries the controller it belongs to");
