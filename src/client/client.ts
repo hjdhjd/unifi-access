@@ -476,7 +476,6 @@ export class AccessClient implements AsyncDisposable {
       await officialTransport?.[Symbol.asyncDispose]();
     };
 
-
     /* The document pair's own coalescing gate. Every caller that reaches for the pair - the initial connect, the refresh failsafe, and a recovery re-bootstrap -
      * shares it, and some of them can overlap freely, so sharing one fetch is what keeps a stale controller document from landing on top of a fresher one and
      * letting a recovering client read a restart that had already been accounted for.

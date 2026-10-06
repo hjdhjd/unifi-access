@@ -248,7 +248,6 @@ export const accessOfficialDevicesFixture: readonly AccessOfficialDevice[][] = [
   ]
 ];
 
-
 /* The `GET /doors` payload from the same controller and the same capture window, embedded on the same terms. The three doors are the three the device listing's
  * groups are keyed by, and their `floor_id` is the one floor the topology fixtures place them on.
  *
