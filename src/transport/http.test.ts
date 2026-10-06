@@ -423,6 +423,26 @@ describe("Transport", () => {
       await observed;
     });
 
+    test("a settled request leaves no deadline on the clock, whether a reply or the deadline settled it", async () => {
+
+      const { clock, host, pool, transport } = makeMockTransport();
+
+      pool.intercept({ method: "GET", path: "/ok" }).reply(200, {});
+      pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
+
+      await transport.send(url(host, "/ok"));
+
+      assert.equal(clock.pending, 0, "a request answered ahead of its deadline releases the deadline's timer");
+
+      const pending = transport.send(url(host, "/slow"));
+
+      await settle();
+      clock.advance(ACCESS_API_TIMEOUT);
+
+      await assert.rejects(pending, { message: "The UniFi Access controller did not respond before the request deadline elapsed.", name: "AccessTimeoutError" });
+      assert.equal(clock.pending, 0, "a request the deadline settled leaves no timer behind either");
+    });
+
     test("a socket-level failure surfaces as AccessNetworkError with the errno code", async () => {
 
       const { host, pool, transport } = makeMockTransport();

@@ -8,6 +8,7 @@ import { AccessAbortedError, AccessAuthError, AccessAuthorizationError, AccessCe
 import type { AccessHttpRequestCommon, AccessHttpRequestEndOutcome, AccessHttpRequestEndPayload, AccessHttpRequestStartPayload } from "../diagnostics.ts";
 import type { AccessIdentityLeg, FatalError } from "../errors.ts";
 import { Pool, errors, interceptors, request } from "undici";
+import { armDeadline, wallClock } from "../clock.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { Clock } from "../clock.ts";
 import type { Dispatcher } from "undici";
@@ -20,7 +21,6 @@ import { classifyTransportError } from "./failure.ts";
 import { createOwnedConnector } from "./connector.ts";
 import { noopLog } from "../logging.ts";
 import { randomUUID } from "node:crypto";
-import { wallClock } from "../clock.ts";
 
 // The throttle cooldown in milliseconds, derived once from the seconds-valued constant so the breaker math reads in the same unit it compares against.
 const COOLDOWN_MS = ACCESS_API_RETRY_INTERVAL * 1000;
@@ -543,11 +543,13 @@ export class Transport implements AsyncDisposable {
     const requestId = randomUUID();
     const timeout = opts.timeout ?? ACCESS_API_TIMEOUT;
 
-    // Compose our own deadline with the caller's optional cancellation. The deadline is drawn from the injected clock rather than from the platform, so a suite
-    // fires it on virtual time instead of waiting it out. #toAccessError later tells the two apart by identity, comparing the failure against each signal's own
-    // reason.
-    const timeoutSignal = this.#clock.timeout(timeout);
-    const signal = (opts.signal !== undefined) ? AbortSignal.any([ opts.signal, timeoutSignal ]) : timeoutSignal;
+    /* Compose our own deadline with the caller's optional cancellation. The deadline is drawn from the injected clock rather than from the platform, so a suite
+     * fires it on virtual time instead of waiting it out. It is held for exactly this exchange: `using` releases it when the method returns, on every path, so a
+     * settled request leaves no timer behind. #toAccessError later tells the deadline from the caller's cancellation by identity, comparing the failure against
+     * each signal's own reason.
+     */
+    using deadline = armDeadline(timeout, { clock: this.#clock });
+    const signal = (opts.signal !== undefined) ? AbortSignal.any([ opts.signal, deadline.signal ]) : deadline.signal;
 
     /* The base headers, in precedence order. The Access API answers JSON on every endpoint and expects the content type declared on every request, including the
      * ones carrying no body, so this is the single site that stamps it rather than a duty each call site has to remember. The auth headers (cookie and CSRF) layer
@@ -610,7 +612,7 @@ export class Transport implements AsyncDisposable {
       return result;
     } catch(error) {
 
-      const classified = this.#toAccessError(error, opts.signal, timeoutSignal, this.#clock.now() - startedAt);
+      const classified = this.#toAccessError(error, opts.signal, deadline.signal, this.#clock.now() - startedAt);
 
       this.#publishEnd({ durationMs: this.#clock.now() - startedAt, error: classified.message, method, outcome: "failure", requestId, url });
 
