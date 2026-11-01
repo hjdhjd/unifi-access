@@ -16,7 +16,7 @@ function apiBase(host: string): string {
 /**
  * The REST endpoint for one device.
  *
- * @param host - The controller address (no scheme).
+ * @param host - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed and any port kept.
  * @param id   - The device's `unique_id`.
  *
  * @returns The fully-qualified endpoint URL.
@@ -33,7 +33,7 @@ export function deviceEndpoint(host: string, id: string): string {
  * hub-capable hardware writes to `configs`, everything else to `settings`. The caller decides which, because the choice is a read of the device's live capability
  * rather than anything this module can see.
  *
- * @param host - The controller address (no scheme).
+ * @param host - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed and any port kept.
  * @param id   - The device's `unique_id`.
  * @param kind - Which collection to address.
  *
@@ -49,7 +49,7 @@ export function deviceSettingsEndpoint(host: string, id: string, kind: "configs"
 /**
  * The endpoint that restarts a device.
  *
- * @param host - The controller address (no scheme).
+ * @param host - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed and any port kept.
  * @param id   - The device's `unique_id`.
  *
  * @returns The fully-qualified endpoint URL.
@@ -65,7 +65,7 @@ export function deviceRestartEndpoint(host: string, id: string): string {
  * The endpoint that sets a device's lock rule. The query parameter asks the controller to answer with the resulting rule rather than an empty acknowledgement, which
  * is how the rule write reports what it actually established.
  *
- * @param host - The controller address (no scheme).
+ * @param host - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed and any port kept.
  * @param id   - The device's `unique_id`.
  *
  * @returns The fully-qualified endpoint URL.
@@ -83,7 +83,7 @@ export function lockRuleEndpoint(host: string, id: string): string {
  * The resource is the door rather than the hardware driving it, which is what lets one multi-door hub address each of its doors independently - the device endpoint
  * could only name the hub. Passing `"close"` adds the control parameter that ends an unlock rather than beginning one.
  *
- * @param host       - The controller address (no scheme).
+ * @param host       - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed and any port kept.
  * @param locationId - The door's `unique_id`.
  * @param command    - Pass `"close"` to close the door rather than unlock it.
  *

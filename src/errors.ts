@@ -147,8 +147,8 @@ function certificateFailureText(options: { cause: unknown; host: string; identit
 export class AccessCertificateError extends AccessNetworkError {
 
   /**
-   * The address the listener was dialed at, exactly as the transport or the stream dialed it: the bare host for the console, and `host:port` for the developer
-   * API, which answers on a port of its own.
+   * The address the listener was dialed at, exactly as the transport or the stream dialed it: the console's URL authority, an IPv6 literal bracketed, and `host:port`
+   * for the developer API, which answers on a port of its own.
    */
   readonly host: string;
 
@@ -338,6 +338,21 @@ export class AccessCapabilityError extends FatalError {
  * @category Errors
  */
 export class AccessProtocolError extends FatalError {
+
+  constructor(message: string, options?: { cause?: unknown }) {
+
+    super(message, { cause: options?.cause });
+  }
+}
+
+/**
+ * A connect option the library cannot act on, refused by {@link AccessClient.connect} before any request is sent: a controller address no URL can
+ * carry, such as an IPv6 literal with a zone (`fe80::1%en0`) or a value carrying credentials, a path, a query or a fragment. The message names the address.
+ * Fatal because the same configuration is refused the same way on every attempt, so the caller corrects it rather than retrying.
+ *
+ * @category Errors
+ */
+export class AccessConfigurationError extends FatalError {
 
   constructor(message: string, options?: { cause?: unknown }) {
 

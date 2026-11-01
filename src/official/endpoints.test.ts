@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 
 describe("official endpoints", () => {
 
-  test("officialHost appends the official API's dedicated port to the bare controller address", () => {
+  test("officialHost sets the official API's dedicated port on the controller's authority", () => {
 
     assert.equal(officialHost(HOST), "10.0.0.1:12445");
     assert.equal(officialHost("access.example.test"), "access.example.test:12445");
@@ -45,12 +45,16 @@ describe("official endpoints", () => {
     assert.equal(officialNotificationUrl(HOST), "wss://" + derived + ACCESS_OFFICIAL_API_PATH_PREFIX + "/devices/notifications");
   });
 
-  test("the builders never double the port when handed a host that already carries one", () => {
+  test("the builders replace a port the authority carries rather than doubling it", () => {
 
-    /* Every function here takes the bare host, which is the same contract the Access application's own endpoint builders keep. A caller that hands one an already
-     * ported address gets a visibly wrong result rather than a quietly wrong one, which is what makes the contract enforceable by inspection.
+    /* Every function here takes the controller's URL authority, which carries whatever port the console is reached on, and the developer API answers on its own
+     * port whichever that is. The port is found by its position after any closing bracket, so a bracketed IPv6 literal's own colons are never mistaken for one.
      */
-    assert.equal(officialHost("10.0.0.1:12445"), "10.0.0.1:12445:12445");
+    assert.equal(officialHost("10.0.0.1:12445"), "10.0.0.1:12445");
+    assert.equal(officialHost("[fe80::1]:7443"), "[fe80::1]:12445");
+    assert.equal(officialHost("[fe80::1]"), "[fe80::1]:12445");
+    assert.equal(officialEndpoint("[fe80::1]:7443", "/doors"), "https://[fe80::1]:12445/api/v1/developer/doors");
+    assert.equal(officialNotificationUrl("[fe80::1]:7443"), "wss://[fe80::1]:12445/api/v1/developer/devices/notifications");
   });
 });
 

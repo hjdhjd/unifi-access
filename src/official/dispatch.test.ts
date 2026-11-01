@@ -429,7 +429,7 @@ function recordingRig(): { dispatch: OfficialDispatch; pool: Interceptable; tran
 
   agent.disableNetConnect();
 
-  const transport = new RecordingTransport({ clock: new TestClock(), dispatcher: agent, host: officialHost(HOST) });
+  const transport = new RecordingTransport({ clock: new TestClock(), dispatcher: agent, host: officialHost(HOST), origin: "https://" + officialHost(HOST) });
 
   return { dispatch: new OfficialDispatch({ transport }), pool: agent.get("https://" + officialHost(HOST)), transport };
 }
@@ -875,7 +875,7 @@ describe("OfficialDispatch: over a real socket", () => {
   test("puts a multipart body on the wire that a server can parse against the boundary it announced", async () => {
 
     await using loopback = await createHttpsLoopback(() => ({ body: "{\"code\":\"SUCCESS\",\"msg\":\"success\"}", contentType: "application/json", status: 200 }));
-    await using transport = new Transport({ host: loopback.host });
+    await using transport = new Transport({ host: loopback.host, origin: loopback.origin });
 
     const dispatch = new OfficialDispatch({ transport });
 
@@ -902,7 +902,7 @@ describe("OfficialDispatch: over a real socket", () => {
       { body: "unavailable", contentType: "text/plain", status: 503 } :
       { body: "{\"code\":\"SUCCESS\",\"data\":[],\"msg\":\"success\"}", contentType: "application/json", status: 200 }));
 
-    await using transport = new Transport({ host: loopback.host });
+    await using transport = new Transport({ host: loopback.host, origin: loopback.origin });
 
     const dispatch = new OfficialDispatch({ transport });
 
@@ -916,7 +916,7 @@ describe("OfficialDispatch: over a real socket", () => {
   test("sends exactly once when the caller opts out of retries", async () => {
 
     await using loopback = await createHttpsLoopback(() => ({ body: "unavailable", contentType: "text/plain", status: 503 }));
-    await using transport = new Transport({ host: loopback.host });
+    await using transport = new Transport({ host: loopback.host, origin: loopback.origin });
 
     const dispatch = new OfficialDispatch({ transport });
 

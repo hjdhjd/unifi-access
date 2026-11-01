@@ -22,7 +22,6 @@ import { silentLog } from "homebridge-plugin-utils/testing";
 import { subscribeTo } from "../testing.helpers.ts";
 
 export const HOST = "10.0.0.1";
-export const OFFICIAL_ORIGIN = "https://" + HOST + ":12445";
 export const DEVICES_PATH = "/api/v1/developer/devices";
 export const DOORS_PATH = "/api/v1/developer/doors";
 export const LOGIN_PATH = "/api/auth/login";
@@ -70,15 +69,20 @@ export function interceptOfficialPass(official: Interceptable, bodies: { devices
 // The refusal an Identity Enterprise controller answers every official call with: a 2xx whose envelope declines in the API's own vocabulary.
 export const identityEnterpriseBody = (): string => JSON.stringify({ code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED", msg: "not supported on this controller" });
 
-// A mocked controller with net connections disabled, so an unmocked request fails loudly rather than reaching a network. Both of the controller's addresses are
-// mocked separately, which is what lets a test assert that a mode never touched the other one.
-export function mockController(): { agent: MockAgent; official: Interceptable; pool: Interceptable } {
+/* A mocked controller with net connections disabled, so an unmocked request fails loudly rather than reaching a network. Both of the controller's addresses are
+ * mocked separately, which is what lets a test assert that a mode never touched the other one.
+ *
+ * `host` is the URL authority the console answers on, an IPv6 literal bracketed and any port kept. The developer API answers on the same host at its own port, and
+ * that host is read here through the platform's URL parser rather than through the library's own derivation, so a row on an authority carrying a port tests that
+ * derivation rather than restating it.
+ */
+export function mockController(host = HOST): { agent: MockAgent; official: Interceptable; pool: Interceptable } {
 
   const agent = new UndiciMockAgent();
 
   agent.disableNetConnect();
 
-  return { agent, official: agent.get(OFFICIAL_ORIGIN), pool: agent.get("https://" + HOST) };
+  return { agent, official: agent.get("https://" + new URL("https://" + host).hostname + ":12445"), pool: agent.get("https://" + host) };
 }
 
 export function interceptCredentialPass(pool: Interceptable): void {
@@ -98,12 +102,15 @@ export interface CapturedConnect {
   ws: FakeWebSocket;
 }
 
-export async function connectCapturing(agent: MockAgent, identity: Partial<ConnectOptions>, opts: { log?: AccessLogging } = {}): Promise<CapturedConnect> {
+// Connect against the mocked controller and capture the socket the factory built. `host` is the address the connect is configured with, exactly as a consumer
+// would type it, and it defaults to the address the mocked controller answers on.
+export async function connectCapturing(agent: MockAgent, identity: Partial<ConnectOptions>,
+  { host = HOST, log = silentLog() }: { host?: string; log?: AccessLogging } = {}): Promise<CapturedConnect> {
 
   let ws: Nullable<FakeWebSocket> = null;
   let url = "";
   let headers: Record<string, string> = {};
-  const client = await AccessClient.connect({ dispatcher: agent, host: HOST, log: opts.log ?? silentLog(), refreshIntervalMs: false,
+  const client = await AccessClient.connect({ dispatcher: agent, host, log, refreshIntervalMs: false,
     webSocket: (socketUrl: string, socketHeaders: Record<string, string>) => {
 
       url = socketUrl;

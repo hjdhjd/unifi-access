@@ -24,7 +24,9 @@ export type StateReader = Pick<StateStore, "observe" | "snapshot">;
  * deliberately narrow, so none of the full client surface leaks into the devices tier and a test builds a small fake context rather than a whole client.
  *
  * A projection reads its record through `store` (a snapshot for its synchronous getters, an observation for its change stream) and issues its write-through
- * commands through `transport`. It holds no state of its own: it is a live view over the one source of truth.
+ * commands through `transport`, to the endpoint URLs it builds on `host`. That is the controller's URL authority rather than the address as configured: an IPv6
+ * literal bracketed and any port kept, which is the form every URL the client composes reads. It holds no state of its own: it is a live view over the one source
+ * of truth.
  *
  * `transport` is `null` on a client with no credentials, where the routing decision never takes a direct path, so a projection never dispatches through it. The
  * nullability states what such a client actually holds rather than making the tier's presence conditional on it.

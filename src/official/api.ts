@@ -18,11 +18,14 @@ import type { Transport } from "../transport/http.ts";
 import { officialEndpoint } from "./endpoints.ts";
 
 /**
- * Construction options for {@link OfficialApi}: the controller address, and a transport already built against it.
+ * Construction options for {@link OfficialApi}: the controller's URL authority, and a transport already built against the official address derived from it.
+ *
+ * `host` is the authority every official URL is composed on - the address without a scheme, an IPv6 literal bracketed - and the official API's own port replaces
+ * any port it carries as each URL is built.
  *
  * The transport arrives built rather than being constructed here, because binding it to the official address and wiring the token session's closures into it is
- * the composition root's job - and a pool takes its origin from the address it was built with, so a transport built against the bare host would pool against an
- * origin no official request ever reaches.
+ * the composition root's job - and a pool takes its origin from the address it was built with, so a transport built against the console's own authority would
+ * pool against an origin no official request ever reaches.
  */
 export interface OfficialApiOptions {
 

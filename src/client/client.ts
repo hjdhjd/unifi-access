@@ -32,6 +32,7 @@ import type { AccessConnectionTransitionPayload, AccessStoreDispatchPayload } fr
 import { AccessRoutingService, directPathServes, isOfficialApiAbsent, isTokenRefusal, officialPathClosureSentence } from "./routing.ts";
 import type { AccessTypedEvent, AccessWireEvent } from "../protocol/events.ts";
 import type { ConnectionTransition, ThrottleSource } from "./connection.ts";
+import { EventStream, directNotificationUrl } from "../transport/events-stream.ts";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "./census.ts";
 import { officialEndpoint, officialHost, officialNotificationUrl } from "../official/endpoints.ts";
 import { selectController, selectControllerName, selectDoorStates } from "../state/selectors.ts";
@@ -49,7 +50,6 @@ import type { Clock } from "../clock.ts";
 import { ConnectionMonitor } from "./connection.ts";
 import type { Dispatcher } from "undici";
 import { EventBus } from "../event-bus.ts";
-import { EventStream } from "../transport/events-stream.ts";
 import { OfficialApi } from "../official/api.ts";
 import { StateStore } from "../state/store.ts";
 import type { StreamOptions } from "../event-bus.ts";
@@ -57,6 +57,7 @@ import { TokenSession } from "../official/session.ts";
 import { Transport } from "../transport/http.ts";
 import { channels } from "../diagnostics.ts";
 import { classifyPacket } from "../protocol/events.ts";
+import { controllerAuthority } from "../transport/url-host.ts";
 import { noopLog } from "../logging.ts";
 import { readResultEnvelope } from "../protocol/envelope.ts";
 import { singleFlight } from "../single-flight.ts";
@@ -64,6 +65,16 @@ import { wallClock } from "../clock.ts";
 
 /**
  * The options common to every way of connecting: the controller address, and the injected dependencies that each have a default.
+ *
+ * `host` is the controller's address without a scheme: a hostname or an IPv4 address, with an optional `:port`, or an IPv6 literal, accepted bare (`fe80::1`) or
+ * bracketed (`[fe80::1]`), with a port only after the bracketed form (`[fe80::1]:7443`), because a bare literal's own colons leave no way to tell a port from its
+ * last group. A single trailing `/` is accepted and dropped, so `access.local/` connects as `access.local`, because it is the empty path every URL places after the
+ * address anyway. A port addresses the UniFi console alone, because the Access developer API answers on a port of its own at the same host. Every URL the client
+ * composes reads the address as the URL parser reads it, while every log and diagnostics payload carries it exactly as configured. An address no URL can carry is
+ * refused with {@link AccessConfigurationError} before any request is sent: an IPv6 literal with a zone (`fe80::1%en0`), or a value
+ * carrying credentials, a path, a query or a fragment.
+ *
+ * Each of the others has a default:
  *
  * - `api` holds routed commands to one of the controller's two APIs; it defaults to `auto`, which prefers the official path and falls back to the direct one.
  * - `clock` is the time source threaded into every subsystem; it defaults to the wall clock, and a test injects a fake to drive time deterministically.
@@ -137,12 +148,16 @@ export interface AccessClientEvents {
 /* The parts the private constructor assembles into a client. Built by connect() once authentication and the initial fetch have succeeded; the constructor wires
  * the sinks and assembles the connection monitor, and connect() then opens the notification channel through it.
  *
+ * `authority` is the controller's URL authority (an IPv6 literal bracketed, any port kept), which the device endpoints and the on-demand topology fetch are built
+ * on, and `host` is the controller's address exactly as configured, which the diagnostics the client publishes name the controller by.
+ *
  * The identity-dependent parts travel as GROUPS rather than as loose optional members, and that is what makes an inconsistent client unrepresentable rather than
  * merely unlikely: a credential session without the transport that carries it, or a transport with no registry built over it, cannot be described here at all. The
  * client then holds each group behind one check instead of re-testing each member wherever it is used.
  */
 interface AccessClientParts {
 
+  authority: string;
   capabilities: AccessCapabilities;
   clock: Clock;
   direct?: { auth: AuthSession; transport: Transport };
@@ -158,7 +173,8 @@ interface AccessClientParts {
   verify: (signal?: AbortSignal) => Promise<void>;
 }
 
-// The two documents one pass fetches, and the probe endpoint. Named here so the fetch, the refresh, and the reachability probe cannot address different endpoints.
+// The documents one pass fetches, and the probe endpoint, each on the controller's URL authority, `host`. Named here so the fetch, the refresh, and the
+// reachability probe cannot address different endpoints.
 function topologyUrl(host: string): string {
 
   return "https://" + host + ACCESS_API_PATH_PREFIX + "/devices/topology4";
@@ -280,6 +296,7 @@ async function fetchBootstrapPair(transport: Transport, host: string, opts: { pr
  */
 export class AccessClient implements AsyncDisposable {
 
+  readonly #authority: string;
   readonly #bus = new EventBus<AccessClientEvents>();
   readonly #capabilities: AccessCapabilities;
   readonly #connection: ConnectionMonitor;
@@ -292,6 +309,7 @@ export class AccessClient implements AsyncDisposable {
 
   private constructor(parts: AccessClientParts) {
 
+    this.#authority = parts.authority;
     this.#capabilities = parts.capabilities;
     this.#direct = parts.direct;
     this.#host = parts.host;
@@ -300,9 +318,10 @@ export class AccessClient implements AsyncDisposable {
 
     /* The narrow surface every projection reads through, built here at the composition root so the devices tier depends on exactly the members it needs. It is
      * built in every mode, because every mode has a census to project over: the transport is what a mode may lack, and a client with none carries a null there
-     * rather than withholding the projections. Which commands such a projection can actually issue is the routing decision's question, not the registry's.
+     * rather than withholding the projections. Which commands such a projection can actually issue is the routing decision's question, not the registry's. Its
+     * `host` is the controller's URL authority, because the devices tier reads it for nothing but the endpoint URLs it builds.
      */
-    const context: AccessDeviceContext = { host: parts.host, log: parts.log, routing: parts.routing, store: parts.store,
+    const context: AccessDeviceContext = { host: parts.authority, log: parts.log, routing: parts.routing, store: parts.store,
       transport: parts.direct?.transport ?? null };
 
     this.#registry = new AccessDeviceRegistry(context);
@@ -384,6 +403,7 @@ export class AccessClient implements AsyncDisposable {
    *
    * @throws {TypeError} when the options ask for a path the supplied identities cannot take - a token-only client held to the direct API, or a credential-only client
    *   held to the official one. Caller misuse, raised before anything is sent.
+   * @throws {@link AccessConfigurationError} when no URL can carry the controller address, naming it. Raised before anything is sent.
    * @throws {@link AccessAuthError} when an identity is refused and the client cannot carry on without it - the credentials on any client, the token on a client
    *   with no direct path to fall back to - its `identity` field naming which one was refused, {@link AccessNetworkError} when the controller cannot be reached,
    *   {@link AccessBootstrapError} when its configuration cannot be fetched, parsed, or applied, or any other typed `FatalError` those stages surface. No partial
@@ -411,6 +431,13 @@ export class AccessClient implements AsyncDisposable {
 
       throw new TypeError("A credential-only UniFi Access client cannot be held to the official API, which requires a token.");
     }
+
+    /* Every URL the client composes - each request, each notification socket and each device endpoint - is a scheme, this authority and a path, so a bare IPv6
+     * literal is bracketed once here rather than at each builder. It is derived before anything is built, so an address no URL can carry is refused with nothing to
+     * tear down, and beside the checks above, so every refusal of the options themselves lands ahead of the caller's signal. The address as configured stays what
+     * every log and diagnostics payload names the controller by.
+     */
+    const authority = controllerAuthority(opts.host);
 
     /* A signal already aborted is the caller's own decision, taken before the connect began, so the refusal is immediate. It raises the library's typed abort
      * rather than the platform's own DOMException, which is what lets a consumer branch on one class for every abort the library reports. The refusal lands
@@ -442,6 +469,7 @@ export class AccessClient implements AsyncDisposable {
         identity: "credentials",
         log,
         onUnauthorized: (): Promise<boolean> => session.reauthenticate(),
+        origin: "https://" + authority,
         ...((opts.dispatcher !== undefined) && { dispatcher: opts.dispatcher }),
         ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls })
       });
@@ -452,22 +480,24 @@ export class AccessClient implements AsyncDisposable {
     })();
     const transport = direct?.transport ?? null;
 
-    /* The official half: the token session, a transport bound to the official address, and the facade over it. The address matters rather than being cosmetic - a
-     * pool takes its origin from what it was built with, so a transport built against the bare host would pool against an origin no official request reaches.
+    /* The official half: the token session, a transport whose origin is the official address, and the facade over it. The origin matters rather than being
+     * cosmetic - a pool takes its origin from what it was built with, so a transport built against the console's authority would pool against an origin no official
+     * request reaches. Its `host` is the address as configured, the same one the direct half's diagnostics carry, so every diagnostic names one controller.
      */
     const tokenSession = (opts.token === undefined) ? null : new TokenSession({ token: opts.token });
     const officialTransport = (tokenSession === null) ? null : new Transport({
 
       clock,
       getAuthHeaders: (): Record<string, string> => tokenSession.authHeaders(),
-      host: officialHost(opts.host),
+      host: opts.host,
       identity: "token",
       log,
       onUnauthorized: (): Promise<boolean> => tokenSession.unauthorized(),
+      origin: "https://" + officialHost(authority),
       ...((opts.dispatcher !== undefined) && { dispatcher: opts.dispatcher }),
       ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls })
     });
-    const official = (officialTransport === null) ? null : new OfficialApi({ host: opts.host, transport: officialTransport });
+    const official = (officialTransport === null) ? null : new OfficialApi({ host: authority, transport: officialTransport });
 
     // Everything built so far, torn down together when a stage below fails. Nothing else exists yet, so this is the whole cleanup at that point.
     const teardownTransports = async (): Promise<void> => {
@@ -486,7 +516,7 @@ export class AccessClient implements AsyncDisposable {
      */
     const fetchPair = singleFlight((documentTransport: Transport, fetchOpts: { probe?: boolean; signal?: AbortSignal } = {}): Promise<AccessRefreshDocuments> => {
 
-      return fetchBootstrapPair(documentTransport, opts.host, fetchOpts);
+      return fetchBootstrapPair(documentTransport, authority, fetchOpts);
     });
 
     /* Whether this client's official surface is usable. It begins as whether a facade was built at all, and the seed below can settle it false for a controller that
@@ -662,6 +692,10 @@ export class AccessClient implements AsyncDisposable {
 
       clock,
 
+      // The socket each channel dials, composed on the controller's URL authority: the official one on the developer API's own port, the direct one on the
+      // console's. The stream's `host` below stays the address as configured, which is how it names the controller in its logs and on its diagnostics channels.
+      endpoint: useOfficialChannel ? officialNotificationUrl(authority) : directNotificationUrl(authority),
+
       /* The upgrade carries whichever identity this client connects with. On the Access application's own socket that is the session cookie and nothing else: the
        * session's full header set also carries the CSRF token, which belongs on the request path, and letting it join the upgrade would change what this connection
        * puts on the wire for no reason the controller asked for. The empty-string fallback keeps the header present before login completes, which is how an upgrade
@@ -674,7 +708,6 @@ export class AccessClient implements AsyncDisposable {
       // Which listener the stream dials, carried so a certificate it will not accept names the listener that presented it rather than the address alone.
       identity: useOfficialChannel ? "token" : "credentials",
       log,
-      ...(useOfficialChannel && { endpoint: officialNotificationUrl(opts.host) }),
       ...((signal !== undefined) && { signal }),
       ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls }),
       ...((opts.webSocket !== undefined) && { webSocket: opts.webSocket })
@@ -722,7 +755,7 @@ export class AccessClient implements AsyncDisposable {
         throttleSource: officialTransport,
         verify: async (signal?: AbortSignal): Promise<void> => {
 
-          const response = await officialTransport.send(officialEndpoint(opts.host, "/doors"), { probe: true, ...((signal !== undefined) && { signal }) });
+          const response = await officialTransport.send(officialEndpoint(authority, "/doors"), { probe: true, ...((signal !== undefined) && { signal }) });
 
           response.ensureOk();
         }
@@ -738,7 +771,7 @@ export class AccessClient implements AsyncDisposable {
       throttleSource: direct.transport,
       verify: async (signal?: AbortSignal): Promise<void> => {
 
-        const response = await direct.transport.send(topologyUrl(opts.host), { probe: true, ...((signal !== undefined) && { signal }) });
+        const response = await direct.transport.send(topologyUrl(authority), { probe: true, ...((signal !== undefined) && { signal }) });
 
         response.ensureOk();
       }
@@ -750,6 +783,7 @@ export class AccessClient implements AsyncDisposable {
 
     const client = new AccessClient({
 
+      authority,
       capabilities,
       clock,
       ...((direct !== null) && { direct }),
@@ -1051,7 +1085,7 @@ export class AccessClient implements AsyncDisposable {
         "application's own endpoints, which require credentials.");
     }
 
-    const response = await this.#direct.transport.send(topologyUrl(this.#host), (opts.signal !== undefined) ? { signal: opts.signal } : {});
+    const response = await this.#direct.transport.send(topologyUrl(this.#authority), (opts.signal !== undefined) ? { signal: opts.signal } : {});
 
     try {
 

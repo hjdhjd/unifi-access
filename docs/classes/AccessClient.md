@@ -543,6 +543,10 @@ when the options ask for a path the supplied identities cannot take - a token-on
 
 #### Throws
 
+[AccessConfigurationError](AccessConfigurationError.md) when no URL can carry the controller address, naming it. Raised before anything is sent.
+
+#### Throws
+
 [AccessAuthError](AccessAuthError.md) when an identity is refused and the client cannot carry on without it - the credentials on any client, the token on a client
   with no direct path to fall back to - its `identity` field naming which one was refused, [AccessNetworkError](AccessNetworkError.md) when the controller cannot be reached,
   [AccessBootstrapError](AccessBootstrapError.md) when its configuration cannot be fetched, parsed, or applied, or any other typed `FatalError` those stages surface. No partial

@@ -116,8 +116,8 @@ export interface DomainRig<T> {
 /**
  * Build a domain class over a mocked official controller.
  *
- * The transport is constructed with the address the endpoints module derives rather than with the bare host, which is what a composition root does and what binds
- * the connection pool to the origin every official URL resolves to - so this construction is itself the assertion that the two agree.
+ * The rig binds the transport's origin to the address the endpoints module derives, as the composition root does, which is what binds the connection pool to the
+ * origin every official URL resolves to, so the construction is itself the assertion that the two agree.
  *
  * @param build - Constructs the domain class under test from its options.
  *

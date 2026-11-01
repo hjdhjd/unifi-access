@@ -107,8 +107,9 @@ export interface OfficialDispatchOptions {
 }
 
 /**
- * Construction options for every official domain class: the shared request path, and the controller address its URLs are built against. A domain holds these two
- * and nothing else, so the set is declared once here rather than re-spelled by each domain module.
+ * Construction options for every official domain class: the shared request path, and the controller's URL authority its URLs are built against - the address
+ * without a scheme, an IPv6 literal bracketed, with the official API's own port replacing any port it carries. A domain holds exactly these members, so the set
+ * is declared once here rather than re-spelled by each domain module.
  */
 export interface OfficialDomainOptions {
 

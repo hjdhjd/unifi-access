@@ -88,7 +88,9 @@ export interface SendOptions extends RequestOptions {
 }
 
 /**
- * Construction options for {@link Transport}. `host` is the controller address; everything else is injected.
+ * Construction options for {@link Transport}. `host` is the controller address exactly as configured, which every request and throttle diagnostics payload carries
+ * verbatim, and `origin` is the URL origin the owned pool connects to: the scheme and the URL authority of the listener this transport reaches, an IPv6 literal
+ * bracketed (`https://[fe80::1]`). Everything else is injected.
  *
  * - `dispatcher` substitutes the undici dispatcher (an `undici.MockAgent` in tests, or a consumer-supplied pool). When injected, the transport never destroys or
  *   rebuilds it - lifecycle stays with the injector, so `reset()` and disposal are no-ops on the dispatcher. It also brings its own connector and its own retry
@@ -114,6 +116,7 @@ export interface TransportOptions {
   identity?: AccessIdentityLeg;
   log?: AccessLogging;
   onUnauthorized?: () => Promise<boolean>;
+  origin: string;
   verifyTls?: boolean;
 }
 
@@ -334,6 +337,10 @@ export class AccessResponse {
  */
 export class Transport implements AsyncDisposable {
 
+  /* The address this transport dials, which is what a certificate failure reports the peer as. It is read from the origin rather than from `host`, because the
+   * origin is what the pool connects to, and the address a user is told about has to be the one that was actually dialed - the official API's own port included.
+   */
+  readonly #address: string;
   readonly #bus = new EventBus<TransportEvents>();
   readonly #clock: Clock;
   readonly #getAuthHeaders: (() => Record<string, string>) | undefined;
@@ -341,6 +348,7 @@ export class Transport implements AsyncDisposable {
   readonly #identity: AccessIdentityLeg;
   readonly #log: AccessLogging;
   readonly #onUnauthorized: (() => Promise<boolean>) | undefined;
+  readonly #origin: string;
   readonly #verifyTls: boolean;
 
   /* The breaker's only mutable state: the consecutive-failure count and the timestamp the cooldown last (re-)armed. `null` means the breaker is closed.
@@ -355,6 +363,7 @@ export class Transport implements AsyncDisposable {
 
   constructor(options: TransportOptions) {
 
+    this.#address = new URL(options.origin).host;
     this.#clock = options.clock ?? wallClock;
     this.#getAuthHeaders = options.getAuthHeaders;
     this.#host = options.host;
@@ -362,8 +371,11 @@ export class Transport implements AsyncDisposable {
     this.#log = options.log ?? noopLog;
     this.#onUnauthorized = options.onUnauthorized;
 
-    // Settled before the pool below is built, because #buildPool reads it: a pool built while the field was still unset would ask undici for its own default rather
-    // than for ours, which is the opposite of what an omitted option means.
+    /* The origin and the certificate posture are settled before the pool below is built, because #buildPool reads them. reset() rebuilds the pool from these same
+     * fields, so a rebuilt pool reaches the listener the transport was constructed for, with the posture it was constructed with. A pool built while the posture was
+     * still unset would ask undici for its own default rather than for ours, which is the opposite of what an omitted option means.
+     */
+    this.#origin = options.origin;
     this.#verifyTls = options.verifyTls ?? false;
 
     // When a dispatcher is injected we adopt it and never touch its lifecycle - the injector owns construction and teardown, and it brings a connector of its own
@@ -378,6 +390,15 @@ export class Transport implements AsyncDisposable {
   get isThrottled(): boolean {
 
     return this.#throttledSince !== null;
+  }
+
+  /**
+   * The URL origin this transport's requests reach: the scheme and the URL authority of the listener it was built for. The authentication session composes its
+   * handshake URLs from it, so the URLs it sends and the origin the pool dials are one value by construction.
+   */
+  get origin(): string {
+
+    return this.#origin;
   }
 
   /**
@@ -732,12 +753,13 @@ export class Transport implements AsyncDisposable {
 
         return new AccessNetworkError("The UniFi Access controller could not be reached after exhausting retries.", { cause: error, code: failure.code });
 
-      /* The peer's certificate failed the platform's verification, so the failure names the listener it came from rather than reporting an unreachable host. Which
-       * listener that is comes from the identity this transport was built with, because each identity addresses exactly one of them.
+      /* The peer's certificate failed the platform's verification, so the failure names the listener it came from and the address that was dialed rather than
+       * reporting an unreachable host. Which listener that is comes from the identity this transport was built with, because each identity addresses exactly one of
+       * them.
        */
       case "certificate":
 
-        return new AccessCertificateError({ cause: error, host: this.#host, identity: this.#identity });
+        return new AccessCertificateError({ cause: error, host: this.#address, identity: this.#identity });
 
       // Everything else is a connect, DNS, or socket failure. The aborted kind answers only a signal handed to the classifier, and this translation hands it none, so
       // it is listed here for the union to stay exhaustive rather than because a request can reach it.
@@ -812,7 +834,7 @@ export class Transport implements AsyncDisposable {
     // pool's decides how it handles the connection once the connect has completed. One binding is what keeps the two from disagreeing.
     const allowH2 = true;
     const connector = createOwnedConnector({ allowH2, verifyTls: this.#verifyTls });
-    const dispatcher = new Pool("https://" + this.#host, { allowH2, clientTtl: 60000, connect: connector.connect, connections: 5 })
+    const dispatcher = new Pool(this.#origin, { allowH2, clientTtl: 60000, connect: connector.connect, connections: 5 })
       .compose(userAgent, signalGate, interceptors.retry({ ...ACCESS_API_RETRY_PROFILE, methods: [...ACCESS_API_RETRY_PROFILE.methods],
         statusCodes: [...ACCESS_API_RETRY_PROFILE.statusCodes] }));
 

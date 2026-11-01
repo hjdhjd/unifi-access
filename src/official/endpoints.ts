@@ -5,22 +5,28 @@
 import { ACCESS_OFFICIAL_API_PATH_PREFIX, ACCESS_OFFICIAL_API_PORT } from "../settings.ts";
 
 /**
- * The controller address the official API answers on: the bare host with the official API's dedicated port appended.
+ * The controller address the official API answers on: the controller's host with the official API's dedicated port in place of any port the authority carries.
  *
  * This is the one derivation of that address in the library, and everything official flows through it - the REST base and the notification socket URL below, and
- * the address the official transport is constructed with. That last consumer is why this is exported rather than private: an origin-bound connection pool takes
- * its origin from the address it is built with, and the diagnostics channels stamp that same address, so a transport built with the bare host would pool against
- * the wrong origin and attribute its requests to an address no official request ever reached.
+ * the origin the official transport is constructed with. That last consumer is why this is exported rather than private: an origin-bound connection pool takes
+ * its origin from the address it is built with, so a transport built with the console's own authority would pool against an origin no official request reaches.
  *
- * @param host - The controller address (no scheme, no port).
+ * The developer API answers on its own port whichever port the console is reached on, so its port takes the place of a carried one. The authority is the
+ * canonical one the client derives at connect, where a port can only follow the last colon after any closing bracket, so the port is found by that position
+ * rather than by a URL parse every official request would pay for.
  *
- * @returns The controller address with the official API's port.
+ * @param host - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed and any port kept.
+ *
+ * @returns The controller's host with the official API's port.
  *
  * @category Official
  */
 export function officialHost(host: string): string {
 
-  return host + ":" + ACCESS_OFFICIAL_API_PORT.toString();
+  const portAt = host.lastIndexOf(":");
+  const hostname = (portAt > host.lastIndexOf("]")) ? host.slice(0, portAt) : host;
+
+  return hostname + ":" + ACCESS_OFFICIAL_API_PORT.toString();
 }
 
 /* The base every REST builder composes from, private for the same reason the Access application's own base is: the address and the application path meet in
@@ -61,7 +67,7 @@ export interface AccessOfficialPageOptions {
  * join, so a caller never composes a scheme, a host, or the application prefix itself - and that includes the query string, which is why the query arrives here as
  * a record rather than pre-serialized by the caller.
  *
- * @param host  - The controller address (no scheme, no port).
+ * @param host  - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed, with the official API's own port in place of any it carries.
  * @param path  - The endpoint path below the application prefix, with its leading slash.
  * @param query - The query members to append. A record whose every member is absent produces no query string at all, rather than a bare `?`.
  *
@@ -134,7 +140,7 @@ export function officialPageQuery(opts: AccessOfficialPageOptions = {}): AccessO
  * The socket upgrades on the same host and port as the REST surface, under the same application prefix, which is what lets one address derivation serve both. The
  * path is the one the controller answers on, verified against a live controller rather than taken from the reference alone.
  *
- * @param host - The controller address (no scheme, no port).
+ * @param host - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed, with the official API's own port in place of any it carries.
  *
  * @returns The fully-qualified `wss://` URL of the notification socket.
  *

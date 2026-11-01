@@ -18,8 +18,10 @@ import { singleFlight } from "../single-flight.ts";
 const ADMIN_SCOPE = "edit:access.device";
 
 /**
- * The credentials for an Access controller. `host` is the controller address without a scheme (for example `"192.168.1.1"`); the session derives the UniFi OS login
- * URL from it. Every member is readonly because the session retains this shape for the life of the session and relogin re-reads it.
+ * The credentials for an Access controller. `host` is the controller address exactly as configured, without a scheme (for example `"192.168.1.1"`), and it is what
+ * the session names the controller by in the sign-in log and on the relogin channel. The handshake URLs are composed from the transport's own origin instead, so
+ * they address the listener the transport dials whatever form the address was configured in. Every member is readonly because the session retains this shape for
+ * the life of the session and relogin re-reads it.
  *
  * @category Transport
  */
@@ -271,13 +273,13 @@ export class AuthSession {
 
     let response: AccessResponse;
 
-    /* The request goes out under the session's own configured address. A transport is origin-bound - undici retargets any URL dispatched through it to the pool's
-     * own origin, so only the path and query here actually reach the wire - and in every supported composition the two addresses are the same value, because the
-     * composition root wires one host into both the transport and these credentials.
+    /* The request goes out under the transport's own origin. A transport is origin-bound - undici retargets any URL dispatched through it to the pool's own origin,
+     * so only the path and query here actually reach the wire - and composing from that same origin is what keeps the URL and the pool one value by construction,
+     * whatever form the configured address took.
      */
     try {
 
-      response = await this.#transport.send("https://" + credentials.host + "/api/users/self",
+      response = await this.#transport.send(this.#transport.origin + "/api/users/self",
         { method: "GET", ...((opts.signal !== undefined) && { signal: opts.signal }) });
     } catch(error) {
 
@@ -390,7 +392,7 @@ export class AuthSession {
   // transport's getAuthHeaders hook being wired back to this same session.
   async #handshake(credentials: AccessCredentials, signal?: AbortSignal): Promise<boolean> {
 
-    const loginUrl = "https://" + credentials.host + "/api/auth/login";
+    const loginUrl = this.#transport.origin + "/api/auth/login";
     const loginBody = JSON.stringify({ password: credentials.password, rememberMe: true, token: "", username: credentials.username });
 
     let response = await this.#postLogin(loginUrl, loginBody, signal);
@@ -399,7 +401,7 @@ export class AuthSession {
     // and retry the login once with it in hand.
     if(!responseOk(response.statusCode) && (this.#csrfToken === null)) {
 
-      const csrfResponse = await this.#transport.send("https://" + credentials.host, { authRetry: false, method: "GET", ...((signal !== undefined) && { signal }) });
+      const csrfResponse = await this.#transport.send(this.#transport.origin, { authRetry: false, method: "GET", ...((signal !== undefined) && { signal }) });
 
       if(responseOk(csrfResponse.statusCode)) {
 

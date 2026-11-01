@@ -22,7 +22,7 @@ describe("createHttpsLoopback", () => {
 
     await using peer = await createHttpsLoopback((hit) => ({ body: "{\"hit\":" + hit.toString() + "}", contentType: "application/json",
       status: (hit === 1) ? 200 : 201 }));
-    await using transport = new Transport({ host: peer.host });
+    await using transport = new Transport({ host: peer.host, origin: peer.origin });
 
     const first = await transport.send(url(peer.host, "/first"));
     const second = await transport.send(url(peer.host, "/second"));
@@ -36,7 +36,7 @@ describe("createHttpsLoopback", () => {
   test("createHttpsLoopback records each request's body and content type", async () => {
 
     await using peer = await createHttpsLoopback(() => ({ body: "{}", contentType: "application/json", status: 200 }));
-    await using transport = new Transport({ host: peer.host });
+    await using transport = new Transport({ host: peer.host, origin: peer.origin });
 
     await transport.send(url(peer.host, "/read"));
     await transport.send(url(peer.host, "/write"), { body: "{\"asked\":true}", method: "POST" });

@@ -19,5 +19,6 @@ Abstract base for failures the caller should propagate. Retrying the identical c
 - [`AccessAuthorizationError`](AccessAuthorizationError.md)
 - [`AccessBootstrapError`](AccessBootstrapError.md)
 - [`AccessCapabilityError`](AccessCapabilityError.md)
+- [`AccessConfigurationError`](AccessConfigurationError.md)
 - [`AccessProtocolError`](AccessProtocolError.md)
 - [`AccessRequestError`](AccessRequestError.md)

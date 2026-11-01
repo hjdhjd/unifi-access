@@ -12,7 +12,7 @@ import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessP
 import type { AccessEventsClosedPayload, AccessEventsPacketPayload } from "../diagnostics.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
-import { EventStream, HEARTBEAT_FRAME } from "./events-stream.ts";
+import { EventStream, HEARTBEAT_FRAME, directNotificationUrl } from "./events-stream.ts";
 import { FakeWebSocket, createLoopbackServer } from "./events-stream.helpers.ts";
 import { TestClock, assertNoUnhandledRejections, capturingLog, errnoError, expectAt, freePort, loggedAt, settle, settleUntil, silentLog,
   waitUntil } from "homebridge-plugin-utils/testing";
@@ -285,6 +285,17 @@ describe("EventStream", () => {
       await using stream = upgrade.stream;
 
       assert.equal(upgrade.url, "wss://" + HOST + "/proxy/access/api/v2/ws/notification");
+    });
+
+    test("derives that URL through the one builder, which composes on whatever authority it is handed", async () => {
+
+      const upgrade = upgradeOf();
+
+      await using stream = upgrade.stream;
+
+      // The composition root hands every direct stream this builder's URL as its endpoint, so the fallback and the endpoint cannot address different paths.
+      assert.equal(upgrade.url, directNotificationUrl(HOST));
+      assert.equal(directNotificationUrl("[fe80::1]:7443"), "wss://[fe80::1]:7443/proxy/access/api/v2/ws/notification");
     });
 
     test("addresses the supplied endpoint instead when one is supplied", async () => {

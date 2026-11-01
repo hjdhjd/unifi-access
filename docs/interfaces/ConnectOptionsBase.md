@@ -8,6 +8,16 @@
 
 The options common to every way of connecting: the controller address, and the injected dependencies that each have a default.
 
+`host` is the controller's address without a scheme: a hostname or an IPv4 address, with an optional `:port`, or an IPv6 literal, accepted bare (`fe80::1`) or
+bracketed (`[fe80::1]`), with a port only after the bracketed form (`[fe80::1]:7443`), because a bare literal's own colons leave no way to tell a port from its
+last group. A single trailing `/` is accepted and dropped, so `access.local/` connects as `access.local`, because it is the empty path every URL places after the
+address anyway. A port addresses the UniFi console alone, because the Access developer API answers on a port of its own at the same host. Every URL the client
+composes reads the address as the URL parser reads it, while every log and diagnostics payload carries it exactly as configured. An address no URL can carry is
+refused with [AccessConfigurationError](../classes/AccessConfigurationError.md) before any request is sent: an IPv6 literal with a zone (`fe80::1%en0`), or a value
+carrying credentials, a path, a query or a fragment.
+
+Each of the others has a default:
+
 - `api` holds routed commands to one of the controller's two APIs; it defaults to `auto`, which prefers the official path and falls back to the direct one.
 - `clock` is the time source threaded into every subsystem; it defaults to the wall clock, and a test injects a fake to drive time deterministically.
 - `dispatcher` substitutes the transport's connection pool; when omitted the transport builds and owns one.

@@ -586,7 +586,7 @@ describe("Transport", () => {
     test("a caller abort during the dial rejects at once with AccessAbortedError and leaves the connection attempt to the pool", async () => {
 
       await using peer = await createSilentLoopback();
-      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog(), origin: "https://" + peer.host });
 
       const controller = new AbortController();
       const arriving = peer.connection(0);
@@ -612,7 +612,7 @@ describe("Transport", () => {
 
       const clock = new TestClock();
 
-      await using transport = new Transport({ clock, host: peer.host, log: silentLog() });
+      await using transport = new Transport({ clock, host: peer.host, log: silentLog(), origin: "https://" + peer.host });
 
       const arriving = peer.connection(0);
       const pending = transport.send(url(peer.host, "/x"));
@@ -631,7 +631,7 @@ describe("Transport", () => {
     test("a signal already aborted when the request is dispatched rejects at once and opens no connection", async () => {
 
       await using peer = await createSilentLoopback();
-      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog(), origin: "https://" + peer.host });
 
       const controller = new AbortController();
 
@@ -656,7 +656,7 @@ describe("Transport", () => {
 
       await using peer = await createSilentLoopback();
 
-      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog(), origin: "https://" + peer.host });
       const first = new AbortController();
       const second = new AbortController();
       const arriving = peer.connection(0);
@@ -688,7 +688,7 @@ describe("Transport", () => {
 
       await using peer = await createSilentLoopback();
 
-      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog(), origin: "https://" + peer.host });
       const first = new AbortController();
       const second = new AbortController();
       const arriving = peer.connection(0);
@@ -717,7 +717,7 @@ describe("Transport", () => {
     test("two requests sharing one caller signal both report the cancel at once", async () => {
 
       await using peer = await createSilentLoopback();
-      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog(), origin: "https://" + peer.host });
 
       const controller = new AbortController();
       const arriving = peer.connection(0);
@@ -741,7 +741,7 @@ describe("Transport", () => {
     test("a cancelled request whose connection attempt then fails with a retryable fault is not dialed again", async () => {
 
       await using peer = await createResettingLoopback();
-      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog(), origin: "https://" + peer.host });
 
       const controller = new AbortController();
       const arriving = peer.connection(0);
@@ -770,7 +770,7 @@ describe("Transport", () => {
     test("reset() during a dial fails the request as the pool-reset interruption and releases the socket", async () => {
 
       await using peer = await createSilentLoopback();
-      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog(), origin: "https://" + peer.host });
 
       const arriving = peer.connection(0);
       const pending = transport.send(url(peer.host, "/x"));
@@ -790,7 +790,7 @@ describe("Transport", () => {
 
       await using peer = await createSilentLoopback();
 
-      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog(), origin: "https://" + peer.host });
       const arriving = peer.connection(0);
       const pending = transport.send(url(peer.host, "/x"));
       const connection = await arriving;
@@ -836,7 +836,7 @@ describe("Transport", () => {
     test("reset() fails a request in flight on an HTTP/2 connection as the pool-reset interruption", async () => {
 
       await using peer = await createUnansweringHttpsLoopback();
-      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog(), origin: "https://" + peer.host });
 
       const arriving = peer.connection(0);
       const pending = transport.send(url(peer.host, "/x"), { method: "PATCH" });
@@ -854,7 +854,7 @@ describe("Transport", () => {
 
       await using peer = await createUnansweringHttpsLoopback();
 
-      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog(), origin: "https://" + peer.host });
       const arriving = peer.connection(0);
       const pending = transport.send(url(peer.host, "/x"), { method: "PATCH" });
 
@@ -881,7 +881,7 @@ describe("Transport", () => {
     test("reset() fails a request in flight on an HTTP/1.1 connection as the pool-reset interruption", async () => {
 
       await using peer = await createUnansweringHttpsLoopback({ offerH2: false });
-      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog(), origin: "https://" + peer.host });
 
       const arriving = peer.connection(0);
       const pending = transport.send(url(peer.host, "/x"), { method: "PATCH" });
@@ -1281,12 +1281,32 @@ describe("Transport", () => {
 
       // No dispatcher injected, so the transport builds (and owns) a real undici pool - exercising the pool and retry-interceptor construction. The pool is lazy,
       // so no connection opens without a request; reset() rebuilds it and asyncDispose tears it down.
-      const transport = new Transport({ host: "127.0.0.1" });
+      const transport = new Transport({ host: "127.0.0.1", origin: "https://127.0.0.1" });
 
       assert.equal(transport.isThrottled, false);
       assert.doesNotThrow(() => transport.reset(), "reset must rebuild the owned pool without throwing");
 
       await assert.doesNotReject(transport[Symbol.asyncDispose]());
+    });
+
+    test("dials its origin rather than the configured address, from the pool it built and from the one a reset rebuilds", async () => {
+
+      /* The configured address is a name reserved never to resolve, so a request answered at all is one the owned pool sent to the origin. The request diagnostics
+       * carry the address as configured all the same, because that is the name the consumer gave the controller.
+       */
+      await using peer = await createHttpsLoopback(() => ({ body: "{\"ok\":true}", contentType: "application/json", status: 200 }));
+      await using transport = new Transport({ host: "controller.invalid", origin: peer.origin });
+      const starts: AccessHttpRequestStartPayload[] = [];
+
+      using startSub = subscribeTo(channels.httpRequestStart, (message) => void starts.push(message));
+
+      assert.equal((await transport.send(url(peer.host, "/built"))).statusCode, 200, "the pool the transport built dials the origin");
+
+      transport.reset();
+
+      assert.equal((await transport.send(url(peer.host, "/rebuilt"))).statusCode, 200, "and so does the pool a reset rebuilds");
+      assert.equal(transport.origin, peer.origin);
+      assert.deepEqual(starts.map((start) => start.host), [ "controller.invalid", "controller.invalid" ], "the diagnostics name the address as configured");
     });
   });
 
@@ -1296,7 +1316,7 @@ describe("Transport", () => {
 
       // The peer is disposed after the transport, so the pool has released its keepalive connection by the time the server stops listening.
       await using peer = await createHttpsLoopback(() => ({ body: "{\"ok\":true}", contentType: "application/json", status: 200 }));
-      await using transport = new Transport({ host: peer.host });
+      await using transport = new Transport({ host: peer.host, origin: peer.origin });
 
       const response = await transport.send(url(peer.host, "/ok"));
 
@@ -1306,7 +1326,7 @@ describe("Transport", () => {
     test("refuses a certificate that does not verify when strict verification is asked for", async () => {
 
       await using peer = await createHttpsLoopback(() => ({ body: "{\"ok\":true}", contentType: "application/json", status: 200 }));
-      await using transport = new Transport({ host: peer.host, verifyTls: true });
+      await using transport = new Transport({ host: peer.host, origin: peer.origin, verifyTls: true });
 
       /* The same peer and the same request as above, one option apart. A handshake the client will not complete is a connect-phase failure, and the transport
        * reports it as the certificate refusal it is: the sentence names the listener that presented the certificate, the address that was dialed, and the
@@ -1329,7 +1349,7 @@ describe("Transport", () => {
     test("names the developer API when the transport that met the certificate carries the token identity", async () => {
 
       await using peer = await createHttpsLoopback(() => ({ body: "{\"ok\":true}", contentType: "application/json", status: 200 }));
-      await using transport = new Transport({ host: peer.host, identity: "token", verifyTls: true });
+      await using transport = new Transport({ host: peer.host, identity: "token", origin: peer.origin, verifyTls: true });
 
       // The identity leg is what fixes the listener: a token transport is built against the developer API's own address, so its refusal says so and tells the
       // user that installing a certificate on the console would not have reached this one.
@@ -1341,6 +1361,26 @@ describe("Transport", () => {
           "the sentence opens by naming the developer API");
         assert.ok(error.message.endsWith(" The developer API presents its own certificate, separate from the console's."),
           "and the token leg is told where the certificate it needs actually goes");
+
+        return true;
+      });
+    });
+
+    test("names the address its origin dials rather than the configured address, which names no listener", async () => {
+
+      await using peer = await createHttpsLoopback(() => ({ body: "{\"ok\":true}", contentType: "application/json", status: 200 }));
+      await using transport = new Transport({ host: "controller.invalid", identity: "token", origin: peer.origin, verifyTls: true });
+
+      /* The token transport the client builds carries the address as configured for its diagnostics and dials the developer API's own origin, port included, so
+       * the address a refusal names is read from that origin: the configured address would send a user to a listener nothing dialed.
+       */
+      await assert.rejects(async () => transport.send(url(peer.host, "/ok")), (error: unknown) => {
+
+        assert.ok(error instanceof AccessCertificateError);
+        assert.equal(error.host, peer.host, "the address reported is the origin's host and port");
+        assert.equal(error.identity, "token");
+        assert.ok(error.message.startsWith("The UniFi Access developer API at " + peer.host + " presented a certificate that could not be verified: "),
+          "the sentence names the developer API at the address its origin dials");
 
         return true;
       });

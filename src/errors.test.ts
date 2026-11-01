@@ -5,9 +5,9 @@
  * its own class name and chains its cause, that the typed fields are carried, and that the errno resolution behaves across the shapes undici and Node produce.
  */
 import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
-  AccessCertificateError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError, AccessThrottledError,
-  AccessTimeoutError, FatalError, RecoverableError, assertNever, causeChain, formatErrorChain, isExpectedWsDisconnect, isIdentityRefusal, isPrivilegeRefusal,
-  isSignInRefusal, resolveErrnoCause } from "./errors.ts";
+  AccessCertificateError, AccessConfigurationError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError,
+  AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError, assertNever, causeChain, formatErrorChain, isExpectedWsDisconnect, isIdentityRefusal,
+  isPrivilegeRefusal, isSignInRefusal, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { errnoError } from "homebridge-plugin-utils/testing";
@@ -30,6 +30,7 @@ describe("AccessError hierarchy", () => {
     new AccessAuthorizationError("authz", { statusCode: 403 }),
     new AccessBootstrapError("bootstrap", { stage: "fetch" }),
     new AccessCapabilityError("capability"),
+    new AccessConfigurationError("configuration"),
     new AccessApiError("api", { code: "CODE_PARAMS_INVALID" }),
     new AccessProtocolError("protocol"),
     new AccessRequestError("request", { statusCode: 500 })
@@ -73,6 +74,7 @@ describe("typed error fields and cause chaining", () => {
     assert.ok(Object.is(new AccessAuthorizationError("m", { cause: root }).cause, root), "the authorization error chains its cause");
     assert.ok(Object.is(new AccessBootstrapError("m", { cause: root, stage: "parse" }).cause, root), "the bootstrap error chains its cause");
     assert.ok(Object.is(new AccessCapabilityError("m", { cause: root }).cause, root), "the capability error chains its cause");
+    assert.ok(Object.is(new AccessConfigurationError("m", { cause: root }).cause, root), "the configuration error chains its cause");
     assert.ok(Object.is(new AccessApiError("m", { cause: root, code: "CODE_SYSTEM_ERROR" }).cause, root), "the result-envelope refusal chains its cause");
     assert.ok(Object.is(new AccessRequestError("m", { cause: root, statusCode: 500 }).cause, root), "the request error chains its cause");
     assert.ok(Object.is(new AccessStallError("m", { cause: root, silentForMs: 1 }).cause, root), "the stall error chains its cause");

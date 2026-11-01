@@ -43,6 +43,7 @@ export function makeMockTransport(options: {
     clock,
     dispatcher: agent,
     host,
+    origin: "https://" + host,
     ...((options.getAuthHeaders !== undefined) && { getAuthHeaders: options.getAuthHeaders }),
     ...((options.identity !== undefined) && { identity: options.identity }),
     ...((options.log !== undefined) && { log: options.log }),

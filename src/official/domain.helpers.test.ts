@@ -85,7 +85,7 @@ describe("the recording wrappers", () => {
 
     agent.disableNetConnect();
 
-    const transport = new RecordingTransport({ clock: new TestClock(), dispatcher: agent, host: officialHost(HOST) });
+    const transport = new RecordingTransport({ clock: new TestClock(), dispatcher: agent, host: officialHost(HOST), origin: ORIGIN });
     const pool = agent.get(ORIGIN);
 
     pool.intercept({ method: "GET", path: "/one" }).reply(200, "{}");

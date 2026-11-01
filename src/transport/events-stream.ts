@@ -62,14 +62,33 @@ import { wallClock } from "../clock.ts";
 export const HEARTBEAT_FRAME = "\"Hello\"\n";
 
 /**
+ * The Access application's own realtime notification socket on the controller's URL authority. The socket takes no parameters, because the controller has no
+ * replay mechanism to ask for, so there is nothing to carry in a query string.
+ *
+ * This is the one composition of that URL: the composition root hands its result to the stream as the endpoint, and the stream's own fallback calls it when no
+ * endpoint is supplied, so the path is written once whichever of them builds the socket.
+ *
+ * @param host - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed and any port kept.
+ *
+ * @returns The fully-qualified `wss://` URL of the notification socket.
+ *
+ * @category Transport
+ */
+export function directNotificationUrl(host: string): string {
+
+  return "wss://" + host + ACCESS_API_PATH_PREFIX + "/ws/notification";
+}
+
+/**
  * Construction options for {@link EventStream}.
  *
- * - `host` is the controller address. It is this stream's identity in its logs and on its diagnostics channels, and the notification URL is derived from it unless
- *   `endpoint` supplies one. It is required in either case, because an endpoint override addresses the same controller on a different port - the stream still has
- *   one controller to name.
- * - `endpoint` is a complete `wss://` URL that replaces the derived one. It pairs with `getAuthHeaders`: a stream against the controller's official notification
- *   socket supplies both, the endpoint naming that socket and the headers stamping the bearer token it authenticates with, and the composition root is the one
- *   caller that supplies either.
+ * - `host` is the controller address exactly as configured. It is this stream's identity in its logs and on its diagnostics channels, and it is required whatever
+ *   `endpoint` says, because an endpoint addresses the same controller in the form a URL carries it, or on a different port - the stream still has one controller
+ *   to name. When no endpoint is supplied, the notification URL is derived from `host` through {@link directNotificationUrl}, which then has to be a URL authority
+ *   already.
+ * - `endpoint` is a complete `wss://` URL that replaces the derived one. The composition root supplies it on each channel, composed on the controller's URL
+ *   authority, and it pairs with `getAuthHeaders` there: a stream against the controller's official notification socket names that socket here and stamps the
+ *   bearer token it authenticates with through the headers.
  * - `identity` names which identity the upgrade authenticates with, and therefore which listener this stream dials: `"credentials"` the UniFi console,
  *   `"token"` the Access developer API on its own port. It defaults to `"credentials"` exactly as the {@link Transport}'s does, and it is what a certificate the
  *   listener presents that does not verify is reported through - the failure names the listener rather than the address alone.
@@ -177,7 +196,8 @@ function closeFrameText(code: number, reason: string): string {
 export class EventStream implements AsyncDisposable {
 
   /* The address this stream dials, which is what a certificate failure reports the peer as. It is read from the URL rather than from `host`, because an endpoint
-   * override names its own port and the address a user is told about has to be the one that was actually dialed.
+   * names the authority it dials, which can carry the official API's own port or a bracketed IPv6 literal, and the address a user is told about has to be the one
+   * that was actually dialed.
    */
   readonly #address: string;
   readonly #bus = new EventBus<EventStreamEvents>();
@@ -232,9 +252,8 @@ export class EventStream implements AsyncDisposable {
     this.#log = options.log ?? noopLog;
     this.#lastMessageAt = this.#clock.now();
 
-    // The notification endpoint takes no parameters. The controller has no replay mechanism to ask for, so there is nothing to carry in a query string. An endpoint
-    // override names a whole URL rather than adjusting this one, because the socket it addresses differs in port and path alike.
-    const url = options.endpoint ?? ("wss://" + options.host + ACCESS_API_PATH_PREFIX + "/ws/notification");
+    // An endpoint names a whole URL rather than adjusting the derived one, because the official socket it can address differs in port and path alike.
+    const url = options.endpoint ?? directNotificationUrl(options.host);
 
     // Read from the URL the socket opens, so the address reported and the address dialed are one value. `#host` stays the stream's identity in its logs and on
     // its diagnostics channels; this carries the port as well whenever the endpoint names one.
