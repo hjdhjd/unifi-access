@@ -1,9 +1,10 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * events-stream.helpers.ts: The two peers EventStream tests drive it against - a deterministic in-memory fake WebSocket for everything above the socket, and a
- * loopback TLS server that speaks the upgrade by hand for the things only a real socket can show.
+ * events-stream.helpers.ts: The peers EventStream tests drive it against - a deterministic in-memory fake WebSocket for everything above the socket, and a loopback
+ * TLS server that speaks the upgrade by hand for the things only a real socket can show, reachable directly or through a TCP proxy that resets the client's
+ * connection on demand.
  */
-import { acceptConnection, createConnectionLedger } from "./loopback.helpers.ts";
+import { acceptConnection, createConnectionLedger, createLoopbackTcpProxy } from "./loopback.helpers.ts";
 import { listenOnLoopback, stopListening } from "homebridge-plugin-utils/testing";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
 import type { AccessWebSocket } from "./ws.ts";
@@ -189,10 +190,11 @@ export class FakeWebSocket implements AccessWebSocket {
  * How the loopback peer answers a connected client - the one dial each test sets.
  *
  * - `answersClose` completes the closing handshake and ends the connection, which is what RFC 6455 asks a server to do.
+ * - `hangsUp` completes the upgrade and then ends its end of the connection with no close frame, which is how a peer hangs up on an open WebSocket.
  * - `ignoresClose` accepts the client's close frame and holds its end of the connection open, which is the live controller's own habit.
  * - `neverUpgrades` accepts the connection and never answers the upgrade request, leaving the client's connect in flight.
  */
-export type LoopbackPeerBehavior = "answersClose" | "ignoresClose" | "neverUpgrades";
+export type LoopbackPeerBehavior = "answersClose" | "hangsUp" | "ignoresClose" | "neverUpgrades";
 
 /**
  * A listening loopback server. `connection(index)` resolves with the connection at that position in accept order, whether it has already arrived or is still to
@@ -259,6 +261,15 @@ export async function createLoopbackServer(behavior: LoopbackPeerBehavior): Prom
         upgraded = true;
         socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + acceptDigest(key) +
           HEADER_TERMINATOR);
+
+        // The peer that hangs up ends its end of the connection right behind the upgrade, with no close frame, so the client meets the end of an open WebSocket
+        // that no error on its socket explains.
+        if(behavior === "hangsUp") {
+
+          socket.end();
+
+          return;
+        }
       }
 
       // The cooperative peer answers the close frame and ends the connection; the hostile one leaves the frame unanswered and its end open, so the client's own
@@ -291,6 +302,46 @@ export async function createLoopbackServer(behavior: LoopbackPeerBehavior): Prom
     connection: async (index: number): Promise<LoopbackConnection> => ledger.connection(index),
     port,
     [Symbol.asyncDispose]: close
+  };
+}
+
+/**
+ * A loopback server reached through a TCP proxy. `port` is the proxy's, which is what a stream dials; `connection(index)` is the server's own record of each TLS
+ * connection, resolved once the handshake through the proxy has completed; and `reset()` sends the client's end of every connection a TCP RST.
+ */
+export interface ProxiedLoopbackServer extends AsyncDisposable {
+
+  readonly port: number;
+  connection(index: number): Promise<LoopbackConnection>;
+  reset(): void;
+}
+
+/**
+ * Build a {@link createLoopbackServer | loopback server} behind a TCP proxy, so a test can reset the client's connection at whatever stage it has reached.
+ *
+ * The server's own TLS socket cannot send a reset - the platform refuses a reset on a TLS handle - so the reset goes out on the proxy's plain-TCP leg to the
+ * client instead, which reaches the stream's socket exactly as a peer's reset on the wire does: before the upgrade is answered when the server never upgrades, and
+ * on an open WebSocket when it does.
+ *
+ * @param behavior - How the server behind the proxy answers a connected client.
+ *
+ * @returns The listening server and its proxy. Dispose it to sever every connection and stop listening.
+ */
+export async function createProxiedLoopbackServer(behavior: LoopbackPeerBehavior): Promise<ProxiedLoopbackServer> {
+
+  const server = await createLoopbackServer(behavior);
+  const proxy = await createLoopbackTcpProxy(server.port);
+
+  return {
+
+    [Symbol.asyncDispose]: async (): Promise<void> => {
+
+      await proxy[Symbol.asyncDispose]();
+      await server.close();
+    },
+    connection: async (index: number): Promise<LoopbackConnection> => server.connection(index),
+    port: proxy.port,
+    reset: (): void => proxy.reset()
   };
 }
 

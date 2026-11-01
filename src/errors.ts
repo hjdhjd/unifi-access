@@ -614,28 +614,6 @@ export function formatErrorChain(error: unknown): string {
 }
 
 /**
- * Whether a WebSocket error is one of the expected-disconnect shapes, so its handler can suppress error-level logging for it rather than reporting a fault the
- * consumer can do nothing about. The following shapes qualify:
- *
- * 1. A `TypeError`, which is what undici raises from its own internal WebSocket teardown when the socket closes mid-frame during a disconnection.
- * 2. An `ETIMEDOUT` errno on the cause chain - the slow-controller path. The realtime events stream runs its own silence watchdog against
- *    {@link AccessStallError}, which reports prolonged silence as its own typed signal, so logging this socket-level errno at error level as well would be
- *    duplicate noise for one condition.
- *
- * Screening in one predicate rather than at the handler means a future addition (`EPIPE`, `ECONNRESET`, and the like) lands in a single place.
- *
- * @param error - The error value to classify. Typed `unknown` because a WebSocket `ErrorEvent.error` is untyped at the contract level.
- *
- * @returns `true` when the error matches an expected-disconnect shape and the call site should suppress its log; `false` to log normally.
- *
- * @category Utilities
- */
-export function isExpectedWsDisconnect(error: unknown): boolean {
-
-  return (error instanceof TypeError) || (resolveErrnoCause(error)?.code === "ETIMEDOUT");
-}
-
-/**
  * Whether a failure is the controller refusing an operation on privilege grounds - the identity authenticated, and was told it may not do this. A refusal is spelled
  * differently depending on which of the controller's surfaces answered it, and this reads every spelling the library produces for one.
  *

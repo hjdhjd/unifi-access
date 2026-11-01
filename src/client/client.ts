@@ -297,7 +297,7 @@ async function fetchBootstrapPair(transport: Transport, host: string, opts: { pr
 export class AccessClient implements AsyncDisposable {
 
   readonly #authority: string;
-  readonly #bus = new EventBus<AccessClientEvents>();
+  readonly #bus: EventBus<AccessClientEvents>;
   readonly #capabilities: AccessCapabilities;
   readonly #connection: ConnectionMonitor;
   readonly #direct: { auth: AuthSession; transport: Transport } | undefined;
@@ -310,6 +310,7 @@ export class AccessClient implements AsyncDisposable {
   private constructor(parts: AccessClientParts) {
 
     this.#authority = parts.authority;
+    this.#bus = new EventBus<AccessClientEvents>(parts.log);
     this.#capabilities = parts.capabilities;
     this.#direct = parts.direct;
     this.#host = parts.host;

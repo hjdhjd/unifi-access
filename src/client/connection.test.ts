@@ -6,11 +6,11 @@
  */
 import { ACCESS_EVENTS_HEARTBEAT_TIMEOUT, ACCESS_REBOOT_UPTIME_DROP_MINIMUM, ACCESS_RECOVERY_BACKOFF_MS, ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS,
   ACCESS_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
-import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessError, AccessNetworkError,
-  AccessStallError } from "../errors.ts";
+import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCertificateError, AccessError,
+  AccessNetworkError, AccessStallError } from "../errors.ts";
 import type { AccessControllerConfig, AccessEventPacket, Nullable } from "../types/index.ts";
 import type { ConnectionState, ConnectionTransition, ThrottleSource } from "./connection.ts";
-import { TestClock, advanceThroughSchedule, assertNoUnhandledRejections, capturingLog, logCount, loggedAt, settle, settleUntil,
+import { TestClock, advanceThroughSchedule, assertNoUnhandledRejections, capturingLog, errnoError, logCount, loggedAt, settle, settleUntil,
   silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
@@ -21,16 +21,20 @@ import { EventBus } from "../event-bus.ts";
 import { EventStream } from "../transport/events-stream.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import { StateStore } from "../state/store.ts";
+import type { TestLogEntry } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
+import { errors } from "undici";
 
 const HOST = "10.0.0.1";
 
 // The uptime the seeded controller document reports, in seconds. Every restart case moves from this value.
 const BASE_UPTIME = 990090;
 
-// A phrase unique to each of the lost warning's sentences, so a count by sentence tells a refused sign-in from an unreachable controller.
-const REFUSAL_WARNING = "is refusing the sign-in";
-const UNREACHABLE_WARNING = "appears to be unreachable";
+// A phrase unique to each of the lost line's sentences, so a count by sentence tells a refused sign-in, a fault a person must fix and an unreachable controller
+// apart.
+const MUST_FIX_SENTENCE = "cannot be reached until its certificate or its address is fixed";
+const REFUSAL_SENTENCE = "is refusing the sign-in";
+const UNREACHABLE_SENTENCE = "appears to be unreachable";
 
 // The awaits one recovery attempt makes, named so a test can say which of them a disposal should land inside.
 type RecoveryStep = "probe" | "reBootstrap" | "relaunch";
@@ -44,7 +48,7 @@ interface ThrottleControl extends ThrottleSource {
 
 function fakeThrottle(initial = false): ThrottleControl {
 
-  const bus = new EventBus<{ throttleEntered: []; throttleExited: [] }>();
+  const bus = new EventBus<{ throttleEntered: []; throttleExited: [] }>(silentLog());
 
   let throttled = initial;
 
@@ -85,6 +89,30 @@ function parkUntilAborted(signal?: AbortSignal, rejection: Nullable<Error> = nul
   signal?.addEventListener("abort", () => pending.reject(rejection ?? new AccessAbortedError("The UniFi Access request was cancelled.")), { once: true });
 
   return pending.promise;
+}
+
+// A socket that runs a hook each time it is asked to close, so a row can land a disposal inside the teardown that asked.
+class HookedWebSocket extends FakeWebSocket {
+
+  readonly #onClose: () => void;
+
+  constructor(onClose: () => void) {
+
+    super();
+    this.#onClose = onClose;
+  }
+
+  override close(): void {
+
+    super.close();
+    this.#onClose();
+  }
+}
+
+// The level of every line carrying a phrase, in the order they logged, so a row reads how many lost lines a walk produced and at which level in one assertion.
+function levelsOf(entries: readonly TestLogEntry[], phrase: string): TestLogEntry["level"][] {
+
+  return entries.filter((entry) => entry.message.includes(phrase)).map((entry) => entry.level);
 }
 
 // A device-update frame, as the controller frames one, with the wire's own key names preserved.
@@ -137,6 +165,7 @@ interface Harness {
     setParkedStep: (step: Nullable<RecoveryStep>) => void;
     setReBootstrapError: (error: Nullable<Error>) => void;
     setRelaunchError: (error: Nullable<Error>) => void;
+    setVerifyAction: (action: Nullable<() => Promise<void>>) => void;
     setVerifyError: (error: Nullable<Error>) => void;
     verifyCalls: () => number;
   };
@@ -150,9 +179,11 @@ interface Harness {
 }
 
 /* Build a monitor over fakes: a real store seeded with a real topology document and a controller document, a fake throttle source, a stream factory handing out
- * sockets a test can drive, and controllable probe, re-bootstrap, and privilege-check functions.
+ * sockets a test can drive, and controllable probe, re-bootstrap, and privilege-check functions. A row that needs a socket of its own at some position in build
+ * order hands it through `webSocket`, which is asked first for each socket the factory builds.
  */
-async function harness(options: { initialUptime?: number; log?: AccessLogging; throttledAtStart?: boolean } = {}): Promise<Harness> {
+async function harness(options: { initialUptime?: number; log?: AccessLogging; throttledAtStart?: boolean;
+  webSocket?: (index: number) => Nullable<FakeWebSocket>; } = {}): Promise<Harness> {
 
   const clock = new TestClock();
   const log = options.log ?? silentLog();
@@ -167,6 +198,7 @@ async function harness(options: { initialUptime?: number; log?: AccessLogging; t
   const rawSunk: AccessEventPacket[] = [];
   const adminSignals: (AbortSignal | undefined)[] = [];
 
+  let verifyAction: Nullable<() => Promise<void>> = null;
   let verifyCalls = 0;
   let verifyError: Nullable<Error> = null;
   let reBootstrapCalls = 0;
@@ -182,6 +214,12 @@ async function harness(options: { initialUptime?: number; log?: AccessLogging; t
   const verify = async (signal?: AbortSignal): Promise<void> => {
 
     verifyCalls++;
+
+    // A row that sets an action is asking the probe to do exactly that and settle the way the action does.
+    if(verifyAction !== null) {
+
+      return verifyAction();
+    }
 
     if(verifyError !== null) {
 
@@ -240,7 +278,7 @@ async function harness(options: { initialUptime?: number; log?: AccessLogging; t
     }
 
     // A relaunch the test parks on gets a socket that never reaches its open event, which is what leaves the attempt inside that await when disposal lands.
-    const ws = new FakeWebSocket({ autoOpen: parkedStep !== "relaunch" });
+    const ws = options.webSocket?.(streams.length) ?? new FakeWebSocket({ autoOpen: parkedStep !== "relaunch" });
 
     streams.push(ws);
 
@@ -290,6 +328,7 @@ async function harness(options: { initialUptime?: number; log?: AccessLogging; t
       setParkedStep: (step: Nullable<RecoveryStep>): void => { parkedStep = step; },
       setReBootstrapError: (error: Nullable<Error>): void => { reBootstrapError = error; },
       setRelaunchError: (error: Nullable<Error>): void => { relaunchError = error; },
+      setVerifyAction: (action: Nullable<() => Promise<void>>): void => { verifyAction = action; },
       setVerifyError: (error: Nullable<Error>): void => { verifyError = error; },
       verifyCalls: (): number => verifyCalls
     },
@@ -926,6 +965,81 @@ describe("ConnectionMonitor", () => {
       await interrupted("relaunch");
     });
 
+    test("a disposal that lands in the same turn a recovery probe resolves runs no reconnecting edge and no line", async () => {
+
+      const log = capturingLog();
+      const { clock, control, events, monitor, streams } = await harness({ log });
+
+      const disposals: Promise<void>[] = [];
+
+      await settle();
+
+      // The probe answers, and the disposal it starts aborts the monitor's signal synchronously, before that answer reaches the recovery attempt waiting on it.
+      control.setVerifyAction(async (): Promise<void> => {
+
+        disposals.push(monitor[Symbol.asyncDispose]());
+      });
+
+      streams[0]?.emitError(new Error("socket dropped"));
+
+      const lines = log.entries.length;
+      const transitions = events.transitions.length;
+
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await Promise.all(disposals);
+      await settle();
+
+      assert.equal(control.verifyCalls(), 1, "the probe ran");
+      assert.equal(control.reBootstrapCalls(), 0, "and nothing after it");
+      assert.equal(events.transitions.length, transitions, "no reconnecting edge follows a disposal");
+      assert.deepEqual(log.entries.slice(lines).filter((entry) => entry.level !== "debug"), [], "and no line announces a reconnect");
+    });
+
+    test("a disposal that lands while a relaunch tears its stream down builds no socket and announces no recovery", async () => {
+
+      const log = capturingLog();
+
+      const disposals: Promise<void>[] = [];
+
+      let onClose = (): void => undefined;
+
+      const rig = await harness({ log, webSocket: (index) => (index === 0) ? new HookedWebSocket(() => onClose()) : null });
+      const { control, events, monitor, streams } = rig;
+
+      await settle();
+
+      /* A frame that is not JSON faults the channel without closing it, so the stream is still open when a relaunch tears it down. The controller is unreachable at
+       * first, so the episode reaches lost and a recovery would announce itself. Each attempt is released by its own rung alone, both inside the stream's
+       * watchdog window, so the stream's own stall never closes it first.
+       */
+      control.setVerifyError(new AccessNetworkError("down"));
+      streams[0]?.emitMessage("{");
+      await assertRecoveryDelays({ delays: ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), label: "while unreachable", rig });
+
+      assert.equal(monitor.state, "lost", "the failed probe concludes the connection lost");
+
+      // The controller answers again, so the next attempt relaunches, and the relaunch's teardown of the faulted stream asks its socket to close, which is where the
+      // disposal lands, once.
+      control.setVerifyError(null);
+      onClose = (): void => {
+
+        onClose = (): void => undefined;
+        disposals.push(monitor[Symbol.asyncDispose]());
+      };
+
+      await assertRecoveryDelays({ delays: ACCESS_RECOVERY_BACKOFF_MS.slice(1, 2), label: "once answering", rig });
+      await Promise.all(disposals);
+
+      assert.equal(disposals.length, 1, "the disposal landed inside the relaunch's teardown");
+      await settle();
+
+      assert.equal(control.reBootstrapCalls(), 1, "the attempt reached the relaunch");
+      assert.equal(streams.length, 1, "a relaunch the disposal landed in builds no socket, which nothing would ever close");
+      assert.equal(events.recovered, 0, "and announces no recovery");
+      assert.ok(!events.transitions.some((transition) => transition.to === "healthy"), "and drives no edge back to healthy");
+      assert.ok(!log.entries.some((entry) => entry.message.includes("Recovered the connection")), "and logs no recovery line");
+    });
+
     test("the backoff walks its staged delays and then polls at the steady floor", async () => {
 
       const rig = await harness();
@@ -1063,7 +1177,7 @@ describe("ConnectionMonitor", () => {
         ACCESS_RECOVERY_STEADY_INTERVAL_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS ], label: "once unreachable", rig });
     });
 
-    test("an episode that opens on a refusal is warned about once, as a refusal, across every rung it walks", async () => {
+    test("an episode that opens on a refusal is announced once, as a refusal at error, across every rung it walks", async () => {
 
       const log = capturingLog();
       const rig = await harness({ log });
@@ -1082,15 +1196,15 @@ describe("ConnectionMonitor", () => {
       await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff,
         ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady, ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady ], label: "while refusing", rig });
 
-      const warned = log.entries.find((entry) => (entry.level === "warn") && entry.message.includes("the connection is lost"));
+      const announced = log.entries.find((entry) => (entry.level === "error") && entry.message.includes("the connection is lost"));
 
-      assert.ok(warned?.message.includes(REFUSAL_WARNING), "the lost warning, found by the phrase every lost warning shares, is the refusal sentence");
-      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 1, "the refusal is warned about once for the whole walk");
-      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 0, "and never as an unreachable controller");
+      assert.ok(announced?.message.includes(REFUSAL_SENTENCE), "the lost line, found by the phrase every lost line shares, is the refusal sentence");
+      assert.equal(logCount(log.entries, "error", REFUSAL_SENTENCE), 1, "the refusal is announced once for the whole walk");
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_SENTENCE), 0, "and never as an unreachable controller");
       assert.equal(events.lost.length, 1, "and controllerLost fires once for the episode");
     });
 
-    test("a controller that turns from unreachable to refusing is announced once as each, in the warning and on controllerLost", async () => {
+    test("a controller that turns from unreachable to refusing is announced once as each, in the lost line and on controllerLost", async () => {
 
       const log = capturingLog();
       const rig = await harness({ log });
@@ -1109,8 +1223,8 @@ describe("ConnectionMonitor", () => {
       await settle();
       await assertRecoveryDelays({ delays: ACCESS_RECOVERY_BACKOFF_MS.slice(0, 2), label: "while unreachable", rig });
 
-      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 1, "the loss is warned about once while the controller is unreachable");
-      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 0, "and not as a refusal");
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_SENTENCE), 1, "the loss is warned about once while the controller is unreachable");
+      assert.equal(logCount(log.entries, "error", REFUSAL_SENTENCE), 0, "and not as a refusal");
       assert.equal(events.lost.length, 1, "controllerLost fires once while the controller is unreachable");
       assert.equal(events.lost[0], unreachable, "carrying the fault that concluded the loss");
 
@@ -1120,13 +1234,13 @@ describe("ConnectionMonitor", () => {
       await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(2, 3), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 2) ],
         label: "once refusing", rig });
 
-      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 1, "the turn to refusing is warned about once across its attempts");
-      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 1, "and the unreachable warning is not repeated");
+      assert.equal(logCount(log.entries, "error", REFUSAL_SENTENCE), 1, "the turn to refusing is announced once at error across its attempts");
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_SENTENCE), 1, "and the unreachable warning is not repeated");
       assert.equal(events.lost.length, 2, "controllerLost fires again at the turn, and only then");
       assert.equal(events.lost[1], refusal, "carrying the refusal the loss turned to");
     });
 
-    test("a controller that turns from refusing to unreachable is announced once as each, in the warning and on controllerLost", async () => {
+    test("a controller that turns from refusing to unreachable is announced once as each, in the lost line and on controllerLost", async () => {
 
       const log = capturingLog();
       const rig = await harness({ log });
@@ -1147,8 +1261,8 @@ describe("ConnectionMonitor", () => {
       await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 2) ],
         label: "while refusing", rig });
 
-      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 1, "the loss is warned about once while the controller is refusing");
-      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 0, "and not as an unreachable controller");
+      assert.equal(logCount(log.entries, "error", REFUSAL_SENTENCE), 1, "the loss is announced once at error while the controller is refusing");
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_SENTENCE), 0, "and not as an unreachable controller");
       assert.equal(events.lost.length, 1, "controllerLost fires once while the controller is refusing");
       assert.equal(events.lost[0], refusal, "carrying the refusal that concluded the loss");
 
@@ -1158,8 +1272,8 @@ describe("ConnectionMonitor", () => {
       await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(2, 3), ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 2) ],
         label: "once unreachable", rig });
 
-      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 1, "the turn to unreachable is warned about once across its attempts");
-      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 1, "and the refusal warning is not repeated");
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_SENTENCE), 1, "the turn to unreachable is warned about once across its attempts");
+      assert.equal(logCount(log.entries, "error", REFUSAL_SENTENCE), 1, "and the refusal line is not repeated");
       assert.equal(events.lost.length, 2, "controllerLost fires again at the turn, and only then");
       assert.equal(events.lost[1], unreachable, "carrying the fault the loss turned to");
     });
@@ -1167,18 +1281,21 @@ describe("ConnectionMonitor", () => {
     test("a fault that keeps its kind is announced once across repeated attempts, including attempts that pass through reconnecting", async () => {
 
       /* Each walk fails attempt after attempt with one kind of fault after the controller answers the probe, so each attempt passes through reconnecting and drops
-       * back to lost at the re-bootstrap. The loss is announced for the episode's first loss alone, in the warning and on controllerLost alike, however many of
-       * those drops follow.
+       * back to lost at the re-bootstrap. The loss is announced for the episode's first loss alone, in the lost line and on controllerLost alike, however many of
+       * those drops follow. Each sentence is counted at the level its class logs at, a refusal at error and an unreachable controller at warning.
        */
-      const walks = [
+      const walks: { delays: readonly number[]; error: Error; label: string; level: TestLogEntry["level"]; otherLevel: TestLogEntry["level"]; otherSentence: string;
+        sentence: string; }[] = [
 
         { delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 3) ],
-          error: new AccessAuthError("refused", { statusCode: 401 }), label: "refused", otherSentence: UNREACHABLE_WARNING, sentence: REFUSAL_WARNING },
-        { delays: ACCESS_RECOVERY_BACKOFF_MS.slice(0, 4), error: new AccessNetworkError("documents unavailable"), label: "unreachable",
-          otherSentence: REFUSAL_WARNING, sentence: UNREACHABLE_WARNING }
+          error: new AccessAuthError("refused", { statusCode: 401 }), label: "refused", level: "error", otherLevel: "warn", otherSentence: UNREACHABLE_SENTENCE,
+          sentence: REFUSAL_SENTENCE },
+        { delays: ACCESS_RECOVERY_BACKOFF_MS.slice(0, 4), error: new AccessNetworkError("documents unavailable"), label: "unreachable", level: "warn",
+          otherLevel: "error", otherSentence: REFUSAL_SENTENCE, sentence: UNREACHABLE_SENTENCE }
       ];
 
-      const walk = async (options: { delays: readonly number[]; error: Error; label: string; otherSentence: string; sentence: string }): Promise<void> => {
+      const walk = async (options: { delays: readonly number[]; error: Error; label: string; level: TestLogEntry["level"]; otherLevel: TestLogEntry["level"];
+        otherSentence: string; sentence: string; }): Promise<void> => {
 
         const log = capturingLog();
         const rig = await harness({ log });
@@ -1195,8 +1312,8 @@ describe("ConnectionMonitor", () => {
         await assertRecoveryDelays({ delays: options.delays, label: options.label, rig });
 
         assert.equal(control.reBootstrapCalls(), options.delays.length, options.label + ": every attempt answered the probe and failed at the re-bootstrap");
-        assert.equal(logCount(log.entries, "warn", options.sentence), 1, options.label + ": the fault is warned about once across every attempt");
-        assert.equal(logCount(log.entries, "warn", options.otherSentence), 0, options.label + ": and never in the other sentence");
+        assert.equal(logCount(log.entries, options.level, options.sentence), 1, options.label + ": the fault is announced once across every attempt");
+        assert.equal(logCount(log.entries, options.otherLevel, options.otherSentence), 0, options.label + ": and never in the other sentence");
         assert.equal(events.lost.length, 1, options.label + ": and controllerLost fires once for the episode");
       };
 
@@ -1208,7 +1325,7 @@ describe("ConnectionMonitor", () => {
       }
     });
 
-    test("a refusal wrapped in a bootstrap error walks the refusal schedule and is warned about as a refusal", async () => {
+    test("a refusal wrapped in a bootstrap error walks the refusal schedule and is announced as a refusal", async () => {
 
       const log = capturingLog();
       const rig = await harness({ log });
@@ -1229,11 +1346,11 @@ describe("ConnectionMonitor", () => {
       await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff,
         ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady, ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady ], label: "a wrapped refusal", rig });
 
-      const warned = log.entries.find((entry) => (entry.level === "warn") && entry.message.includes("the connection is lost"));
+      const announced = log.entries.find((entry) => (entry.level === "error") && entry.message.includes("the connection is lost"));
 
-      assert.ok(warned?.message.includes(REFUSAL_WARNING), "the lost warning, found by the phrase every lost warning shares, is the refusal sentence");
-      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 1, "the wrapped refusal is warned about once for the whole walk");
-      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 0, "and never as an unreachable controller");
+      assert.ok(announced?.message.includes(REFUSAL_SENTENCE), "the lost line, found by the phrase every lost line shares, is the refusal sentence");
+      assert.equal(logCount(log.entries, "error", REFUSAL_SENTENCE), 1, "the wrapped refusal is announced once for the whole walk");
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_SENTENCE), 0, "and never as an unreachable controller");
       assert.equal(events.lost.length, 1, "and controllerLost fires once for the episode");
     });
 
@@ -1255,9 +1372,90 @@ describe("ConnectionMonitor", () => {
       await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS ],
         label: "a refusal below a network fault", rig });
 
-      assert.equal(logCount(log.entries, "warn", UNREACHABLE_WARNING), 1, "the loss is warned about once, as an unreachable controller");
-      assert.equal(logCount(log.entries, "warn", REFUSAL_WARNING), 0, "and never as a refusal");
+      assert.equal(logCount(log.entries, "warn", UNREACHABLE_SENTENCE), 1, "the loss is warned about once, as an unreachable controller");
+      assert.equal(logCount(log.entries, "error", REFUSAL_SENTENCE), 0, "and never as a refusal");
     });
+  });
+
+  describe("the lost line's class and level", () => {
+
+    /* The lost line's level by its cause, a row per cause: a fault a person must fix at error in its own sentence, and every fault that heals itself at warning. A
+     * pool reset is among the last, the level table reading its kind as quiet while dialing, because a lost connection always matters to a user and the line is
+     * never quieter than a warning. A refused sign-in, the third class, is read by the refusal rows above.
+     */
+    const lossLevels: readonly { level: TestLogEntry["level"]; name: string; reason: AccessError; sentence: string }[] = [
+
+      { level: "error", name: "a certificate nothing trusts", reason: new AccessCertificateError({ cause: errnoError("self-signed certificate",
+        "DEPTH_ZERO_SELF_SIGNED_CERT"), host: HOST, identity: "credentials" }), sentence: MUST_FIX_SENTENCE },
+      { level: "error", name: "a host name that does not resolve", reason: new AccessNetworkError("A network error occurred communicating with the controller.",
+        { cause: errnoError("getaddrinfo ENOTFOUND controller", "ENOTFOUND") }), sentence: MUST_FIX_SENTENCE },
+      { level: "warn", name: "a reason carrying no code", reason: new AccessNetworkError("down"), sentence: UNREACHABLE_SENTENCE },
+      { level: "warn", name: "a pool reset", reason: new AccessNetworkError("The request was interrupted because the connection pool was reset.",
+        { cause: new errors.ClientDestroyedError() }), sentence: UNREACHABLE_SENTENCE }
+    ];
+
+    for(const { level, name, reason, sentence } of lossLevels) {
+
+      test("a loss on " + name + " is announced in its own sentence at " + level, async () => {
+
+        const log = capturingLog();
+        const rig = await harness({ log });
+
+        await using monitor = rig.monitor;
+        const { clock, control, events, streams } = rig;
+
+        await monitor.opened;
+        await settle();
+
+        control.setVerifyError(reason);
+        streams[0]?.emitError(new Error("socket dropped"));
+        await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+        await settleUntil(() => monitor.state === "lost", { description: "the failed probe to conclude the connection lost" });
+
+        assert.deepEqual(levelsOf(log.entries, "the connection is lost"), [level], "the loss is announced once, at " + level);
+        assert.deepEqual(levelsOf(log.entries, sentence), [level], "in the sentence its cause calls for");
+        assert.deepEqual(events.lost, [reason], "and controllerLost carries the fault that concluded it");
+      });
+    }
+
+    test("an episode that turns between an unreachable controller and a certificate verdict announces each turn at its level, while the network schedule runs on",
+      async () => {
+
+        const log = capturingLog();
+        const rig = await harness({ log });
+
+        await using monitor = rig.monitor;
+        const { control, events, streams } = rig;
+        const unreachable = new AccessNetworkError("down");
+        const certificate = new AccessCertificateError({ cause: errnoError("self-signed certificate", "DEPTH_ZERO_SELF_SIGNED_CERT"), host: HOST,
+          identity: "credentials" });
+
+        await monitor.opened;
+        await settle();
+
+        // The episode opens unreachable: the stream's own fault releases the first attempt at once, and it fails unreachable.
+        control.setVerifyError(unreachable);
+        streams[0]?.emitError(new Error("socket dropped"));
+        await settle();
+        await assertRecoveryDelays({ delays: ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), label: "while unreachable", rig });
+
+        // The controller turns to presenting a certificate nothing trusts, met on consecutive attempts. Neither class is a refusal, so the network schedule walks on.
+        control.setVerifyError(certificate);
+        await assertRecoveryDelays({ delays: ACCESS_RECOVERY_BACKOFF_MS.slice(1, 3), label: "while the certificate is refused", rig });
+
+        // And back to unreachable, its attempts released by the rest of the schedule and then its floor.
+        control.setVerifyError(unreachable);
+        await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(3), ACCESS_RECOVERY_STEADY_INTERVAL_MS ], label: "once unreachable again", rig });
+
+        assert.deepEqual(log.entries.filter((entry) => entry.message.includes("the connection is lost")).map(({ level, message }) => ({ level, message })), [
+
+          { level: "warn", message: "The UniFi Access controller appears to be unreachable; the connection is lost and recovery is polling for its return." },
+          { level: "error", message: "The UniFi Access controller cannot be reached until its certificate or its address is fixed; the connection is lost and " +
+            "recovery is polling for its return." },
+          { level: "warn", message: "The UniFi Access controller appears to be unreachable; the connection is lost and recovery is polling for its return." }
+        ], "each turn of class is announced once, the certificate verdict met twice in a row announced once, at error with the sentence that asks for the fix");
+        assert.deepEqual(events.lost, [ unreachable, certificate, unreachable ], "and controllerLost fires at each turn and only then");
+      });
   });
 
   describe("the rendered failure text", () => {
@@ -1600,6 +1798,131 @@ describe("ConnectionMonitor", () => {
 
       controller.abort();
       await consumer;
+    });
+  });
+
+  describe("consumer-code isolation", () => {
+
+    test("a throwing controllerRebooted listener leaves restart detection running", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { events, store } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      // The harness's own listener registered first, so it records every restart; this one throws on each, from inside the restart watch's loop.
+      using thrower = monitor.on("controllerRebooted", () => {
+
+        throw new Error("the consumer's restart handler failed");
+      });
+
+      store.applyRefreshDocuments({ controller: controllerAt(12), topology: structuredClone(accessBootstrap2026Fixture) });
+      await settleUntil(() => events.rebooted.length === 1, { description: "the first restart to be detected" });
+
+      // A watch the throw had ended would never see the second restart. The uptime climbs back before it drops again, so the second drop is a restart of its own.
+      store.applyRefreshDocuments({ controller: controllerAt(BASE_UPTIME), topology: structuredClone(accessBootstrap2026Fixture) });
+      store.applyRefreshDocuments({ controller: controllerAt(20), topology: structuredClone(accessBootstrap2026Fixture) });
+      await settleUntil(() => events.rebooted.length === 2, { description: "the restart watch to survive the throwing listener and detect the second restart" });
+    });
+
+    test("a throwing controllerLost listener leaves recovery running to healthy", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { clock, control, events, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      using thrower = monitor.on("controllerLost", () => {
+
+        throw new Error("the consumer's loss handler failed");
+      });
+
+      control.setVerifyError(new AccessNetworkError("unreachable"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => monitor.state === "lost", { description: "the connection to be reported lost" });
+
+      // A recovery loop the throw had ended would leave the connection lost however long the controller had been back.
+      control.setVerifyError(null);
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+
+      await settleUntil(() => monitor.state === "healthy", { description: "recovery to survive the throwing listener" });
+      assert.equal(events.recovered, 1);
+    });
+
+    test("a throwing stateChanged listener leaves recovery running and every transition announced", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { clock, events, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      // The first edge a fault drives is the one into degraded, announced before recovery starts, so a throw that escaped it would leave recovery unstarted.
+      using thrower = monitor.on("stateChanged", () => {
+
+        throw new Error("the consumer's transition handler failed");
+      });
+
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+
+      await settleUntil(() => monitor.state === "healthy", { description: "recovery to survive the throwing listener" });
+      assert.deepEqual(events.transitions.map(({ from, to }) => [ from, to ]),
+        [ [ "healthy", "degraded" ], [ "degraded", "reconnecting" ], [ "reconnecting", "healthy" ] ],
+        "the listener registered ahead of the thrower still heard each step after the throw");
+    });
+
+    test("a throwing controllerRecovered listener is logged once and the recovered connection stays healthy", async () => {
+
+      const log = capturingLog();
+      const rig = await harness({ log });
+
+      await using monitor = rig.monitor;
+      const { clock, control, events, streams } = rig;
+      const failure = new Error("the consumer's recovery handler failed");
+
+      await monitor.opened;
+      await settle();
+
+      using thrower = monitor.on("controllerRecovered", () => {
+
+        throw failure;
+      });
+
+      control.setVerifyError(new AccessNetworkError("unreachable"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => monitor.state === "lost", { description: "the connection to be reported lost" });
+
+      control.setVerifyError(null);
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => monitor.state === "healthy", { description: "recovery to return the monitor to healthy" });
+
+      /* Read as a failed attempt, the throw would mark the relaunched connection lost again within the attempt that recovered it, and cycle through a fresh
+       * relaunch on every scheduled attempt after. The queue is let come to rest rather than the clock advanced, because the relaunched socket carries no frames
+       * and a clock walked past its silence window would stall it, a transient stall with a relaunch of its own that says nothing about the throw.
+       */
+      await settle();
+
+      assert.equal(monitor.state, "healthy", "the recovered connection stays healthy");
+      assert.equal(events.lost.length, 1, "the throw is not read as a fresh loss");
+      assert.equal(events.recovered, 1, "and the recovery is announced once");
+      assert.equal(streams.length, 2, "and drives no further relaunch");
+
+      // The lost line and the recovery line share this logger, so the listener's line is read by its sentence.
+      const thrown = log.entries.filter((entry) => (entry.level === "error") && (entry.message === "An event listener threw; the remaining listeners still run."));
+
+      assert.equal(thrown.length, 1, "the throw is logged once, through the monitor's own logger");
+      assert.deepEqual(thrown[0]?.params, [{ error: failure, event: "controllerRecovered" }], "naming the event the listener threw on");
     });
   });
 

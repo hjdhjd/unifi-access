@@ -28,8 +28,7 @@
  * @module AccessEventStream
  */
 import { ACCESS_API_PATH_PREFIX, ACCESS_EVENTS_HEARTBEAT_TIMEOUT } from "../settings.ts";
-import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessStallError, AccessTimeoutError, assertNever,
-  isExpectedWsDisconnect } from "../errors.ts";
+import { AccessAbortedError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessStallError, AccessTimeoutError, assertNever } from "../errors.ts";
 import type { AccessError, AccessIdentityLeg } from "../errors.ts";
 import type { AccessEventPacket, Nullable } from "../types/index.ts";
 import type { AccessEventsClosedPayload, AccessEventsPacketPayload } from "../diagnostics.ts";
@@ -43,8 +42,10 @@ import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
 import type { OwnedDispatcher } from "./connector.ts";
 import type { StreamOptions } from "../event-bus.ts";
+import type { TransportFailure } from "./failure.ts";
 import { channels } from "../diagnostics.ts";
 import { classifyTransportError } from "./failure.ts";
+import { connectionFaultLevel } from "./connection-fault.ts";
 import { noopLog } from "../logging.ts";
 import { toText } from "./ws.ts";
 import { wallClock } from "../clock.ts";
@@ -200,7 +201,7 @@ export class EventStream implements AsyncDisposable {
    * that was actually dialed.
    */
   readonly #address: string;
-  readonly #bus = new EventBus<EventStreamEvents>();
+  readonly #bus: EventBus<EventStreamEvents>;
   readonly #clock: Clock;
   /* When the connection attempt began, on the injected clock, which is what a connection that times out measures its elapsed time from. It is a stamp of its own
    * rather than the watchdog's liveness stamp, which every frame moves, so the measure means the same thing whatever phase the stream has reached.
@@ -250,6 +251,7 @@ export class EventStream implements AsyncDisposable {
     this.#host = options.host;
     this.#identity = options.identity ?? "credentials";
     this.#log = options.log ?? noopLog;
+    this.#bus = new EventBus<EventStreamEvents>(this.#log);
     this.#lastMessageAt = this.#clock.now();
 
     // An endpoint names a whole URL rather than adjusting the derived one, because the official socket it can address differs in port and path alike.
@@ -565,12 +567,18 @@ export class EventStream implements AsyncDisposable {
     this.#bus.emit("packet", event);
   }
 
-  /* The socket reported an error. The cause is taken from the connector ahead of the event, because a WebSocket upgrade that fails reports a content-free
-   * `TypeError` on this event while the connector that vended the socket still holds the dial's own error - so reading the event alone would throw away every
-   * errno the platform gave, the certificate verdict among them. An injected socket has no connector of ours, and there its event error is the whole account.
+  /* The socket reported an error. The cause is read once, from the connector ahead of the event, in the order homebridge-plugin-utils' own socket reads it: the
+   * dial's failure, then the first error the established connection raised, then the event's error. A WebSocket upgrade that fails reports a content-free
+   * `TypeError` on this event while the connector still holds the dial's own error, and an open connection the peer resets reports the same `TypeError` while the
+   * connector holds the reset its socket raised - so reading the event alone would throw away every errno the platform gave, the certificate verdict among them.
+   * The read is the same in every phase, so a reset that lands after the TLS handshake and before the open reaches the handshake rejection as the reset it was. An
+   * injected socket has no connector of ours, and there its event error is the whole account.
    *
-   * The error-level line belongs to a stream that had opened. A failure before the open reaches its caller through the handshake rejection, and the coordinator
-   * reports it from there, so a line here as well would put one failure in the log twice.
+   * That one cause, classified once, is the typed failure's cause and the line's subject alike, so the two always name the same fault. The line belongs to a
+   * stream that had opened, and logs at the level the connection-fault table answers for an open connection: a reset or a network out of reach is a warning, a
+   * certificate verdict or a host name that does not resolve is an error, and a hang-up with no close frame or a timeout is how an open connection ordinarily ends,
+   * which logs nothing. A failure before the open reaches its caller through the handshake rejection and logs nothing here, because the coordinator reports it from
+   * there and a line here as well would put one failure in the log twice.
    *
    * Either way the typed failure is carried into the teardown as the cause of it: the teardown decides where it is reported, on the rail when the stream had
    * opened and on the handshake rejection when it had not, and it has run to completion before any listener hears of it...so a listener that refuses the fault
@@ -578,14 +586,33 @@ export class EventStream implements AsyncDisposable {
    */
   #onError(event: AccessWebSocketErrorEvent): void {
 
-    const cause = this.#owned?.connector.lastDialFailure ?? event.error;
+    const connector = this.#owned?.connector;
+    const cause = connector?.lastDialFailure ?? connector?.lastConnectionFailure ?? event.error;
+    const failure = classifyTransportError(cause);
 
-    if((this.#phase.kind === "open") && !isExpectedWsDisconnect(cause)) {
+    if(this.#phase.kind === "open") {
 
-      this.#log.error("The UniFi Access realtime notification API reported an error.", cause ?? event.message);
+      switch(connectionFaultLevel(failure, { open: true })) {
+
+        case "error":
+
+          this.#log.error("The UniFi Access realtime notification API reported an error.", { error: cause });
+
+          break;
+
+        case "warning":
+
+          this.#log.warn("The UniFi Access realtime notification API reported an error.", { error: cause });
+
+          break;
+
+        case "quiet":
+
+          break;
+      }
     }
 
-    this.#shutdown({ error: this.#toAccessError(cause), kind: "fault" }, 1006, "the notification stream connection errored");
+    this.#shutdown({ error: this.#toAccessError(failure), kind: "fault" }, 1006, "the notification stream connection errored");
   }
 
   /* What a socket error is reported as. The failure is sorted by the transport failure classifier, the local mirror of homebridge-plugin-utils' taxonomy that the
@@ -593,9 +620,9 @@ export class EventStream implements AsyncDisposable {
    * elapsed time from the attempt's own start stamp, and a generic network failure carries the code the classifier read off the chain, so the error's public `code`
    * and its kind are one reading of the same chain.
    */
-  #toAccessError(cause: unknown): AccessNetworkError | AccessTimeoutError {
+  #toAccessError(failure: TransportFailure): AccessNetworkError | AccessTimeoutError {
 
-    const failure = classifyTransportError(cause);
+    const { cause } = failure;
 
     switch(failure.kind) {
 
@@ -617,6 +644,7 @@ export class EventStream implements AsyncDisposable {
       case "reset":
       case "retries-exhausted":
       case "transport":
+      case "unreachable":
 
         return new AccessNetworkError("The UniFi Access realtime notification API connection failed.", { cause, code: failure.code });
 
@@ -840,6 +868,10 @@ export class EventStream implements AsyncDisposable {
    * typed stall travels into the teardown, which reports it on the rail when the stream had opened and on the handshake rejection when it had not. The loop ends
    * when teardown aborts the controller, which the delay reports as an abort - the normal shutdown path, swallowed here.
    *
+   * An open stream logs the stall at warning, because recovery heals it. A stream that never opened logs nothing, as a socket error before the open logs nothing,
+   * because its caller is already failing that connect and reports the stall from the rejection. The teardown the stall runs detaches the socket's error listener,
+   * so a stall and a socket error never both log for one stream.
+   *
    * The watchdog arms at construction rather than at open, so the same threshold also bounds a connect that never completes. That doubling is deliberate: a socket
    * that never opens and one that opens and goes quiet are the same condition from a consumer's point of view, and both want the same answer.
    *
@@ -860,8 +892,11 @@ export class EventStream implements AsyncDisposable {
 
         if(silentForMs >= ACCESS_EVENTS_HEARTBEAT_TIMEOUT) {
 
-          this.#log.error("The UniFi Access realtime notification API went silent beyond the watchdog window; tearing down the stalled connection.",
-            { silentForMs });
+          if(this.#phase.kind === "open") {
+
+            this.#log.warn("The UniFi Access realtime notification API went silent beyond the watchdog window; tearing down the stalled connection.",
+              { silentForMs });
+          }
 
           const stall = new AccessStallError("The UniFi Access realtime notification API produced no data within the watchdog window.", { silentForMs });
 
@@ -872,10 +907,7 @@ export class EventStream implements AsyncDisposable {
       }
     } catch {
 
-      /* The delay rejects on abort when the stream is torn down. That is the expected end of the loop, not an error. A consumer's own `error` listener throwing
-       * as the stall fans out arrives here too, after the teardown has run to completion, so what is hidden is the listener's own exception - swallowed the way
-       * the recovery loop that consumes this rail swallows a consumer's synchronous throw, and for the same reason: a detached loop has nobody to report to.
-       */
+      // The delay rejects on abort when the stream is torn down. That is the expected end of the loop, not an error.
     }
   }
 }

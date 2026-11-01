@@ -1,8 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * events-stream.helpers.test.ts: Unit tests for the two peers the notification-stream suite drives EventStream against - the in-memory fake socket's listener
- * registry and dispatch ordering, and the loopback TLS peer's handshake, each of its behaviors, and the frame walk that decides when a client has asked to
- * close.
+ * events-stream.helpers.test.ts: Unit tests for the peers the notification-stream suite drives EventStream against - the in-memory fake socket's listener registry and
+ * dispatch ordering, and the loopback TLS peer's handshake, each of its behaviors, the proxy that resets a client in front of it, and the frame walk that decides when a
+ * client has asked to close.
  *
  * The consumers of both peers only ever feed them well-formed input, so the arms that matter most here have never been driven: a once entry that re-enters
  * dispatch, a sibling detached mid-dispatch, and the extended-length branches of the frame walk. The walk's branches are established positively, by a peer that
@@ -12,11 +12,12 @@
  * than on a turn budget, because the answer is real I/O and no count of macrotask turns bounds it. Every server and client socket is released through
  * `await using` or a `finally`, so a failed assertion cannot leave a handle holding the event loop.
  */
-import { FakeWebSocket, createLoopbackServer } from "./events-stream.helpers.ts";
+import { FakeWebSocket, createLoopbackServer, createProxiedLoopbackServer } from "./events-stream.helpers.ts";
 import { describe, test } from "node:test";
 import type { TLSSocket } from "node:tls";
 import assert from "node:assert/strict";
 import { connect } from "node:tls";
+import { once } from "node:events";
 import { settle } from "homebridge-plugin-utils/testing";
 
 // The blank line that ends an HTTP header block, and the handshake key the client offers: any sixteen base64-encoded bytes satisfies RFC 6455.
@@ -460,6 +461,43 @@ describe("the loopback peer", () => {
     client.socket.destroy();
 
     await connection.closed;
+  });
+
+  test("hangsUp ends its end of the connection right behind the upgrade, with no close frame", async () => {
+
+    await using server = await createLoopbackServer("hangsUp");
+    await using client = await connectUpgraded(server.port);
+
+    // The end follows the upgrade answer on the wire, so it may already have been read by the time the handshake has; either way it arrives with no frame before it.
+    if(!client.socket.readableEnded) {
+
+      await once(client.socket, "end");
+    }
+
+    assert.equal(client.reader.seen().length, 0, "the peer sent nothing past the upgrade before it ended, so no close frame explains the end");
+  });
+
+  test("a proxied peer resets the client's end of the connection on demand", async () => {
+
+    await using server = await createProxiedLoopbackServer("neverUpgrades");
+
+    const socket = dial(server.port);
+
+    try {
+
+      const failed = once(socket, "error");
+
+      // The server records the connection once the TLS handshake through the proxy has completed, so the reset meets an established connection.
+      await server.connection(0);
+      server.reset();
+
+      const [error] = (await failed) as [NodeJS.ErrnoException];
+
+      assert.equal(error.code, "ECONNRESET", "the client meets the reset the proxy sent past the server's TLS layer");
+    } finally {
+
+      socket.destroy();
+    }
   });
 
   test("neverUpgrades leaves the upgrade unanswered", async () => {

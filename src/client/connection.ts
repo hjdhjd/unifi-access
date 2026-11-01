@@ -22,8 +22,9 @@
  *
  * **Coupling is narrow and inverted.** The transport dependency is the structural {@link ThrottleSource} - the throttle verdict and its rails, nothing more -
  * rather than the concrete class; the store is read only through its public observation surface; and every other piece of I/O is an injected function the
- * composition root supplies. The monitor publishes on no diagnostics channel of its own, because it does not know which controller it is monitoring: the client
- * that does know owns every publish.
+ * composition root supplies. The monitor imports no live object from below: its value imports from the transport are the pure failure classifier and the
+ * connection-fault level table it levels the lost line by, code that holds no connection, no timer and no state. The monitor publishes on no diagnostics channel of
+ * its own, because it does not know which controller it is monitoring: the client that does know owns every publish.
  *
  * @module AccessConnectionMonitor
  */
@@ -37,6 +38,8 @@ import { EventBus } from "../event-bus.ts";
 import type { EventStream } from "../transport/events-stream.ts";
 import type { StateStore } from "../state/store.ts";
 import type { StreamOptions } from "../event-bus.ts";
+import { classifyTransportError } from "../transport/failure.ts";
+import { connectionFaultLevel } from "../transport/connection-fault.ts";
 import { noopLog } from "../logging.ts";
 import { selectControllerUptime } from "../state/selectors.ts";
 import { wallClock } from "../clock.ts";
@@ -58,6 +61,39 @@ const NETWORK_RECOVERY_SCHEDULE_MS: RecoverySchedule = { backoff: ACCESS_RECOVER
 /** @internal */
 type RecoveryPhase = "degraded" | "healthy" | "lost" | "reconnecting";
 
+// The class a lost connection is announced as, chosen by what clears the loss: the controller stops refusing the sign-in, a person fixes the certificate or the
+// address, or the fault heals itself. Each class carries its own sentence and level, and an episode announces its loss again whenever the class changes.
+/** @internal */
+type LossClass = "mustFix" | "refused" | "selfHealing";
+
+/* The lost line for each class. A refused sign-in and a fault a person must fix log at error, because nothing changes until someone acts; a fault that heals itself
+ * logs at warning, which is the floor, because a lost connection always matters to a user even when recovery will clear it.
+ */
+const LOSS_ANNOUNCEMENTS: Readonly<Record<LossClass, { readonly level: "error" | "warn"; readonly sentence: string }>> = {
+
+  mustFix: { level: "error", sentence: "The UniFi Access controller cannot be reached until its certificate or its address is fixed; the connection is lost and " +
+    "recovery is polling for its return." },
+  refused: { level: "error",
+    sentence: "The UniFi Access controller is refusing the sign-in; the connection is lost and recovery is retrying on the slower refusal schedule." },
+  selfHealing: { level: "warn", sentence: "The UniFi Access controller appears to be unreachable; the connection is lost and recovery is polling for its return." }
+};
+
+/* The class a loss is announced as. A refused sign-in is read first, above the level table, which reads a refusal as a codeless failure like any other error type
+ * of this library's own. Every other reason asks the table with `open` false, and that is the rule's own answer rather than a choice: every reason a loss is
+ * concluded on is a one-shot request (the reachability probe, the re-bootstrap) or a relaunch whose stream never opened, because a relaunch whose stream opens is a
+ * recovery. The table's error, a certificate nothing trusts or a host name that does not resolve, is a fault a person must fix, and every other answer, quiet among
+ * them, is a fault that heals itself, which is what holds the lost line at warning or above.
+ */
+function lossClassOf(reason: AccessError): LossClass {
+
+  if(isSignInRefusal(reason)) {
+
+    return "refused";
+  }
+
+  return (connectionFaultLevel(classifyTransportError(reason), { open: false }) === "error") ? "mustFix" : "selfHealing";
+}
+
 /**
  * The connection's observable state. `healthy` is steady operation; `degraded` means a fault was seen and reachability is being probed; `reconnecting` means the
  * controller answered and the monitor is re-bootstrapping and relaunching the notification stream; `lost` means the controller is unreachable or is refusing the
@@ -71,8 +107,8 @@ export type ConnectionState = RecoveryPhase | "throttled";
 /**
  * One edge of the connection state machine, carried on the `stateChanged` rail and yielded by {@link ConnectionMonitor.observe}. `reason` is present when a typed
  * fault - a stall, a failed reachability probe - is what drove the edge, and it holds that failure's whole cause chain as {@link formatErrorChain} renders it, so
- * the controller's own diagnosis reaches a consumer rather than the wrapper's sentence alone: the edge into `lost` renders its fault exactly as the lost warning
- * logs it.
+ * the controller's own diagnosis reaches a consumer rather than the wrapper's sentence alone: the edge into `lost` renders its fault exactly as the lost line logs
+ * it.
  *
  * @category Client
  */
@@ -87,8 +123,8 @@ export interface ConnectionTransition {
  * The events {@link ConnectionMonitor} publishes on its three-rail surface.
  *
  * - `stateChanged` fires on every edge of the state machine.
- * - `controllerLost` fires when the controller is concluded lost, and again when the cause of the loss changes class between unreachable and a refused sign-in,
- *   carrying the fault that settled it.
+ * - `controllerLost` fires when the controller is concluded lost, and again whenever the cause of the loss changes class among a refused sign-in, a fault a person
+ *   must fix and a fault that heals itself, carrying the fault that settled it.
  * - `controllerRebooted` fires when the controller's reported uptime falls far enough to read as a restart, carrying both readings.
  * - `controllerRecovered` fires when the connection returns to healthy after having been lost.
  * - `throttleEntered` and `throttleExited` forward the transport breaker's own transitions.
@@ -171,6 +207,8 @@ class ManagedEventStream implements AsyncDisposable {
   readonly #packetSink: (event: AccessWireEvent) => void;
   readonly #rawPacketSink: (packet: AccessEventPacket) => void;
 
+  // Whether the owner has been disposed, which a relaunch reads once its teardown settles, so a disposal that landed during that teardown builds nothing after it.
+  #disposed = false;
   // The current inner stream and the bridges into it. Both are replaced together on a relaunch, so they can never describe different sockets, and neither exists
   // until open() builds the first one.
   #stream: Nullable<EventStream> = null;
@@ -204,11 +242,18 @@ class ManagedEventStream implements AsyncDisposable {
 
   /**
    * Tear the current stream down and bring a fresh one up, then wait for it to open. There is no cursor to carry across: the controller offers no replay, so a
-   * relaunched stream simply starts from now, and the re-bootstrap that precedes it is what covers whatever was missed.
+   * relaunched stream simply starts from now, and the re-bootstrap that precedes it is what covers whatever was missed. A disposal that lands during the teardown
+   * has ended the owner, so the relaunch then resolves having built nothing, since a stream built after disposal would have no owner left to close it; the monitor
+   * reads its own lifetime before it acts on the answer.
    */
   async relaunch(): Promise<void> {
 
     await this.#teardown();
+
+    if(this.#disposed) {
+
+      return;
+    }
 
     const stream = this.#build();
 
@@ -219,6 +264,8 @@ class ManagedEventStream implements AsyncDisposable {
 
   /** Detach the bridges and tear the current stream down. Safe to call more than once, through the stream's own repeat-safe close. */
   async [Symbol.asyncDispose](): Promise<void> {
+
+    this.#disposed = true;
 
     await this.#teardown();
   }
@@ -256,7 +303,7 @@ class ManagedEventStream implements AsyncDisposable {
  */
 export class ConnectionMonitor {
 
-  readonly #bus = new EventBus<ConnectionEvents>();
+  readonly #bus: EventBus<ConnectionEvents>;
   readonly #clock: Clock;
   // The connect caller's signal, held for the open the composition root drives. It binds to that first connect alone, so a relaunch never inherits it.
   readonly #connectSignal: AbortSignal | undefined;
@@ -278,24 +325,26 @@ export class ConnectionMonitor {
 
   /* The state machine's own bookkeeping. The observable state is derived from the phase and the transport's live verdict rather than stored. `#lastFault` is the
    * most recent typed fault: it supplies a transition's reason and the lost announcement's payload, and whether it is a refused sign-in chooses the recovery
-   * schedule and the lost sentence. `#reportedState` caches the last announced value purely to dedup. `#recovering` keeps a re-entrant fault from starting a
-   * second loop, and `#recoveryWake` is the handle that lets a detected restart interrupt a parked wait. `#wasLost` records that an episode actually reached lost,
-   * so recovery is announced only after a genuine loss. `#lastUptime` is the restart detector's baseline: seeded at construction from what the store already
-   * holds, updated on every yield, and dying with the monitor - there is no reset path because there is no lifecycle event that would want one.
+   * schedule. `#announcedLoss` is the class the episode's loss was last announced as, null until an episode reaches lost, so a loss is announced again only when
+   * its class changes and recovery is announced only after a genuine loss. `#reportedState` caches the last announced value purely to dedup. `#recovering` keeps a
+   * re-entrant fault from starting a second loop, and `#recoveryWake` is the handle that lets a detected restart interrupt a parked wait. `#lastUptime` is the
+   * restart detector's baseline: seeded at construction from what the store already holds, updated on every yield, and dying with the monitor - there is no reset
+   * path because there is no lifecycle event that would want one.
    */
+  #announcedLoss: Nullable<LossClass> = null;
   #lastFault: Nullable<AccessError> = null;
   #lastUptime: Nullable<number>;
   #phase: RecoveryPhase = "healthy";
   #recovering = false;
   #recoveryWake: Nullable<AbortController> = null;
   #reportedState: ConnectionState;
-  #wasLost = false;
 
   constructor(options: ConnectionMonitorOptions) {
 
     this.#clock = options.clock ?? wallClock;
     this.#connectSignal = options.signal;
     this.#log = options.log ?? noopLog;
+    this.#bus = new EventBus<ConnectionEvents>(this.#log);
     this.#reBootstrap = options.reBootstrap;
     this.#refreshAdminStatus = options.refreshAdminStatus;
     this.#store = options.store;
@@ -508,34 +557,33 @@ export class ConnectionMonitor {
     this.#bus.emit("stateChanged", { from, to: next, ...((this.#lastFault !== null) && { reason: formatErrorChain(this.#lastFault) }) });
   }
 
-  // Move to a phase and recompute. Entering `lost` goes through its own path instead, which owns the lost warning and the `controllerLost` event.
+  // Move to a phase and recompute. Entering `lost` goes through its own path instead, which owns the lost line and the `controllerLost` event.
   #enterPhase(phase: RecoveryPhase): void {
 
     this.#phase = phase;
     this.#recompute();
   }
 
-  /* Conclude the connection is lost, marking the episode so a later return to healthy is announced as a recovery. One rule announces the loss, in the warning and
-   * on `controllerLost` alike: the episode's first loss, and each turn of the fault from unreachable to a refused sign-in or back, never a failed attempt that
-   * leaves its kind unchanged. The warning's sentence says which kind it is through the same reading that chooses the recovery schedule.
+  /* Conclude the connection is lost, recording the fault and the class it is announced as, which also marks the episode so a later return to healthy is announced
+   * as a recovery. One rule announces the loss, in the lost line and on `controllerLost` alike: the episode's first loss, and each turn of its class among a
+   * refused sign-in, a fault a person must fix and a fault that heals itself, never a failed attempt that leaves its class unchanged. The one derivation of the
+   * class chooses the line's sentence and its level, while the recovery schedule keeps its own refusal-or-not reading of the same fault.
    */
   #enterLost(reason: AccessError): void {
 
-    const refused = isSignInRefusal(reason);
-    const announce = !this.#wasLost || (refused !== isSignInRefusal(this.#lastFault));
+    const announced = lossClassOf(reason);
+    const announce = announced !== this.#announcedLoss;
 
     this.#lastFault = reason;
     this.#phase = "lost";
-    this.#wasLost = true;
+    this.#announcedLoss = announced;
     this.#recompute();
 
     if(announce) {
 
-      const sentence = refused ?
-        "The UniFi Access controller is refusing the sign-in; the connection is lost and recovery is retrying on the slower refusal schedule." :
-        "The UniFi Access controller appears to be unreachable; the connection is lost and recovery is polling for its return.";
+      const { level, sentence } = LOSS_ANNOUNCEMENTS[announced];
 
-      this.#log.warn(sentence, { reason: formatErrorChain(reason) });
+      this.#log[level](sentence, { reason: formatErrorChain(reason) });
       this.#bus.emit("controllerLost", reason);
     }
   }
@@ -642,9 +690,10 @@ export class ConnectionMonitor {
       }
     } catch {
 
-      /* A genuine backstop rather than dead code. The attempt's own failure path announces on the event bus, and a consumer's synchronous listener that throws
-       * would propagate back to here; swallowing it keeps this detached loop from surfacing as an unhandled rejection. The wait's own abort is handled inside the
-       * loop, so this does not fire on disposal.
+      /* A genuine backstop rather than dead code. The attempt's own failure path logs the lost line through the injected logger and announces on the event bus,
+       * whose wrapper contains a listener's throw by logging it through that same logger. The injected logger is therefore what this still guards: one that throws
+       * would propagate back to here, and swallowing it keeps this detached loop from surfacing as an unhandled rejection. The wait's own abort is handled inside
+       * the loop, so this does not fire on disposal.
        */
     } finally {
 
@@ -665,18 +714,40 @@ export class ConnectionMonitor {
    * answer gates nothing: recovery is complete when the channel is live, and awaiting a check that a struggling controller may never answer would hold the
    * connection in `reconnecting` for no reason. It carries the monitor's lifetime signal so a check still in flight at disposal is released; it does not need to
    * carry one for correctness, because the session refuses to write a verdict that no longer describes it.
+   *
+   * Disposal can land while any step is pending, so once each step settles the monitor's own signal is read before anything else runs: a disposed monitor's
+   * attempt ends with no further phase, line, event or recovery, whether the step resolved or rejected, and the loop's next wait reads the same disposal and ends.
    */
   async #attemptRecovery(): Promise<boolean> {
+
+    // Read through a call rather than as a property, because the compiler would otherwise carry the first reading across the awaits below as a constant.
+    const disposed = (): boolean => this.#controller.signal.aborted;
 
     try {
 
       await this.#verifyProbe(this.#controller.signal);
 
+      if(disposed()) {
+
+        return false;
+      }
+
       this.#enterPhase("reconnecting");
       this.#log.info("Reconnecting to the UniFi Access realtime notification channel.");
 
       await this.#reBootstrap(this.#controller.signal);
+
+      if(disposed()) {
+
+        return false;
+      }
+
       await this.#managed.relaunch();
+
+      if(disposed()) {
+
+        return false;
+      }
 
       void this.#refreshAdminStatusInBackground(this.#controller.signal);
 
@@ -691,7 +762,7 @@ export class ConnectionMonitor {
       /* The attempt failed. Disposal means we are done: an attempt the monitor's own abort cut short learned nothing about the controller, so concluding it
        * unreachable would announce a loss that did not happen and warn about a client that is being torn down. Anything else is a real failure and drops to lost.
        */
-      if(this.#controller.signal.aborted) {
+      if(disposed()) {
 
         this.#log.debug("Recovery of the connection to the UniFi Access controller ended with its disposal.", { reason: formatErrorChain(fault) });
 
@@ -730,10 +801,10 @@ export class ConnectionMonitor {
   // recovery logs exactly one closing line and the cases cannot both fire.
   #onRecovered(): void {
 
-    const recovered = this.#wasLost;
+    const recovered = this.#announcedLoss !== null;
 
+    this.#announcedLoss = null;
     this.#lastFault = null;
-    this.#wasLost = false;
     this.#enterPhase("healthy");
 
     if(recovered) {
@@ -776,13 +847,16 @@ export class ConnectionMonitor {
         this.#log.info("The UniFi Access controller appears to have restarted.");
 
         // A detected restart proves the controller is answering again, because this reading came back on a successful fetch. Wake any parked recovery so it relaunches
-        // now rather than sleeping out a backoff, and wake before announcing so a slow or throwing listener cannot cost us the wake.
+        // now rather than sleeping out a backoff, and wake before announcing: the bus contains a throwing controllerRebooted listener by logging it, so what the
+        // order still guards against is the injected logger throwing from inside that announcement, which must not cost us the wake.
         this.#wakeRecovery();
         this.#bus.emit("controllerRebooted", { newUptime: uptime, previousUptime });
       }
     } catch {
 
-      // The observation ends on abort when the monitor is disposed. That is the loop's normal end rather than an error.
+      // The observation ends on abort when the monitor is disposed. That is the loop's normal end rather than an error. A listener's throw never reaches here, since
+      // the bus contains it, so the one other thing this still guards is the injected logger throwing from the loop's own lines, which also ends the loop rather
+      // than surfacing as an unhandled rejection from this detached loop.
     }
   }
 }

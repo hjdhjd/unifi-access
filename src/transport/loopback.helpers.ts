@@ -1,22 +1,24 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * loopback.helpers.ts: The loopback peers these suites drive real sockets against - a recording https responder, an https peer that takes requests over HTTP/2 or
- * HTTP/1.1 and answers none, a silent peer that answers nothing, and a silent peer that resets every connection it accepts - plus the accept-order ledger every
- * loopback peer records its connections in.
+ * HTTP/1.1 and answers none, a silent peer that answers nothing, a silent peer that resets every connection it accepts, a plain-TCP peer scripted per request, and
+ * a TCP proxy that reaches a client's connection past whatever the peer behind it speaks, with a TLS peer behind one - plus the accept-order ledger every loopback
+ * peer records its connections in.
  *
  * A peer lives here when more than one suite needs it, or when its lifecycle is the plumbing rather than the point. The notification stream's hand-rolled
- * WebSocket upgrade stays beside its own tests instead: it speaks raw TLS sockets and shares no server shape with an https responder, so the accept-order ledger
- * and the record of a TLS connection are all it takes from here.
+ * WebSocket upgrade stays beside its own tests instead: it speaks raw TLS sockets and shares no server shape with an https responder, so the accept-order ledger,
+ * the record of a TLS connection and the proxy it puts in front of itself are all it takes from here.
  */
 import type { Http2ServerRequest, ServerHttp2Session } from "node:http2";
+import type { TLSSocket, Server as TlsServer } from "node:tls";
+import { connect as connectTcp, createServer as createTcpServer } from "node:net";
 import { listenOnLoopback, stopListening } from "homebridge-plugin-utils/testing";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
 import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
-import type { Server as TlsServer } from "node:tls";
 import { createSecureServer } from "node:http2";
 import { createServer } from "node:https";
-import { createServer as createTcpServer } from "node:net";
+import { createServer as createTlsServer } from "node:tls";
 import { setTimeout as setTimeoutAsync } from "node:timers/promises";
 
 /* The real-time bound, in milliseconds, within which a cancelled or expired request settles and within which a reset or a disposal releases a connection attempt,
@@ -37,6 +39,24 @@ const HANDSHAKE_RESET_DELAY_MS = 50;
 
 // Nanoseconds per millisecond, which is the unit `process.hrtime.bigint()` answers in and the one the bound above is written in.
 const NANOSECONDS_PER_MILLISECOND = 1000000;
+
+// The blank line that ends an HTTP header block, which is how the scripted peer knows a request's head has arrived.
+const HEADER_TERMINATOR = "\r\n\r\n";
+
+// The minimal HTTP answer the TLS peer behind the proxy writes back, which is all any row on it asks for.
+const TLS_RESPONSE = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+
+/** The answer a scripted peer writes when it keeps its connection open for the next request. */
+export const KEEP_ALIVE_RESPONSE = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: keep-alive\r\n\r\nok";
+
+/** The answer a scripted peer writes when it asks the client to close the connection. */
+export const CLOSING_RESPONSE = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok";
+
+/**
+ * A TLS record no session can decrypt: an application-data header announcing sixteen bytes, then sixteen zero bytes. Written to a client past the peer's TLS layer
+ * once the handshake is over, it makes the client's own TLS layer raise the error.
+ */
+export const CORRUPT_TLS_RECORD = Buffer.concat([ Buffer.from([ 0x17, 0x03, 0x03, 0x00, 0x10 ]), Buffer.alloc(16) ]);
 
 /**
  * Real elapsed milliseconds since a `process.hrtime.bigint()` reading.
@@ -250,6 +270,208 @@ async function createQuietLoopback(onAccept: (socket: Socket) => void): Promise<
     },
     connection: async (index: number): Promise<AcceptedConnection> => ledger.connection(index),
     host
+  };
+}
+
+/** A plain-TCP peer on loopback scripted per request: where to reach it, the connection at a given position in accept order, and the ways it drops every
+ * connection it holds.
+ */
+export interface ScriptedLoopback extends AsyncDisposable {
+
+  readonly host: string;
+  connection(index: number): Promise<AcceptedConnection>;
+  end(): void;
+  reset(): void;
+}
+
+/**
+ * A plain-TCP peer on loopback, written at the socket level, that hands each connection to the caller once a request's head has arrived on it.
+ *
+ * What a connector records about an established connection depends on how the peer drops it, and an http server decides that for itself, so this peer speaks no
+ * HTTP of its own: `onRequest` writes an answer, resets the connection or ends it. `end` sends every connection still held a bare FIN and `reset` a TCP RST, which
+ * is how a row drops a connection that sits idle in the client's pool.
+ *
+ * @param onRequest - What the peer does with a connection once a request's head has arrived on it.
+ *
+ * @returns The listening peer. Dispose it to sever every connection and stop listening.
+ */
+export async function createScriptedLoopback(onRequest: (socket: Socket) => void): Promise<ScriptedLoopback> {
+
+  const ledger = createConnectionLedger<AcceptedConnection>();
+  const sockets: Socket[] = [];
+  const server = createTcpServer((socket) => {
+
+    let head = "";
+
+    ledger.record(acceptConnection(socket, sockets));
+
+    socket.on("data", (chunk: Buffer) => {
+
+      head += chunk.toString("latin1");
+
+      if(head.includes(HEADER_TERMINATOR)) {
+
+        head = "";
+        onRequest(socket);
+      }
+    });
+  });
+
+  const host = "127.0.0.1:" + (await listenOnLoopback(server)).toString();
+
+  // Only a connection still open is ended or reset, because one the client has already closed has nothing left to drop.
+  const held = (): Socket[] => sockets.filter((socket) => !socket.destroyed);
+
+  return {
+
+    [Symbol.asyncDispose]: async (): Promise<void> => {
+
+      for(const socket of sockets) {
+
+        socket.destroy();
+      }
+
+      await stopListening(server);
+    },
+    connection: async (index: number): Promise<AcceptedConnection> => ledger.connection(index),
+    end: (): void => {
+
+      for(const socket of held()) {
+
+        socket.end();
+      }
+    },
+    host,
+    reset: (): void => {
+
+      for(const socket of held()) {
+
+        socket.resetAndDestroy();
+      }
+    }
+  };
+}
+
+/** A TCP proxy on loopback in front of another loopback port: where to reach it, the client leg at a given position in accept order, and the acts a row takes on every
+ * client leg past whatever the peer behind the proxy speaks.
+ */
+export interface LoopbackTcpProxy extends AsyncDisposable {
+
+  readonly host: string;
+  readonly port: number;
+  connection(index: number): Promise<AcceptedConnection>;
+  reset(): void;
+  write(bytes: Buffer): void;
+}
+
+/**
+ * A TCP proxy on loopback that pipes each client connection to a peer listening on another loopback port.
+ *
+ * A server-side TLS socket cannot reset its connection - the platform refuses a reset on a TLS handle - so a row that needs a TLS client to meet a reset puts this
+ * in front of its TLS peer and resets the proxy's plain-TCP client leg instead. The same leg takes raw bytes past the peer's TLS layer, which is how a row hands a
+ * client a record no session can decrypt. Each socket here swallows its errors: the client's alert over a corrupt record and a reset leg reach the proxy as
+ * errors, and what a row reads is the client's side.
+ *
+ * @param port - The loopback port the peer behind the proxy listens on.
+ *
+ * @returns The listening proxy. Dispose it to sever every leg and stop listening.
+ */
+export async function createLoopbackTcpProxy(port: number): Promise<LoopbackTcpProxy> {
+
+  const ledger = createConnectionLedger<AcceptedConnection>();
+  const legs: Socket[] = [];
+  const upstreams: Socket[] = [];
+  const server = createTcpServer((client) => {
+
+    const upstream = connectTcp(port, "127.0.0.1");
+
+    ledger.record(acceptConnection(client, legs));
+    upstreams.push(upstream);
+    upstream.on("error", () => undefined);
+    client.pipe(upstream);
+    upstream.pipe(client);
+  });
+
+  const proxyPort = await listenOnLoopback(server);
+
+  // Only a leg still open is reset or written to, because one the client has already closed has nothing left to carry.
+  const held = (): Socket[] => legs.filter((leg) => !leg.destroyed);
+
+  return {
+
+    [Symbol.asyncDispose]: async (): Promise<void> => {
+
+      // Every leg is severed before the server closes, because a leg left open holds the close and the run never exits.
+      for(const socket of [ ...legs, ...upstreams ]) {
+
+        socket.destroy();
+      }
+
+      await stopListening(server);
+    },
+    connection: async (index: number): Promise<AcceptedConnection> => ledger.connection(index),
+    host: "127.0.0.1:" + proxyPort.toString(),
+    port: proxyPort,
+    reset: (): void => {
+
+      for(const leg of held()) {
+
+        leg.resetAndDestroy();
+      }
+    },
+    write: (bytes: Buffer): void => {
+
+      for(const leg of held()) {
+
+        leg.write(bytes);
+      }
+    }
+  };
+}
+
+/** A TLS peer behind a TCP proxy: where to reach it, and the proxy's acts on the client's connection past the peer's TLS layer. */
+export interface TlsProxyLoopback extends AsyncDisposable {
+
+  readonly host: string;
+  readonly origin: string;
+  reset(): void;
+  write(bytes: Buffer): void;
+}
+
+/**
+ * A loopback TLS peer presenting the throwaway self-signed identity these suites share and answering a minimal `200`, reached through a
+ * {@link createLoopbackTcpProxy | TCP proxy}, so a row can reset the client's connection or write raw bytes to it once the handshake is over.
+ *
+ * @returns The listening peer and its proxy. Dispose it to sever every connection and stop listening.
+ */
+export async function createTlsProxyLoopback(): Promise<TlsProxyLoopback> {
+
+  const sockets: TLSSocket[] = [];
+  const peer = createTlsServer({ cert: loopbackCertificateFixture, key: loopbackPrivateKeyFixture }, (socket) => {
+
+    acceptConnection(socket, sockets);
+    socket.on("data", () => socket.write(TLS_RESPONSE));
+  });
+
+  const proxy = await createLoopbackTcpProxy(await listenOnLoopback(peer));
+
+  return {
+
+    [Symbol.asyncDispose]: async (): Promise<void> => {
+
+      await proxy[Symbol.asyncDispose]();
+
+      for(const socket of sockets) {
+
+        socket.destroy();
+      }
+
+      await stopListening(peer);
+    },
+    host: proxy.host,
+    origin: "https://" + proxy.host,
+    reset: (): void => proxy.reset(),
+    write: (bytes: Buffer): void => proxy.write(bytes)
   };
 }
 

@@ -12,6 +12,7 @@ import { TestClock, capturingLog, expectAt, present, settle, settleUntil, silent
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
 import { AccessClient } from "./client.ts";
+import type { AccessLogging } from "../logging.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import assert from "node:assert/strict";
@@ -77,11 +78,13 @@ interface CapturedConnect {
   ws: FakeWebSocket;
 }
 
-// Connect while capturing the notification socket the factory builds, so a test can drive realtime frames into the live client.
-async function connectCapturing(agent: MockAgent, options: { clock?: TestClock; refreshIntervalMs?: number | false } = {}): Promise<CapturedConnect> {
+// Connect while capturing the notification socket the factory builds, so a test can drive realtime frames into the live client. A test that reads what the client
+// logged hands its own logger in.
+async function connectCapturing(agent: MockAgent, options: { clock?: TestClock; log?: AccessLogging;
+  refreshIntervalMs?: number | false; } = {}): Promise<CapturedConnect> {
 
   let ws: Nullable<FakeWebSocket> = null;
-  const client = await AccessClient.connect({ dispatcher: agent, host: HOST, log: silentLog(), password: "p",
+  const client = await AccessClient.connect({ dispatcher: agent, host: HOST, log: options.log ?? silentLog(), password: "p",
     refreshIntervalMs: options.refreshIntervalMs ?? false, username: "u", webSocket: () => (ws = new FakeWebSocket()),
     ...((options.clock !== undefined) && { clock: options.clock }) });
 
@@ -678,6 +681,41 @@ describe("AccessClient.connect", () => {
       assert.equal(client.device(HUB)?.name, "Renamed");
       assert.equal(firehose.length, 1);
       assert.equal(firehose[0]?.kind, "deviceChanged");
+    });
+
+    test("a throwing rawPacket listener is logged through the client's logger while the frame still reaches the store and the packet rail", async () => {
+
+      const { agent, pool } = mockController();
+      const log = capturingLog();
+
+      interceptLogin(pool);
+      interceptPass(pool);
+
+      const captured = await connectCapturing(agent, { log });
+
+      await using client = captured.client;
+      const { ws } = captured;
+      const failure = new Error("the consumer's raw handler failed");
+      const firehose: AccessWireEvent[] = [];
+
+      // The raw rail fires inside the stream's decode, one step ahead of the dispatch into the store and the packet rail, so a throw that escaped it would leave
+      // the frame short of both.
+      using thrower = client.on("rawPacket", () => {
+
+        throw failure;
+      });
+
+      client.on("packet", (event) => void firehose.push(event));
+
+      ws.emitMessage(deviceFrame(HUB, { "alias": "Contained" }));
+
+      assert.equal(client.device(HUB)?.name, "Contained", "the frame still advanced the store");
+      assert.equal(firehose.length, 1, "and still reached the packet rail");
+
+      const thrown = log.entries.filter((entry) => (entry.level === "error") && (entry.message === "An event listener threw; the remaining listeners still run."));
+
+      assert.equal(thrown.length, 1, "the throw is logged once, through the logger the client was connected with");
+      assert.deepEqual(thrown[0]?.params, [{ error: failure, event: "rawPacket" }]);
     });
 
     test("a door-state frame reaches both the door-state view and the hub that drives that door", async () => {

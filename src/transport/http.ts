@@ -341,7 +341,7 @@ export class Transport implements AsyncDisposable {
    * origin is what the pool connects to, and the address a user is told about has to be the one that was actually dialed - the official API's own port included.
    */
   readonly #address: string;
-  readonly #bus = new EventBus<TransportEvents>();
+  readonly #bus: EventBus<TransportEvents>;
   readonly #clock: Clock;
   readonly #getAuthHeaders: (() => Record<string, string>) | undefined;
   readonly #host: string;
@@ -369,6 +369,7 @@ export class Transport implements AsyncDisposable {
     this.#host = options.host;
     this.#identity = options.identity ?? "credentials";
     this.#log = options.log ?? noopLog;
+    this.#bus = new EventBus<TransportEvents>(this.#log);
     this.#onUnauthorized = options.onUnauthorized;
 
     /* The origin and the certificate posture are settled before the pool below is built, because #buildPool reads them. reset() rebuilds the pool from these same
@@ -681,7 +682,7 @@ export class Transport implements AsyncDisposable {
 
       this.#throttledSince = this.#clock.now();
 
-      this.#log.error("Throttling requests to the UniFi Access controller after repeated failures.",
+      this.#log.warn("Throttling requests to the UniFi Access controller after repeated failures.",
         { consecutiveFailures: this.#consecutiveFailures, cooldownMs: COOLDOWN_MS, errorLimit: ACCESS_API_ERROR_LIMIT });
 
       this.#bus.emit("throttleEntered");
@@ -768,6 +769,7 @@ export class Transport implements AsyncDisposable {
       case "refused":
       case "reset":
       case "transport":
+      case "unreachable":
 
         return new AccessNetworkError("A network error occurred communicating with the UniFi Access controller.", { cause: error, code: failure.code });
 

@@ -8,8 +8,8 @@
 
 One edge of the connection state machine, carried on the `stateChanged` rail and yielded by [ConnectionMonitor.observe](ConnectionMonitor.md#observe). `reason` is present when a typed
 fault - a stall, a failed reachability probe - is what drove the edge, and it holds that failure's whole cause chain as [formatErrorChain](../functions/formatErrorChain.md) renders it, so
-the controller's own diagnosis reaches a consumer rather than the wrapper's sentence alone: the edge into `lost` renders its fault exactly as the lost warning
-logs it.
+the controller's own diagnosis reaches a consumer rather than the wrapper's sentence alone: the edge into `lost` renders its fault exactly as the lost line logs
+it.
 
 ## Properties
 

@@ -6,8 +6,8 @@
  */
 import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
   AccessCertificateError, AccessConfigurationError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError,
-  AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError, assertNever, causeChain, formatErrorChain, isExpectedWsDisconnect, isIdentityRefusal,
-  isPrivilegeRefusal, isSignInRefusal, resolveErrnoCause } from "./errors.ts";
+  AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError, assertNever, causeChain, formatErrorChain, isIdentityRefusal, isPrivilegeRefusal,
+  isSignInRefusal, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { errnoError } from "homebridge-plugin-utils/testing";
@@ -261,37 +261,6 @@ describe("resolveErrnoCause", () => {
     assert.equal(resolveErrnoCause("a string"), undefined);
     assert.equal(resolveErrnoCause(undefined), undefined);
     assert.equal(resolveErrnoCause(new Error("plain")), undefined);
-  });
-});
-
-describe("isExpectedWsDisconnect", () => {
-
-  test("screens the TypeError undici raises from its own WebSocket teardown", () => {
-
-    assert.equal(isExpectedWsDisconnect(new TypeError("terminated")), true);
-  });
-
-  test("screens an ETIMEDOUT errno on the cause chain", () => {
-
-    // The slow-controller path. The stream's own silence watchdog reports prolonged silence as its own typed signal, so logging this socket-level errno as an
-    // error too would be duplicate noise for a single condition.
-    const errno = errnoError("read ETIMEDOUT", "ETIMEDOUT");
-
-    assert.equal(isExpectedWsDisconnect(errno), true);
-    assert.equal(isExpectedWsDisconnect(new Error("wrapped", { cause: errno })), true, "the errno is screened one hop down the cause chain as well");
-  });
-
-  test("does not screen an ordinary error", () => {
-
-    assert.equal(isExpectedWsDisconnect(new Error("socket reset")), false);
-    assert.equal(isExpectedWsDisconnect(errnoError("refused", "ECONNREFUSED")), false, "a different errno is a fault worth reporting");
-  });
-
-  test("does not screen a non-error value", () => {
-
-    assert.equal(isExpectedWsDisconnect(undefined), false);
-    assert.equal(isExpectedWsDisconnect("terminated"), false);
-    assert.equal(isExpectedWsDisconnect(null), false);
   });
 });
 

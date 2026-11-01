@@ -1164,7 +1164,7 @@ describe("Transport", () => {
       assert.equal(transport.isThrottled, true);
     });
 
-    test("logs the trip at error level and the recovery at info level", async () => {
+    test("logs the trip at warning level and the recovery at info level", async () => {
 
       const log = capturingLog();
       const { clock, host, pool, transport } = makeMockTransport({ log });
@@ -1174,7 +1174,8 @@ describe("Transport", () => {
 
       await sendFailures(transport, url(host, "/f"), ACCESS_API_ERROR_LIMIT);
 
-      assert.ok(loggedAt(log.entries, "error", "Throttling"), "the trip should log at error level");
+      // The breaker heals itself once the cooldown elapses, so its trip is a warning rather than an error that asks someone to act.
+      assert.ok(loggedAt(log.entries, "warn", "Throttling"), "the trip should log at warning level");
 
       clock.advance(COOLDOWN_MS);
       await transport.send(url(host, "/f"));

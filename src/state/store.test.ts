@@ -96,10 +96,12 @@ function refreshingStore(options: Omit<StateStoreOptions, "refresh"> & { documen
 
 // A store with the refresh failsafe disabled - the shape for tests that exercise dispatch and observe in isolation. The refresh callback rejects, so an accidental
 // invocation is loud rather than silent. A test that reads what the chokepoint reported hands its own sink in, which is the same store with the dispatch hook
-// wired.
-function plainStore(onDispatch?: StateStoreOptions["onDispatch"]): StateStore {
+// wired, and a test that reads what the store logged hands its own logger in.
+function plainStore(options: { log?: StateStoreOptions["log"]; onDispatch?: StateStoreOptions["onDispatch"] } = {}): StateStore {
 
-  return new StateStore({ clock: new TestClock(), log: silentLog(), ...(onDispatch && { onDispatch }),
+  const { log = silentLog(), onDispatch } = options;
+
+  return new StateStore({ clock: new TestClock(), log, ...(onDispatch && { onDispatch }),
     refresh: () => Promise.reject(new Error("the refresh callback must not be called when the failsafe is disabled")), refreshIntervalMs: false });
 }
 
@@ -367,6 +369,86 @@ describe("StateStore", () => {
     });
   });
 
+  describe("observer isolation", () => {
+
+    // A selector that answers its baseline and then throws on every later state, so a row reaches the throw only through a dispatch.
+    function throwingAfterBaseline(failure: Error): (state: AccessState) => number {
+
+      let baselineTaken = false;
+
+      return (state): number => {
+
+        if(baselineTaken) {
+
+          throw failure;
+        }
+
+        baselineTaken = true;
+
+        return state.doors.size;
+      };
+    }
+
+    test("a selector that throws is logged at error level and the observers after it still wake", async () => {
+
+      const log = capturingLog();
+      const store = plainStore({ log });
+      const failure = new Error("the consumer's selector failed");
+      const ac = new AbortController();
+
+      store.dispatch(bootstrapEvent(topologyDocument()));
+
+      // The throwing observer registers first, so the one after it wakes only if the throw is contained rather than unwinding the dispatch that reached it.
+      const thrower = collect(store.observe(throwingAfterBaseline(failure), { signal: ac.signal }));
+
+      await settle();
+
+      const later = collect(store.observe((state) => state.doors, { signal: ac.signal }));
+
+      await settle();
+
+      assert.doesNotThrow(() => store.dispatch(renameDoor("Back")), "a selector's throw never leaves dispatch");
+      await settleUntil(() => later.values.length === 1, { description: "the observer after the thrower to wake" });
+
+      assert.equal(later.values[0]?.get(DOOR_HUB)?.name, "Back");
+      assert.equal(thrower.values.length, 0, "the throwing observer yields nothing for the state it threw on");
+
+      const errors = log.entries.filter((entry) => entry.level === "error");
+
+      assert.equal(errors.length, 1, "the throw is logged once");
+      assert.deepEqual(errors[0]?.params, [{ error: failure }], "carrying the throw as structured context");
+      assert.equal(errors[0].message, "A state observer's selector threw; the remaining observers still wake.");
+
+      ac.abort();
+      await Promise.all([ thrower.done, later.done ]);
+    });
+
+    test("a bootstrap dispatched past a throwing selector commits, so a re-bootstrap built on dispatch resolves", async () => {
+
+      const store = plainStore();
+      const ac = new AbortController();
+      const thrower = collect(store.observe(throwingAfterBaseline(new Error("the consumer's selector failed")), { signal: ac.signal }));
+
+      await settle();
+
+      // The shape of the recovery re-bootstrap: fetch, apply the documents, and answer from the committed state. A dispatch the selector's throw escaped would
+      // reject it, failing every recovery attempt while the controller answers.
+      const reBootstrap = async (): Promise<number> => {
+
+        await settle();
+        store.applyRefreshDocuments(refreshDocuments(controllerDocument()));
+
+        return store.snapshot().devices.size;
+      };
+
+      assert.equal(await reBootstrap(), DEVICE_COUNT_2026, "the re-bootstrap resolves on the state it committed");
+      assert.equal(store.snapshot().doors.size, 3);
+
+      ac.abort();
+      await thrower.done;
+    });
+  });
+
   describe("refresh failsafe", () => {
 
     test("runs no failsafe at all when there is nothing to refresh from", async () => {
@@ -555,7 +637,7 @@ describe("StateStore", () => {
 
       const seen: string[] = [];
 
-      await using store = plainStore((event) => void seen.push(event.kind));
+      await using store = plainStore({ onDispatch: (event) => void seen.push(event.kind) });
 
       store.applyRefreshDocuments({ controller: controllerDocument(), topology: topologyDocument() });
 
@@ -591,7 +673,7 @@ describe("StateStore", () => {
     test("a topology-only pair dispatches the topology alone", () => {
 
       const seen: string[] = [];
-      const store = plainStore((event) => void seen.push(event.kind));
+      const store = plainStore({ onDispatch: (event) => void seen.push(event.kind) });
 
       store.applyRefreshDocuments(refreshDocuments());
 
@@ -623,7 +705,7 @@ describe("StateStore", () => {
        */
       const seen: AccessTypedEvent[] = [];
 
-      await using store = plainStore((event) => void seen.push(event));
+      await using store = plainStore({ onDispatch: (event) => void seen.push(event) });
       const devices = [{ "alias": "Test alias 13", "capabilities": ["is_hub"], "connected_uah_id": "", "device_type": "UAH", "is_adopted": true, "is_connected": true,
         "is_managed": true, "is_online": true, "location_id": DOOR_HUB, "name": "Test Name 76", "unique_id": "aabbcc000001" }];
       const doors = [{ "full_name": "Test Name 11", "location_type": "door", "name": "Test Name 10", "unique_id": DOOR_HUB,
@@ -642,7 +724,7 @@ describe("StateStore", () => {
 
       const seen: AccessTypedEvent[] = [];
 
-      await using store = plainStore((event) => void seen.push(event));
+      await using store = plainStore({ onDispatch: (event) => void seen.push(event) });
 
       store.dispatch(bootstrapEvent(topologyDocument()));
 
@@ -762,7 +844,7 @@ describe("StateStore", () => {
     test("fires for each committed dispatch and stays silent for one the reducer absorbed", () => {
 
       const seen: string[] = [];
-      const store = plainStore((event) => void seen.push(event.kind));
+      const store = plainStore({ onDispatch: (event) => void seen.push(event.kind) });
 
       store.dispatch(bootstrapEvent(topologyDocument()));
       assert.deepEqual(seen, ["bootstrapLoaded"]);
@@ -813,7 +895,7 @@ describe("StateStore", () => {
     test("is construction-bound and ends with disposal", async () => {
 
       const seen: string[] = [];
-      const store = plainStore((event) => void seen.push(event.kind));
+      const store = plainStore({ onDispatch: (event) => void seen.push(event.kind) });
 
       store.dispatch(bootstrapEvent(topologyDocument()));
       assert.equal(seen.length, 1);

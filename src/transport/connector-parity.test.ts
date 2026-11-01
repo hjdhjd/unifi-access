@@ -6,14 +6,18 @@
  *
  * Every assertion reads an error's name and code and never its class, because homebridge-plugin-utils' connector raises the classes of its own undici copy, which an
  * `instanceof` against this library's copy is not guaranteed to recognize. Each scenario drives a real socket against this library's loopback peers through an undici
- * `Agent`, because what a connector is for - a dial still in its handshake, a keepalive connection, a certificate nothing trusts - is reachable no other way.
+ * `Agent`, because what a connector is for - a dial still in its handshake, a keepalive connection, a certificate nothing trusts, a connection the peer resets or
+ * corrupts once it is up - is reachable no other way.
  */
 import { Agent, request } from "undici";
-import { DIAL_SETTLE_BOUND_MS, createHttpsLoopback, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
+import { CLOSING_RESPONSE, CORRUPT_TLS_RECORD, DIAL_SETTLE_BOUND_MS, KEEP_ALIVE_RESPONSE, createHttpsLoopback, createScriptedLoopback, createSilentLoopback,
+  createTlsProxyLoopback, elapsedSince } from "./loopback.helpers.ts";
 import { describe, test } from "node:test";
-import { freePort, present } from "homebridge-plugin-utils/testing";
+import { expectAt, freePort, present, settle, waitUntil } from "homebridge-plugin-utils/testing";
 import type { OwnedConnector } from "./connector.ts";
+import type { Socket } from "node:net";
 import assert from "node:assert/strict";
+import type { buildConnector } from "undici";
 import { classifyTransportError } from "./failure.ts";
 import { createLoopbackServer } from "./events-stream.helpers.ts";
 import { createOwnedConnector } from "./connector.ts";
@@ -22,8 +26,9 @@ import { createOwnedConnector as createPluginUtilsConnector } from "homebridge-p
 // What the https responder answers every request with. A request that completes is what moves a socket out of the dialing set and into the established one.
 const OK_RESPONSE = { body: "{\"ok\":true}", contentType: "application/json", status: 200 };
 
-// What both connectors share, and the whole of what these scenarios drive: the connector to hand an agent, the record of the latest dial, and the release.
-type SharedConnector = Pick<OwnedConnector, "connect" | "lastDialFailure" | "release">;
+// What both connectors share, and the whole of what these scenarios drive: the connector to hand an agent, the record of the first error an established connection
+// raised, the record of the latest dial, and the release.
+type SharedConnector = Pick<OwnedConnector, "connect" | "lastConnectionFailure" | "lastDialFailure" | "release">;
 
 // One connector under test: its name in the suite, and how it is built from the options every scenario states, spelled in that connector's own vocabulary.
 interface ConnectorCase {
@@ -45,6 +50,34 @@ const CONNECTORS: ConnectorCase[] = [
 function codeOf(error: unknown): unknown {
 
   return ((typeof error === "object") && (error !== null) && ("code" in error)) ? error.code : undefined;
+}
+
+/* A connector that dials through `connector` and keeps each socket a successful dial vends, so a row can read the established socket's own state. It wraps the
+ * callback rather than the connector, so the connector's own listeners are on the socket before the row's copy of it is kept.
+ */
+function keepingVended(connector: SharedConnector, vended: Socket[]): buildConnector.connector {
+
+  return (options, callback): void => connector.connect(options, (...args) => {
+
+    const [ error, socket ] = args;
+
+    if(error === null) {
+
+      vended.push(socket);
+    }
+
+    callback(...args);
+  });
+}
+
+// Issue one request and drain its body, so the connection returns to the pool rather than staying checked out, and answer the status the peer gave.
+async function fetchStatus(agent: Agent, origin: string): Promise<number> {
+
+  const response = await request(origin + "/", { dispatcher: agent });
+
+  await response.body.text();
+
+  return response.statusCode;
 }
 
 describe("createOwnedConnector parity with homebridge-plugin-utils", () => {
@@ -180,6 +213,185 @@ describe("createOwnedConnector parity with homebridge-plugin-utils", () => {
         connector.release();
 
         await agent.destroy();
+      });
+
+      test("a peer's reset of a request in flight on a keep-alive connection is recorded with ECONNRESET, the very error the request rejects with", async (t) => {
+
+        const peer = await createScriptedLoopback((socket) => socket.resetAndDestroy());
+        const connector = build({ allowH2: false, verifyTls: false });
+        const agent = new Agent({ connect: connector.connect });
+
+        t.after(async (): Promise<void> => {
+
+          connector.release();
+
+          await agent.destroy();
+          await peer[Symbol.asyncDispose]();
+        });
+
+        await assert.rejects(fetchStatus(agent, "http://" + peer.host), (error: unknown) => {
+
+          // The transport rejects a request in flight with the error its socket raised, so the record is readable here and is that same object.
+          assert.equal(codeOf(connector.lastConnectionFailure), "ECONNRESET", "the reset is recorded with the errno the platform raised");
+          assert.equal(error, connector.lastConnectionFailure, "the record holds the very error the socket raised, its errno and cause chain intact");
+
+          return true;
+        });
+      });
+
+      test("a bare FIN the peer sends on an idle keep-alive connection records nothing", async (t) => {
+
+        const peer = await createScriptedLoopback((socket) => socket.write(KEEP_ALIVE_RESPONSE));
+        const connector = build({ allowH2: false, verifyTls: false });
+        const agent = new Agent({ connect: connector.connect });
+
+        t.after(async (): Promise<void> => {
+
+          connector.release();
+
+          await agent.destroy();
+          await peer[Symbol.asyncDispose]();
+        });
+
+        assert.equal(await fetchStatus(agent, "http://" + peer.host), 200);
+
+        peer.end();
+
+        // The client closes its side once the transport has destroyed the socket over the FIN, so the peer seeing its connection close marks the record as final.
+        await (await peer.connection(0)).closed;
+
+        assert.equal(connector.lastConnectionFailure, undefined, "the transport destroys the socket with an error of its own over a bare FIN, which is no record");
+      });
+
+      test("a response that asks for Connection: close records nothing", async (t) => {
+
+        const peer = await createScriptedLoopback((socket) => socket.write(CLOSING_RESPONSE));
+        const connector = build({ allowH2: false, verifyTls: false });
+        const agent = new Agent({ connect: connector.connect });
+
+        t.after(async (): Promise<void> => {
+
+          connector.release();
+
+          await agent.destroy();
+          await peer[Symbol.asyncDispose]();
+        });
+
+        assert.equal(await fetchStatus(agent, "http://" + peer.host), 200);
+
+        // The transport closes the connection the response asked it to close, so the peer seeing its connection close marks the record as final.
+        await (await peer.connection(0)).closed;
+
+        assert.equal(connector.lastConnectionFailure, undefined, "the transport destroys the socket with an error of its own over a clean close, which is no record");
+      });
+
+      test("release records nothing", async (t) => {
+
+        const peer = await createHttpsLoopback(() => OK_RESPONSE);
+        const connector = build({ allowH2: false, verifyTls: false });
+        const agent = new Agent({ connect: connector.connect });
+
+        t.after(async (): Promise<void> => {
+
+          await agent.destroy();
+          await peer[Symbol.asyncDispose]();
+        });
+
+        assert.equal(await fetchStatus(agent, peer.origin), 200);
+
+        connector.release();
+
+        await (await peer.connection(0)).closed;
+
+        assert.equal(connector.lastConnectionFailure, undefined, "a release destroys its sockets bare, which raises no error to record");
+      });
+
+      test("a TLS error after the handshake is recorded while the socket stays open", async (t) => {
+
+        const peer = await createTlsProxyLoopback();
+        const connector = build({ allowH2: false, verifyTls: false });
+        const vended: Socket[] = [];
+        const agent = new Agent({ connect: keepingVended(connector, vended) });
+
+        t.after(async (): Promise<void> => {
+
+          connector.release();
+
+          await agent.destroy();
+          await peer[Symbol.asyncDispose]();
+        });
+
+        assert.equal(await fetchStatus(agent, peer.origin), 200);
+
+        peer.write(CORRUPT_TLS_RECORD);
+
+        await waitUntil(() => connector.lastConnectionFailure !== undefined, { description: "the client's TLS layer to raise its error over the corrupt record" });
+
+        assert.match(String(codeOf(connector.lastConnectionFailure)), /^ERR_SSL_/u, "the record is the TLS layer's own error");
+
+        // Nothing destroys an idle socket over a TLS error, so no close follows it, and a record read at the socket's close would hold nothing.
+        await settle(5);
+
+        assert.equal(expectAt(vended, 0, "the socket the dial vended").destroyed, false, "the socket stays open after the TLS error it raised");
+      });
+
+      test("a later error the socket raises does not replace the first", async (t) => {
+
+        const peer = await createTlsProxyLoopback();
+        const connector = build({ allowH2: false, verifyTls: false });
+        const raised: unknown[] = [];
+        const vended: Socket[] = [];
+        const agent = new Agent({ connect: keepingVended(connector, vended) });
+
+        t.after(async (): Promise<void> => {
+
+          connector.release();
+
+          await agent.destroy();
+          await peer[Symbol.asyncDispose]();
+        });
+
+        assert.equal(await fetchStatus(agent, peer.origin), 200);
+
+        expectAt(vended, 0, "the socket the dial vended").on("error", (error: unknown) => raised.push(error));
+        peer.write(CORRUPT_TLS_RECORD);
+
+        await waitUntil(() => connector.lastConnectionFailure !== undefined, { description: "the client's TLS layer to raise its error over the corrupt record" });
+
+        const first = connector.lastConnectionFailure;
+
+        peer.reset();
+
+        await waitUntil(() => raised.some((error) => codeOf(error) === "ECONNRESET"), { description: "the socket to raise the reset that followed" });
+
+        assert.equal(connector.lastConnectionFailure, first, "the first error the socket raised stands, the reset after it being its consequence");
+      });
+
+      test("a successful connect clears what an earlier connection recorded", async (t) => {
+
+        const peer = await createScriptedLoopback((socket) => socket.write(KEEP_ALIVE_RESPONSE));
+        const connector = build({ allowH2: false, verifyTls: false });
+        const agent = new Agent({ connect: connector.connect });
+
+        t.after(async (): Promise<void> => {
+
+          connector.release();
+
+          await agent.destroy();
+          await peer[Symbol.asyncDispose]();
+        });
+
+        assert.equal(await fetchStatus(agent, "http://" + peer.host), 200);
+
+        peer.reset();
+
+        await waitUntil(() => connector.lastConnectionFailure !== undefined, { description: "the reset of the idle connection to be recorded" });
+
+        assert.equal(codeOf(connector.lastConnectionFailure), "ECONNRESET", "the idle connection's reset is recorded first");
+
+        // The reset connection is gone, so the next request dials again, and that dial's success clears what the reset left.
+        assert.equal(await fetchStatus(agent, "http://" + peer.host), 200);
+        assert.equal(connector.lastConnectionFailure, undefined, "a successful connect clears the record an earlier connection left");
       });
     });
   }

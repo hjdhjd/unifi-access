@@ -9,8 +9,8 @@
 The events [ConnectionMonitor](ConnectionMonitor.md) publishes on its three-rail surface.
 
 - `stateChanged` fires on every edge of the state machine.
-- `controllerLost` fires when the controller is concluded lost, and again when the cause of the loss changes class between unreachable and a refused sign-in,
-  carrying the fault that settled it.
+- `controllerLost` fires when the controller is concluded lost, and again whenever the cause of the loss changes class among a refused sign-in, a fault a person
+  must fix and a fault that heals itself, carrying the fault that settled it.
 - `controllerRebooted` fires when the controller's reported uptime falls far enough to read as a restart, carrying both readings.
 - `controllerRecovered` fires when the connection returns to healthy after having been lost.
 - `throttleEntered` and `throttleExited` forward the transport breaker's own transitions.
