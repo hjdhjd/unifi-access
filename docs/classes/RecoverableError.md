@@ -6,8 +6,9 @@
 
 # Abstract Class: RecoverableError
 
-Abstract base for failures the caller may retry or defer. The library never retries the caller's operation itself - it classifies the failure as recoverable and
-returns control so the caller can apply its own backoff, escalation, or alternative-path policy.
+Abstract base for failures the caller may retry or defer. The library classifies the failure as recoverable and returns control so the caller can apply its own
+backoff, escalation, or alternative-path policy, and the HTTP pool's transparent retries, on the terms [ACCESS\_API\_RETRY\_PROFILE](../variables/ACCESS_API_RETRY_PROFILE.md) states, are the layer beneath
+that policy rather than a part of it.
 
 ## Extends
 

@@ -9,3 +9,6 @@
 ```ts
 const ACCESS_RECOVERY_STEADY_INTERVAL_MS: 60000 = 60000;
 ```
+
+The interval, in milliseconds, the recovery loop polls at once it has walked out the staged delays [ACCESS\_RECOVERY\_BACKOFF\_MS](ACCESS_RECOVERY_BACKOFF_MS.md) holds. One minute is short
+enough that a returning controller is picked up promptly and long enough that polling an absent one indefinitely costs nothing worth measuring.
