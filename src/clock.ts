@@ -2,7 +2,7 @@
  *
  * clock.ts: Time abstraction for the UniFi Access API.
  */
-import { setTimeout as setTimeoutAsync } from "node:timers/promises";
+import timersPromises from "node:timers/promises";
 
 /**
  * Source of time for any code that needs to know "what time is it now?", "wake me up after a delay," or "call me back once the time is up." Production code reads
@@ -34,6 +34,10 @@ export interface Clock {
    * The signal is required rather than optional because every consumer here waits inside a lifecycle that disposal has to be able to end: a loop that forgot
    * cancellation would hold its subsystem open past teardown, and requiring the signal makes that shape unwritable. The returned promise rejects with an
    * `AbortError` if the signal aborts before the delay elapses, matching `setTimeout` from `node:timers/promises`, so a consumer's loop ends cleanly on disposal.
+   * A finite delay past the platform timer's ceiling is carried in full: the production clock awaits the primitive once per hop of at most the ceiling, each hop
+   * under the caller's signal. An infinite delay never elapses: the production clock arms nothing for it, so it settles only when the signal aborts, rejecting with
+   * the same `AbortError`. With nothing armed, an infinite delay holds no process open, so when its signal is one only an unreferenced timer would abort, such as
+   * `AbortSignal.timeout`'s or a deadline `armDeadline` arms, the process can exit before that signal aborts, leaving the wait unsettled.
    *
    * @param ms   - Delay before the promise resolves, in milliseconds.
    * @param init - Includes the abort signal that cancels the delay.
@@ -49,7 +53,9 @@ export interface Clock {
 
   /**
    * Runs `callback` once, after `ms` milliseconds. The production clock arms it on the global `setTimeout`, read at call time rather than bound when the module
-   * loads, so a harness that replaces the global observes the timer.
+   * loads, so a harness that replaces the global observes the timer. A finite window past the platform timer's ceiling is carried in full: the production clock
+   * arms at most the ceiling and re-arms for the remainder, so the callback runs when asked. An infinite window never comes due: the production clock arms nothing
+   * for it, so the callback never runs, disposing the handle does nothing, and nothing holds the process open whatever `init.unref` says.
    *
    * With `init.unref` set the timer never holds the process open, so a process whose only pending work is a timer armed this way exits without waiting for it.
    * Omitted, the platform's default holds: the timer keeps the process alive until it fires or is disposed. Set or omitted, the timer comes due at the same moment,
@@ -69,30 +75,168 @@ export interface Clock {
 }
 
 /**
+ * The platform timer's ceiling in milliseconds. Node arms a callback timer and a promise delay alike on a 32-bit signed count, while the ceiling itself arms
+ * silently. A callback timer or a promise delay past this value is set to one millisecond with a TimeoutOverflowWarning. The production clock carries a finite delay
+ * past the ceiling as a chain of arms of at most this length, so the value is the hop size as well as the boundary, and arms nothing for an infinite span, which
+ * never elapses.
+ *
+ * The suites read it to state a delay relative to the ceiling rather than restating the platform's number - a row arming a window one past it, or advancing a
+ * ceiling's worth of time and asserting nothing has fired yet. It is a fact of the platform rather than a tunable, so it sits beside the clock that carries it
+ * rather than among the library's settings, and a caller never clamps a delay to it, because the production clock carries a longer delay itself.
+ */
+export const TIMER_DELAY_MAX_MS = 2147483647;
+
+/* Whether `ms` is a finite delay the platform cannot carry in one arm. An infinite span is not one, because it never elapses, which `neverElapses` states, and the
+ * finiteness test keeps this predicate true to its name whichever branch a member checks first. Anything else - a delay within the ceiling, a non-positive one,
+ * negative infinity among them, or `NaN` - is handed to the platform timer as it stands, under that timer's own rules. The callback and promise timers set a delay
+ * below one millisecond or `NaN` to one millisecond, and truncate a fractional delay to whole milliseconds.
+ */
+function pastCeiling(ms: number): boolean {
+
+  return Number.isFinite(ms) && (ms > TIMER_DELAY_MAX_MS);
+}
+
+/* Whether `ms` is an infinite span, which never elapses on the production clock. Every member that arms time checks it and arms nothing for such a span, because
+ * each alternative fires a wait meant never to end or keeps the process alive for it: the platform's own arm fires it after one millisecond, a chain of
+ * ceiling-length hops never ends and, referenced, never lets the process exit, and a clamp to the ceiling fires it once the ceiling elapses. The test is an equality
+ * rather than a finiteness check, because negative infinity is a negative span and `NaN` fires after one millisecond, each under the platform's own rules.
+ */
+function neverElapses(ms: number): boolean {
+
+  return ms === Infinity;
+}
+
+/* Arm one platform one-shot and apply the process-hold policy to it. Every timer the production clock arms goes through this one site, the chain's hops included, so
+ * the policy a consumer stated reaches every hop. The bare `setTimeout` resolves to the global callback timer and is read inside the body at call time, so a harness
+ * that replaces the global, `node:test`'s mock timers among them, observes every timer this clock arms, hops included.
+ */
+function armPlatformTimer(callback: () => void, ms: number, init?: { unref?: boolean }): NodeJS.Timeout {
+
+  const handle = setTimeout(callback, ms);
+
+  if(init?.unref ?? false) {
+
+    handle.unref();
+  }
+
+  return handle;
+}
+
+/* Arm `callback` after a delay past the platform's ceiling, as a chain of one-shot arms of at most the ceiling each. Every hop but the last re-arms for what remains,
+ * and the last runs the callback. The remainder counts down by the hop that was armed rather than by a wall-clock read, so the chain means what the platform means by
+ * a delay - the callback runs after `ms` of timer time - and a wall-clock step never moves it. Each hop's handle replaces the one before it and the disposer reads
+ * whichever hop is live, so a cancel mid-chain clears the hop that is actually armed.
+ */
+function armPastCeiling(callback: () => void, ms: number, init?: { unref?: boolean }): Disposable {
+
+  let live: NodeJS.Timeout | undefined;
+
+  const arm = (remaining: number): void => {
+
+    const hop = Math.min(remaining, TIMER_DELAY_MAX_MS);
+
+    live = armPlatformTimer((): void => {
+
+      if(remaining > hop) {
+
+        arm(remaining - hop);
+
+        return;
+      }
+
+      callback();
+    }, hop, init);
+  };
+
+  arm(ms);
+
+  return { [Symbol.dispose]: (): void => clearTimeout(live) };
+}
+
+/* Await a delay past the platform's ceiling as consecutive waits on the promise primitive, each at most the ceiling and each under the caller's signal, so the
+ * primitive's own `AbortError` is what an abort rejects with whichever hop is waiting, and a pre-aborted signal rejects on the first.
+ */
+async function delayPastCeiling(ms: number, init: { signal: AbortSignal }): Promise<void> {
+
+  for(let remaining = ms; remaining > 0; remaining -= TIMER_DELAY_MAX_MS) {
+
+    // Each hop has to finish before the next is armed, which is the whole point of the loop.
+    // eslint-disable-next-line no-await-in-loop
+    await timersPromises.setTimeout(Math.min(remaining, TIMER_DELAY_MAX_MS), undefined, init);
+  }
+}
+
+/* Wait on an infinite span, which arms no timer because none could ever come due. The wait registers one abort listener on its signal, and when the signal aborts
+ * it hands the aborted signal to the promise primitive, which rejects at once without arming anything, so an infinite wait rejects with exactly the `AbortError` a
+ * finite one does; a signal already aborted goes straight to that call. The listener is `once`, so the abort that fires it also detaches it, and until then it
+ * lives exactly as long as the wait it serves. With nothing armed, nothing holds the process open on the wait's account.
+ */
+function delayUntilAbort({ signal }: { signal: AbortSignal }): Promise<void> {
+
+  if(signal.aborted) {
+
+    return timersPromises.setTimeout(0, undefined, { signal });
+  }
+
+  const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers();
+
+  signal.addEventListener("abort", (): void => resolve(timersPromises.setTimeout(0, undefined, { signal })), { once: true });
+
+  return promise;
+}
+
+/**
  * The production clock. Reads wall-clock time via `Date.now()`, delays via `node:timers/promises`, and arms callback timers on the global `setTimeout`. This shim
  * is the single bridge between the `Clock` interface and Node's runtime; consumers always go through `Clock`, never directly to the Node primitives, so an
- * unmocked call site behaves exactly like a direct `Date.now()`, `node:timers/promises`, or `setTimeout` call would.
+ * unmocked call site behaves exactly like a direct `Date.now()`, `node:timers/promises`, or `setTimeout` call would - except where the platform timer's range runs
+ * out: past the ceiling, where the platform would fire at once and this clock fires when asked, and at an infinite span, which the platform would fire at once and
+ * this clock never fires.
  *
  * Consumer tests (the `ConnectionMonitor`, `EventStream`, `StateStore`, and the like) construct homebridge-plugin-utils' `TestClock` instead of importing this; this
  * module's own test exercises `wallClock` directly to confirm it reads real time and drives real timers. Production code receives this as the default in every
  * constructor that takes a `Clock`.
  *
+ * This is a local copy of homebridge-plugin-utils' production clock logic, its `systemClock`. The library takes no runtime dependency on homebridge-plugin-utils, so
+ * a differential test in this package's suite runs this clock and `systemClock` through one set of scenarios and asserts the same observations come back, which is
+ * what keeps the copy in step with its source.
+ *
  * @category Utilities
  */
 export const wallClock: Clock = {
 
-  delay: (ms: number, init: { signal: AbortSignal }): Promise<void> => setTimeoutAsync(ms, undefined, init),
+  /* The promise primitive is read off the `node:timers/promises` module object at call time rather than bound by a named import, because the module object is what
+   * `node:test`'s mock timers patch - a named import binds the original and a harness never sees the wait. A delay past the ceiling awaits the same primitive once
+   * per hop, and an infinite one arms nothing and settles only through its signal.
+   */
+  delay: (ms: number, init: { signal: AbortSignal }): Promise<void> => {
+
+    if(neverElapses(ms)) {
+
+      return delayUntilAbort(init);
+    }
+
+    return pastCeiling(ms) ? delayPastCeiling(ms, init) : timersPromises.setTimeout(ms, undefined, init);
+  },
 
   now: (): number => Date.now(),
 
+  /* An infinite window never comes due, so it arms nothing and answers a disposer with nothing to cancel. A window the platform can carry is the platform's own
+   * timer, the same call one indirection removed, and one past the ceiling the clock carries as a chain. One disposer serves every armed window, because
+   * `clearTimeout` clears whichever timer it is handed.
+   */
   schedule: (callback: () => void, ms: number, init?: { unref?: boolean }): Disposable => {
 
-    const handle = setTimeout(callback, ms);
+    if(neverElapses(ms)) {
 
-    if(init?.unref ?? false) {
-
-      handle.unref();
+      return { [Symbol.dispose]: (): void => undefined };
     }
+
+    if(pastCeiling(ms)) {
+
+      return armPastCeiling(callback, ms, init);
+    }
+
+    const handle = armPlatformTimer(callback, ms, init);
 
     return { [Symbol.dispose]: (): void => clearTimeout(handle) };
   }
@@ -113,7 +257,9 @@ export interface Deadline extends Disposable {
  *
  * The signal aborts with the platform's deadline reason: a `DOMException` whose `name` is `"TimeoutError"`, the reason `AbortSignal.timeout` aborts with, so the
  * cause an `AccessTimeoutError` carries keeps the platform's shape. The abort is one of the clock's own timers, armed through `schedule` with `unref` set, so a
- * pending deadline never holds the process open, and a suite holding a `TestClock` fires it with an advance rather than a real wait.
+ * pending deadline never holds the process open, and a suite holding a `TestClock` fires it with an advance rather than a real wait. Because the deadline is
+ * `schedule`'s timer, the span's domain is `schedule`'s as well: a span past the platform timer's ceiling is carried in full, an infinite span never aborts the
+ * signal, and every other span takes the handling the clock's `schedule` gives it.
  *
  * Its holder releases the deadline when the work it bounds settles - with `using` where that work is a scope - so no timer outlives the work. Disposing after the
  * deadline fired, and disposing a second time, do nothing. Composing the deadline's signal with a caller's own stays the holder's job, through `AbortSignal.any`,

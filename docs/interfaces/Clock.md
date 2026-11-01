@@ -38,6 +38,10 @@ we actually use - the value parameter and the optional `ref` flag are omitted be
 The signal is required rather than optional because every consumer here waits inside a lifecycle that disposal has to be able to end: a loop that forgot
 cancellation would hold its subsystem open past teardown, and requiring the signal makes that shape unwritable. The returned promise rejects with an
 `AbortError` if the signal aborts before the delay elapses, matching `setTimeout` from `node:timers/promises`, so a consumer's loop ends cleanly on disposal.
+A finite delay past the platform timer's ceiling is carried in full: the production clock awaits the primitive once per hop of at most the ceiling, each hop
+under the caller's signal. An infinite delay never elapses: the production clock arms nothing for it, so it settles only when the signal aborts, rejecting with
+the same `AbortError`. With nothing armed, an infinite delay holds no process open, so when its signal is one only an unreferenced timer would abort, such as
+`AbortSignal.timeout`'s or a deadline `armDeadline` arms, the process can exit before that signal aborts, leaving the wait unsettled.
 
 #### Parameters
 
@@ -80,7 +84,9 @@ schedule(
 ```
 
 Runs `callback` once, after `ms` milliseconds. The production clock arms it on the global `setTimeout`, read at call time rather than bound when the module
-loads, so a harness that replaces the global observes the timer.
+loads, so a harness that replaces the global observes the timer. A finite window past the platform timer's ceiling is carried in full: the production clock
+arms at most the ceiling and re-arms for the remainder, so the callback runs when asked. An infinite window never comes due: the production clock arms nothing
+for it, so the callback never runs, disposing the handle does nothing, and nothing holds the process open whatever `init.unref` says.
 
 With `init.unref` set the timer never holds the process open, so a process whose only pending work is a timer armed this way exits without waiting for it.
 Omitted, the platform's default holds: the timer keeps the process alive until it fires or is disposed. Set or omitted, the timer comes due at the same moment,
