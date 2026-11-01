@@ -421,7 +421,7 @@ function isDoorCommand(operation: RoutedOfficialOperation): operation is RoutedO
  * more: a gate command one hub declines says nothing about that hub's unlocks. An upgraded device is a different key and its stale verdict is simply never
  * consulted again, so there is no subscription to firmware changes and no code that clears anything: the memo invalidates itself by construction, and it dies
  * with the client. A device the state holds no firmware for keys on the empty string, which never matches a real firmware string - so on a token client, whose
- * projections carry no firmware at all, a recorded refusal holds for that client's life and a fresh connect is what re-derives it.
+ * census carries no firmware, a refusal recorded before a device update delivers the device's firmware holds until one does, or until a fresh connect re-derives it.
  *
  * **The session revocation.** An Identity Enterprise controller has no official API at all, and reports that as a refusal on the first routed call that reaches it. A
  * controller can also refuse the token on a routed call after accepting it at connect, rejecting it outright or refusing it a permission, and on a client with a direct

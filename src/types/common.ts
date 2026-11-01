@@ -14,7 +14,8 @@
 /* The deep partial event payloads are typed against.
  *
  * Every member is optional because a notification payload is a sparse projection of the record it describes: a v2 device update carries substantially fewer keys than
- * the bootstrap record, and a legacy update carries a full record. Both inhabit this one type, so no separate full-record payload type is needed.
+ * the bootstrap record, and while a legacy update carries a full record on the wire, the classifier admits only the members a notification may write. Every width
+ * inhabits this one type, so no separate full-record payload type is needed.
  *
  * Every member also admits `null`, which is the property that separates this from a plain deep partial. On this wire a null-valued member means NOT CARRIED, never
  * cleared: a legacy device update nulls fields whose stored values are real and stable across the same window, and the devices did not lose those fields. Some of those
@@ -25,14 +26,16 @@
  * optional member tests `I[] | undefined`, which matches neither branch and falls through to the primitive passthrough, so an optional array member would be typed as
  * its full element type rather than a partial of it. Stripping the undefined first puts the member on the branch its declared shape calls for.
  *
- * The `as P extends string ? P : never` key filter excludes the string index signature from the mapping. Without it the mapping recurses into the
- * AccessKnownJsonValue index signature, causing infinite type instantiation. This is what lets a wire-record interface carry both explicit properties and a
- * `[key: string]` index signature while still being usable as a payload type.
+ * The mapping is homomorphic, covering every key `T` declares, number and symbol keys included. A wire record's `[key: string]` index signature survives it as
+ * `Nullable<AccessKnownJsonValue>`, so a payload accepts a member its interface does not declare. An array nested in an array maps as an array of partials: each
+ * inner group of `device_groups` types as an array whose elements are partial device records that also admit null and undefined, where the elements of a
+ * one-level array of records admit neither, so a payload refuses a group holding anything else and reads a group's elements by position. An open JSON array such
+ * as `previous_name` maps on the same terms, and an element that is itself an array reads its own elements as JSON values.
  */
 /** @ignore */
 export type DeepWirePartial<T> = {
 
-  [P in keyof T as P extends string ? P : never]?: Nullable<NonNullable<T[P]> extends (infer I)[] ? DeepWirePartial<I>[] :
+  [P in keyof T]?: Nullable<NonNullable<T[P]> extends (infer I)[] ? DeepWirePartial<I>[] :
     NonNullable<T[P]> extends object ? DeepWirePartial<NonNullable<T[P]>> : T[P]>
 };
 

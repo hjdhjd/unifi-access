@@ -117,7 +117,7 @@ const doorState = (locationId: string, lock: string): AccessTypedEvent => ({ dev
     "location_id": locationId, "lock": lock }] });
 
 /* A device record as the official inventory's projection produces one: identity, roles, and enrollment, and no configuration rows at all. It stands for what a
- * token-only client holds, where the capability is established and the reading it gates is not.
+ * token-only client holds before an original-dialect device update delivers its rows, where the capability is established and the reading it gates is not.
  */
 const TOKEN_CENSUS_RECORD: AccessStateDevice = {
 
@@ -164,6 +164,18 @@ const fullRowDelivery = (state: AccessState, values: Readonly<Record<string, str
   assert.ok(rows, "the document should carry the UA Ultra's configuration rows");
 
   return deviceChange(ULTRA, { configs: rows.map((row) => ({ ...row, "value": values[row.key] ?? row.value })) });
+};
+
+/* The same delivery as the stream hands it over: an original-dialect update restating one stored record whole, with named rows set to named values, classified
+ * the way every notification is. A reading that follows one follows what the classifier admits rather than what a typed event could write.
+ */
+const originalUpdate = (state: AccessState, id: string, values: Readonly<Record<string, string>>): AccessTypedEvent => {
+
+  const envelope = findPacket((entry) => entry.event === "access.data.device.update", "an original-dialect device update");
+  const record = deviceRecord(state, id);
+
+  return classify({ ...envelope, data: { ...record, "configs": (record.configs ?? []).map((row) => ({ ...row, "value": values[row.key] ?? row.value })) },
+    "event_object_id": id });
 };
 
 describe("isHub", () => {
@@ -265,7 +277,8 @@ describe("isCamera", () => {
 
   test("answers false over a record a token-only census produced", () => {
 
-    // The official inventory never projects the flag, so a token-only record cannot be camera-class here whatever its hardware is.
+    // The official inventory never projects the flag, so a record the token-only census produced cannot be camera-class here, whatever its hardware is, until an
+    // original-dialect device update delivers the flag.
     assert.equal(isCamera(TOKEN_CENSUS_RECORD), false);
   });
 });
@@ -413,6 +426,13 @@ describe("tamperState", () => {
     assert.equal(later.devices.get(ULTRA)?.is_online, false, "the update landed what it did carry");
     assert.equal(tamperState(deviceRecord(later, ULTRA)), true, "and the reading is still the one the rows establish");
   });
+
+  test("follows an original-dialect update through the classifier", () => {
+
+    const state = stateFrom(accessBootstrap2026Fixture);
+
+    assert.equal(tamperState(deviceRecord(reduce(state, originalUpdate(state, ULTRA, { "tamper_event": "true", "tampering": "true" })), ULTRA)), true);
+  });
 });
 
 describe("terminalInput", () => {
@@ -432,13 +452,24 @@ describe("terminalInput", () => {
     assert.deepEqual(terminalInput(deviceRecord(state, ULTRA), "rex"), { "wired": false });
   });
 
+  test("follows the Door Mini's captured original-dialect update through the classifier", () => {
+
+    // The document has the Door Mini's position sensor dark; the captured update finds a sensor wired to it and reading, in the rows that update carries.
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const update = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === HUB_DOOR_MINI),
+      "the original-dialect Door Mini update");
+
+    assert.deepEqual(terminalInput(deviceRecord(state, HUB_DOOR_MINI), "dps"), { "wired": false });
+    assert.deepEqual(terminalInput(deviceRecord(reduce(state, classify(update)), HUB_DOOR_MINI), "dps"), { "state": true, "wired": true });
+  });
+
   test("answers over a record a census with no configuration rows produced", () => {
 
-    // A token-only client holds records carrying no rows at all, so nothing establishes either verdict for any terminal. That is a different answer from a hub
-    // reporting that nothing is wired to one, and the union is what keeps them apart.
+    // A record the token-only census produced carries no rows at all, so nothing establishes either verdict for any terminal. That is a different answer from a
+    // hub reporting that nothing is wired to one, and the union is what keeps them apart.
     for(const input of ACCESS_TERMINAL_INPUTS) {
 
-      assert.deepEqual(terminalInput(TOKEN_CENSUS_RECORD, input), {}, input + " should establish nothing on a token-only record");
+      assert.deepEqual(terminalInput(TOKEN_CENSUS_RECORD, input), {}, input + " should establish nothing on a record the token-only census produced");
     }
   });
 });
@@ -456,7 +487,7 @@ describe("portBindings", () => {
 
   test("answers nothing for a record whose census carried no extensions", () => {
 
-    // A token-only client holds records with no extensions at all, so nothing binds a port there, exactly as nothing establishes a terminal reading. The
+    // A record the token-only census produced carries no extensions at all, so nothing binds a port there, exactly as nothing establishes a terminal reading. The
     // single-door hub of the topology document answers the same way for a different reason: its census did carry extensions and it has none.
     assert.deepEqual(portBindings(TOKEN_CENSUS_RECORD), []);
     assert.deepEqual(portBindings(deviceRecord(stateFrom(accessBootstrap2026Fixture), HUB)), [], "and a captured hub that binds its door through no extension");
@@ -534,10 +565,18 @@ describe("deviceAccessMethodStates", () => {
     assert.equal(deviceAccessMethodStates(deviceRecord(reduce(state, fullRowDelivery(state, { "nfc": "no" })), ULTRA)).nfc, false);
   });
 
+  test("follows an original-dialect update through the classifier, the owner switching QR codes off on a G2 Pro", () => {
+
+    const state = stateFrom(accessBootstrap2026Fixture);
+
+    assert.equal(deviceAccessMethodStates(deviceRecord(reduce(state, originalUpdate(state, READER_PRO, { "qr_code": "no" })), READER_PRO)).qr, false);
+  });
+
   test("follows the newer dialect's access-method map, which establishes nothing on a record holding no rows", () => {
 
     // The map lands value only on the rows a record already holds, so it moves the G2 Pro's reading and establishes none on a token-only record, whose census
-    // carried no rows. The map is delivered before the token record is read, so the empty answer is the one a token client reads after its socket has spoken.
+    // carried no rows. The map is delivered before the token record is read, so the empty answer is the one a token client reads after a map arrives, while no
+    // original-dialect update has delivered the record's rows.
     const specimen = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.data?.["access_method"] !== undefined),
       "the v2 G2 Pro update carrying its access-method map");
     const nfcOff = (id: string): AccessTypedEvent => classify({ ...specimen, data: { "access_method": { "nfc": "no" }, id },

@@ -1,16 +1,19 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * events.test.ts: Unit tests for the notification classifier. The classifier's contract is that it is total over wire input and that it presents one vocabulary for the
- * controller's two notification dialects, so these tests run every captured packet through it, assert the dialect pairs collapse to the same kind, and assert the
- * translation allowlist field by field against named specimens rather than against anything re-derived from the same fixture.
+ * controller's two notification dialects, so these tests run every captured packet through it, assert the dialect pairs collapse to the same kind, and assert each
+ * dialect's admission against named specimens: the newer dialect's admitted names against a list written out here, the original dialect's relative to the
+ * module's own declaration, which the census rows hold against the corpus, and the field values and the members left out against the specimen itself.
  */
-import { DEVICE_FIELD_EXCLUSIONS, DEVICE_FIELD_MAP, DEVICE_FIELD_PROJECTIONS, DOOR_STATE_FACT_GUARDS, LOCATION_FIELD_EXCLUSIONS, LOCATION_FIELD_MAP, classifyPacket,
+import type { AccessBootstrapConfig, AccessEventPacket, DeepWirePartial } from "../types/index.ts";
+import { DEVICE_FIELD_EXCLUSIONS, DEVICE_FIELD_MAP, DEVICE_FIELD_PROJECTIONS, DEVICE_NOTIFICATION_MEMBERS, DOOR_STATE_FACT_GUARDS, LOCATION_FIELD_EXCLUSIONS,
+  LOCATION_FIELD_MAP, LOCATION_NOTIFICATION_MEMBERS, ORIGINAL_DEVICE_FIELD_EXCLUSIONS, ORIGINAL_LOCATION_FIELD_EXCLUSIONS, classifyPacket,
   isAccessEventPacket } from "./events.ts";
 import { capturedPackets, classifyAs, findPacket } from "./capture.helpers.ts";
 import { describe, test } from "node:test";
-import type { AccessEventPacket } from "../types/index.ts";
 import assert from "node:assert/strict";
 import { isRecord } from "../json.ts";
+import { present } from "homebridge-plugin-utils/testing";
 
 /* The kind each notification name classifies to, or null where the name is deliberately unmodeled. Every packet in every fixture group is checked against this.
  *
@@ -93,8 +96,8 @@ function completedState(packet: AccessEventPacket): unknown {
 }
 
 // The canonical field names a translated device payload may carry, and the wire fields that must never survive translation into it.
-const DEVICE_ADMITTED = [ "adopting", "device_type", "firmware", "guid", "hw_type", "ip", "is_online", "location_id", "revision", "start_time", "unique_id" ];
-const DEVICE_EXCLUDED = [ "alias", "cap", "category", "connected_hub_id", "direction", "mac", "name", "settings", "version" ];
+const DEVICE_ADMITTED = [ "adopting", "device_type", "firmware", "guid", "hw_type", "ip", "is_online", "location_id", "unique_id" ];
+const DEVICE_EXCLUDED = [ "alias", "cap", "category", "connected_hub_id", "direction", "mac", "name", "revision", "settings", "start_time", "version" ];
 const LOCATION_ADMITTED = [ "extras", "location_type", "name", "unique_id", "up_id" ];
 const LOCATION_EXCLUDED = [ "device_ids", "guard", "last_activity", "state", "thumbnail" ];
 
@@ -202,8 +205,6 @@ describe("v2 device payload translation", () => {
     assert.equal(payload.hw_type, "");
     assert.equal(payload.ip, "192.0.2.2");
     assert.equal(payload.location_id, "00000000-0000-0000-0000-000000000006");
-    assert.equal(payload.revision, "1786095367040183648");
-    assert.equal(payload.start_time, 1780317315);
   });
 
   test("drops the pre-translation wire names once they are renamed", () => {
@@ -234,23 +235,8 @@ describe("v2 device payload translation", () => {
     assert.equal(wire["version"], "v4.12.195");
     assert.equal(wire["connected_hub_id"], "");
     assert.equal(wire["cap"], null);
-  });
-
-  test("normalizes a millisecond start_time to whole seconds by magnitude", () => {
-
-    const cameraPacket = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.data?.["start_time"] === 1782282073038),
-      "the camera-class update whose start_time arrives in milliseconds");
-    const cameraEvent = classifyPacket(cameraPacket);
-
-    assert.equal(cameraEvent?.kind, "deviceChanged");
-    assert.equal(cameraEvent.payload.start_time, 1782282073);
-  });
-
-  test("leaves a whole-second start_time untouched", () => {
-
-    const { payload } = classifyAs(packet, "deviceChanged");
-
-    assert.equal(payload.start_time, 1780317315, "a native device already reports seconds and must not be divided");
+    assert.equal(wire["revision"], "1786095367040183648");
+    assert.equal(wire["start_time"], 1780317315);
   });
 
   test("translates only the admitted fields a payload actually carries", () => {
@@ -490,36 +476,153 @@ describe("the newer dialect's field census", () => {
   });
 });
 
-describe("legacy payload passthrough", () => {
+describe("the original dialect's field census", () => {
 
-  test("a legacy device update passes through carrying its wire values untranslated", () => {
+  // Every member the captured original-dialect records carry, per record type.
+  const carriedOriginal = (): { device: Set<string>; location: Set<string> } => {
 
-    const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === "aabbcc000002"), "the legacy reader update");
-    const event = classifyPacket(packet);
+    const carried = { device: new Set<string>(), location: new Set<string>() };
 
-    assert.equal(event?.kind, "deviceChanged");
-    assert.equal(event.id, "aabbcc000002");
-    assert.equal(event.payload.unique_id, "aabbcc000002");
-    assert.equal(event.payload.revision, "1785876758583455467");
-    assert.equal(event.payload.ip, "192.0.2.3");
-    assert.equal(event.payload.is_online, true);
+    for(const packet of capturedPackets) {
 
-    // A field the v2 allowlist excludes survives here, which is what shows no translation ran on this dialect.
-    assert.equal(Object.hasOwn(event.payload, "mac"), true);
+      switch(packet.event) {
+
+        case "access.data.device.update":
+
+          for(const member of Object.keys(packet.data ?? {})) {
+
+            carried.device.add(member);
+          }
+
+          break;
+
+        case "access.data.location.update":
+
+          for(const member of Object.keys(packet.data ?? {})) {
+
+            carried.location.add(member);
+          }
+
+          break;
+
+        default:
+
+          break;
+      }
+    }
+
+    return carried;
+  };
+
+  // What each record type declares on this dialect: the declaration the notification may write, and the exclusion set beside it.
+  const declarations = { device: [ [...DEVICE_NOTIFICATION_MEMBERS], [...ORIGINAL_DEVICE_FIELD_EXCLUSIONS] ],
+    location: [ [...LOCATION_NOTIFICATION_MEMBERS], [...ORIGINAL_LOCATION_FIELD_EXCLUSIONS] ] };
+
+  test("every member a captured record carries is declared or excluded, and every declared or excluded name is observed", () => {
+
+    /* Both directions, on the newer dialect's census terms. A member the controller starts sending is in neither list and fails here rather than being dropped with
+     * nothing noticing, and a declared name no captured record carries is a claim with no specimen behind it.
+     */
+    const carried = carriedOriginal();
+    const missing = (from: Set<string>, against: Set<string>): string[] => [...from].filter((name) => !against.has(name)).sort();
+
+    for(const kind of [ "device", "location" ] as const) {
+
+      const declared = new Set(declarations[kind].flat());
+
+      assert.deepEqual(missing(carried[kind], declared), [], "a captured " + kind + " record carries a member that is neither declared nor excluded");
+      assert.deepEqual(missing(declared, carried[kind]), [], "the " + kind + " declarations name a member no captured record carries");
+    }
   });
 
-  test("a legacy location update passes through and takes identity from the envelope", () => {
+  test("each member sits in exactly one of its declaration and its exclusion set", () => {
+
+    // The census above reads the two as one union, so a member both declared and excluded would pass it. Counting each name across both is what keeps them apart.
+    for(const [ kind, lists ] of Object.entries(declarations)) {
+
+      for(const name of new Set(lists.flat())) {
+
+        assert.equal(lists.filter((list) => list.includes(name)).length, 1, name + " should sit in exactly one " + kind + " declaration");
+      }
+    }
+  });
+
+  test("every newer-dialect table lands on a declared member", () => {
+
+    // The `satisfies` clauses hold this at build time; this holds it against the values the module actually exports, so the two dialects cannot drift apart.
+    const undeclared = (targets: readonly string[], declared: readonly string[]): string[] => targets.filter((target) => !declared.includes(target));
+
+    assert.deepEqual(undeclared([ ...Object.values(DEVICE_FIELD_MAP), ...Object.values(DEVICE_FIELD_PROJECTIONS) ], DEVICE_NOTIFICATION_MEMBERS), []);
+    assert.deepEqual(undeclared(Object.values(LOCATION_FIELD_MAP), LOCATION_NOTIFICATION_MEMBERS), []);
+  });
+});
+
+describe("the original dialect's admission", () => {
+
+  test("a device update writes the declared members it carries and nothing else", () => {
+
+    const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === "aabbcc000002"), "the legacy reader update");
+    const wire = present(packet.data, "the legacy reader record");
+    const { id, payload } = classifyAs(packet, "deviceChanged");
+
+    assert.equal(id, "aabbcc000002");
+    assert.deepEqual(Object.keys(payload).sort(), DEVICE_NOTIFICATION_MEMBERS.filter((member) => Object.hasOwn(wire, member)).sort());
+    assert.equal(payload.ip, "192.0.2.3");
+    assert.equal(payload.is_online, true);
+
+    // The record really carries the members the declaration leaves out, so their absence here is the admission working rather than a sparse record.
+    for(const member of [ "mac", "name", "revision" ]) {
+
+      assert.notEqual(wire[member], undefined, "the record carries " + member);
+      assert.equal(Object.hasOwn(payload, member), false, member + " should not reach canonical state");
+    }
+  });
+
+  test("a device update takes its identity from the envelope rather than the record's own field", () => {
+
+    // The two agree on every captured specimen, so a record naming another identity is synthetic: the stored record's self-identity and the key it is stored
+    // under come from one source either way.
+    const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === "aabbcc000002"), "the legacy reader update");
+    const { id, payload } = classifyAs({ ...packet, data: { ...packet.data, "unique_id": "aabbcc0000ff" } }, "deviceChanged");
+
+    assert.equal(id, "aabbcc000002");
+    assert.equal(payload.unique_id, "aabbcc000002");
+  });
+
+  test("a location update writes the declared members it carries and takes its identity from the envelope", () => {
 
     const packet = findPacket((entry) => (entry.event === "access.data.location.update") && (entry.event_object_id === "00000000-0000-0000-0000-000000000006"),
       "the legacy door update");
-    const event = classifyPacket(packet);
+    const wire = present(packet.data, "the legacy door record");
+    const { id, payload } = classifyAs(packet, "locationChanged");
 
-    assert.equal(event?.kind, "locationChanged");
-    assert.equal(event.id, "00000000-0000-0000-0000-000000000006");
-    assert.equal(event.payload.full_name, "Test Name 11");
+    assert.equal(id, "00000000-0000-0000-0000-000000000006");
+    assert.equal(payload.unique_id, "00000000-0000-0000-0000-000000000006");
+    assert.equal(payload.full_name, "Test Name 11");
+    assert.deepEqual(Object.keys(payload).sort(), LOCATION_NOTIFICATION_MEMBERS.filter((member) => Object.hasOwn(wire, member)).sort());
 
-    // The legacy dialect nulls this key, which the payload type admits because null here means not-carried.
-    assert.equal(event.payload.previous_name, null);
+    // The record nulls `previous_name` and carries its time zone, and neither reaches canonical state.
+    assert.equal(wire["previous_name"], null);
+    assert.notEqual(wire["timezone"], undefined);
+    assert.equal(Object.hasOwn(payload, "previous_name"), false);
+    assert.equal(Object.hasOwn(payload, "timezone"), false);
+  });
+});
+
+describe("DeepWirePartial over a nested array", () => {
+
+  test("types an inner device group as an array of partial device records", () => {
+
+    // The compile-time half is checked by the typecheck gate: a bootstrap partial's inner device group holds partial device records, so its elements read by
+    // position and an element that is not a record is refused.
+    const bootstrap: DeepWirePartial<AccessBootstrapConfig> = { "device_groups": [[{ "firmware": "v1" }]] };
+    const firmware: string | null | undefined = bootstrap.device_groups?.[0]?.[0]?.firmware;
+
+    // @ts-expect-error - an inner device group holds partial device records, so a string where a record belongs is refused.
+    const refused: DeepWirePartial<AccessBootstrapConfig> = { "device_groups": [["not a device record"]] };
+
+    assert.equal(firmware, "v1", "an inner group's element reads by position");
+    assert.deepEqual(refused.device_groups, [["not a device record"]]);
   });
 });
 

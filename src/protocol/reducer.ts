@@ -103,14 +103,14 @@ export type AccessStateDevice = Pick<AccessDeviceConfig, "alias" | "capabilities
  * it, which means it still carries the `door`, `floor`, and `location` members the wire embeds in it; a record projected from the official API's device inventory
  * embeds no location snapshots at all, because that listing carries none. Where those members are present, keeping them is deliberate: the maps are the working
  * truth either way, and the embedded members are a snapshot of what the location records looked like when that device record was issued. They go stale between
- * events, and a consumer that wants a door's current state reads the doors map rather than a device's copy of it. Pruning them would be the alternative, but it
- * would discard wire material a consumer may legitimately want, and unlike the collections above they are not a second home for a record this state also stores
- * under its own identity. Where records are admitted, each admission rule turns a guarantee the wire does not make into one the state does: a record arriving
- * without a `capabilities` array is stored carrying an empty one, so the required member the device type declares is true of every record here; and a record's own
- * `mac`, like the controller document's `host.mac`, is stored in one spelling whichever way the wire spelled it, because the controller cases an address differently
- * from record to record and from one read to the next, and a consumer keyed on an address must never be re-keyed by that. The spelling rule reaches a record's own
- * member and nothing nested inside it: the camera records some hardware embeds are the companion UniFi Protect controller's own material, which this library
- * deliberately does not model, and they keep their addresses as the wire sent them.
+ * refreshes, and a consumer that wants a door's current state reads the doors map rather than a device's copy of it. Pruning them would be the alternative, but
+ * it would discard wire material a consumer may legitimately want, and unlike the collections above they are not a second home for a record this state also
+ * stores under its own identity. Where records are admitted, each admission rule turns a guarantee the wire does not make into one the state does: a record
+ * arriving without a `capabilities` array is stored carrying an empty one, so the required member the device type declares is true of every record here; and a
+ * record's own `mac`, like the controller document's `host.mac`, is stored in one spelling whichever way the wire spelled it, because the controller cases an
+ * address differently from record to record and from one read to the next, and a consumer keyed on an address must never be re-keyed by that. The spelling rule
+ * reaches a record's own member and nothing nested inside it: the camera records some hardware embeds are the companion UniFi Protect controller's own material,
+ * which this library deliberately does not model, and they keep their addresses as the wire sent them.
  *
  * There is deliberately no counter or timestamp here. A pure reducer cannot write a wall-clock field without minting a new state reference on every packet, which
  * would destroy the no-op and structural-sharing guarantees the observation layer depends on.
@@ -318,11 +318,6 @@ function applyControllerChange(state: AccessState, controller: AccessControllerC
 /* Merge a partial into an existing device. A notification for an unknown device is a no-op: membership comes from a census - the topology document, or the official
  * listings on a client with no topology - and a partial has no full record to merge onto. Camera-class hardware the captured controller reported exercises exactly
  * this path, appearing in its notifications while absent from its census; the periodic re-read is what reconciles any genuine drift.
- *
- * The payload's address, when it carries one, takes the library's spelling before the merge rather than after it. The merge decides by value whether anything
- * changed, so a payload restating the stored address in the other case would otherwise read as a change: the merge would clone the stored record to hold the
- * re-cased address, and the upsert below would then pay a structural compare of the whole record to find that nothing moved. Folding first costs one string
- * comparison and, on a re-cased payload, one copy of the payload itself; the stored record is never cloned for a spelling.
  */
 function applyDeviceChange(state: AccessState, id: string, payload: Record<string, AccessKnownJsonValue>): AccessState {
 
@@ -333,7 +328,7 @@ function applyDeviceChange(state: AccessState, id: string, payload: Record<strin
     return state;
   }
 
-  const devices = upsertEntry(state.devices, id, mergeDeviceRecord(existing, withCanonicalMac(payload)));
+  const devices = upsertEntry(state.devices, id, mergeDeviceRecord(existing, payload));
 
   return Object.is(devices, state.devices) ? state : { ...state, devices };
 }
@@ -519,16 +514,10 @@ export function carriesCapabilities(record: { capabilities?: unknown }): boolean
 }
 
 /* Give a record's own hardware address the library's spelling, handing back the very same record when it already has it. Generic over the record rather than typed
- * to the device, because the same rule applies to a wire payload before it is merged and to the controller document's host beside the device records, and one
- * statement of it is what keeps those admissions from drifting apart. A record whose `mac` is not a string is handed back untouched: the merge's own null rule
- * decides what an explicit null means, and this has no business pre-empting it.
+ * to the device, because the same rule applies to a topology record and to the controller document's host beside the device records, and one statement of it is
+ * what keeps those admissions from drifting apart.
  */
-function withCanonicalMac<T extends { mac?: unknown }>(record: T): T {
-
-  if(typeof record.mac !== "string") {
-
-    return record;
-  }
+function withCanonicalMac<T extends { mac: string }>(record: T): T {
 
   const mac = normalizeMacAddress(record.mac);
 
@@ -792,9 +781,10 @@ function mergeRecord<T extends Record<string, AccessKnownJsonValue>>(record: T, 
  * structural-sharing engine the no-op guarantee rests on. The record is cloned lazily, on the first real change, so an all-no-op merge allocates nothing.
  *
  * A null-valued key is skipped at every depth. The obvious alternative, treating an explicit null as a clear, is wrong for this controller: on this wire a null means
- * the notification did not carry the field rather than that the controller cleared it, and a routine device update nulls more than a dozen keys whose stored values
- * are real, stable, and demonstrably still in force. Clearing on null would therefore corrupt state on most events. The choice has a cost: a field
- * the controller genuinely does clear arrives indistinguishable from one it merely omitted, so it stays stale until the next refresh reconciles it.
+ * the notification did not carry the field rather than that the controller cleared it. Most of the wire's nulls fall on members the classifier never admits, but
+ * not all of them: a newer-dialect location update nulls its `extras`, whose stored value is real and still in force, so clearing on null would erase that value
+ * on every such delivery. The choice has a cost: a field the controller genuinely does clear arrives indistinguishable from one it merely omitted, so it stays
+ * stale until the next refresh reconciles it.
  *
  * The recursion matters because payloads are not uniformly full records. The controller sends different shapes for different hardware, including partial
  * sub-objects, so a shallow merge would replace a nested object wholesale and drop the sibling keys the payload did not mention.

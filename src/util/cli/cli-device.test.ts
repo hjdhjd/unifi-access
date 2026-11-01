@@ -231,7 +231,8 @@ describe("the device state command", () => {
 
   test("a capable device that has reported nothing reads as unreported rather than as clear", async () => {
 
-    // The three-way answer is the whole point of the reading: a token-only client sees this for every device, because its census carries no rows.
+    // The three-way answer is the whole point of the reading: a token-only client sees this for every device until an original-dialect device update delivers its
+    // rows, because its census carries none.
     const { calls, client } = makeFakeClient({ devices: [ { config: capable(), id: ULTRA_ID, name: "Front Ultra" },
       { config: capable({ value: "false" }), id: READER_ID, name: "Back Reader" } ] });
     const { ctx, lines } = makeCommandContext({ args: [ "state", "all" ], calls, client });

@@ -32,7 +32,7 @@ type AccessTypedEvent =
   eventName: string;
   id: string;
   kind: "deviceChanged";
-  payload: AccessDeviceConfigPayload;
+  payload: NotifiedDevicePayload;
 }
   | {
   eventName: string;
@@ -43,7 +43,7 @@ type AccessTypedEvent =
   eventName: string;
   id: string;
   kind: "locationChanged";
-  payload: DeepWirePartial<AccessLocationConfig>;
+  payload: NotifiedLocationPayload;
 }
   | {
   eventName: string;
@@ -70,7 +70,7 @@ type AccessTypedEvent =
   | {
   device: {
      id: string;
-     payload: AccessDeviceConfigPayload;
+     payload: NotifiedDevicePayload;
   };
   location?: never;
 }
@@ -78,7 +78,7 @@ type AccessTypedEvent =
   device?: never;
   location: {
      id: string;
-     payload: DeepWirePartial<AccessLocationConfig>;
+     payload: NotifiedLocationPayload;
   };
 }
   | {
@@ -92,13 +92,14 @@ The discriminated union of every notification the library models, produced by th
 
 **State transitions** advance the modeled state:
 
-- `deviceChanged` - a device record changed. Both notification dialects produce this one kind, with the newer dialect's payload already translated into the
-  bootstrap vocabulary, so a consumer reads one set of field names whichever dialect arrived. The configuration rows are where the two still differ in shape:
-  the original dialect delivers each row whole, while the newer dialect's access-method map arrives as rows carrying only a key and a value, with no tag, no
-  device identity, and no timestamps.
+- `deviceChanged` - a device record changed. Both notification dialects produce this one kind, and both resolve through one declaration of the members a device
+  notification may write - the newer dialect's payload translated into the bootstrap vocabulary, the original dialect's admitted name for name - so a consumer
+  reads one set of field names, and only the declared ones, whichever dialect arrived. Every other member either dialect sends stays on the raw packet rail. The
+  configuration rows are where the two still differ in shape: the original dialect delivers each row whole, while the newer dialect's access-method map arrives
+  as rows carrying only a key and a value, with no tag, no device identity, and no timestamps.
 - `deviceRemoved` - a device was removed. Identity-only by design: the older dialect sends a record here and the newer one sends nothing, and the removal needs
   only the identity. The full payload the older dialect sends stays available on the raw packet rail.
-- `locationChanged` - a door, floor, or building record changed, again with the newer dialect translated.
+- `locationChanged` - a door, floor, or building record changed, its payload admitted through the location declaration on the same terms.
 - `doorStateChanged` - one or more doors reported their live lock, position, alarm, and emergency condition. Both newer-dialect carriers produce it, each carrying
   its own facet of the packet alongside the door state, so nothing the packet said is lost to the modeling.
 - `bootstrapLoaded` - a freshly fetched topology document. Synthetic rather than a wire packet: the client dispatches it so that the reducer has one input union

@@ -11,6 +11,7 @@ import type { CapturingLog, TestLogEntry } from "homebridge-plugin-utils/testing
 import { StateStore, createStateStore } from "./store.ts";
 import { TestClock, capturingLog, loggedAt, present, settle, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
+import { classify, findPacket } from "../protocol/capture.helpers.ts";
 import { describe, test } from "node:test";
 import { refuseRefresh, topologyDevices } from "../testing.helpers.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
@@ -202,17 +203,22 @@ describe("StateStore", () => {
       await done;
     });
 
-    test("stays asleep on a notification that restates a device's address in the other case", async () => {
+    test("stays asleep on an original-dialect update that restates a device's address in the other case", async () => {
 
-      // The controller re-cases an address between reads, and a consumer keyed on the address observes the devices for changes that matter. A re-cased address is
-      // not one: it is folded at admission before the merge decides anything, so the reducer hands back the same state and the gate absorbs it outright.
-      const store = plainStore();
+      /* The controller re-cases an address between reads, and its original dialect restates the whole record on every update, the address among it, while a
+       * consumer keyed on the address observes the devices for changes that matter. A re-cased address is not one: the classifier admits only the members a
+       * notification may write, so the reducer hands back the same state, the gate absorbs it outright, and nothing commits.
+       */
+      const committed: string[] = [];
+      const store = plainStore({ onDispatch: (event) => void committed.push(event.kind) });
 
       store.dispatch(bootstrapEvent(topologyDocument()));
 
       const stored = present(store.snapshot().devices.get(HUB_2026), "the stored hub");
+      const update = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === HUB_2026), "the original-dialect hub update");
 
       assert.equal(stored.mac, "AABBCC000001");
+      assert.equal(update.data?.["mac"], "aa:bb:cc:00:00:01", "the update spells the hub's address in the other case");
       // The premise for the second dispatch below, asserted so it cannot be a no-op on a value the record already holds.
       assert.notEqual(stored.firmware, "v9.9.9");
 
@@ -220,11 +226,12 @@ describe("StateStore", () => {
       const { done, values } = collect(store.observe((state) => state.devices, { signal: ac.signal }));
 
       await settle();
-      store.dispatch({ eventName: "access.data.device.update", id: HUB_2026, kind: "deviceChanged", payload: { "mac": "AA:BB:CC:00:00:01" } });
+      store.dispatch(classify(update));
       await settle();
       assert.equal(values.length, 0, "a re-cased address changes no state, so no observer wakes");
+      assert.deepEqual(committed, ["bootstrapLoaded"], "and the update commits nothing");
 
-      // The same observer wakes on a real change to the same record, which is what shows the silence above was the fold's doing rather than a dead observer.
+      // The same observer wakes on a real change to the same record, which is what shows the silence above was the admission's doing rather than a dead observer.
       store.dispatch({ eventName: "access.data.device.update", id: HUB_2026, kind: "deviceChanged", payload: { "firmware": "v9.9.9" } });
       await settleUntil(() => values.length === 1, { description: "the devices observer to wake on the firmware change" });
       assert.equal(values[0]?.get(HUB_2026)?.mac, "AABBCC000001");

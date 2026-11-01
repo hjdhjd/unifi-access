@@ -125,8 +125,8 @@ export interface EventStreamOptions {
  * - `packet` is the realtime firehose: one classified {@link AccessWireEvent} per modeled frame. The composition root bridges it into the state store and the
  *   client firehose.
  * - `rawPacket` is the raw observability firehose: the parsed {@link AccessEventPacket} of *every* well-formed frame, emitted one step before `packet` and before
- *   classification - so it carries both the notifications the library does not model and the payload fields the classifier's translation allowlist drops, neither
- *   of which `packet` ever sees. Pure observability for protocol exploration and capture; never dispatched into state.
+ *   classification - so it carries both the notifications the library does not model and the payload fields the classifier's notification declarations leave out,
+ *   neither of which `packet` ever sees. Pure observability for protocol exploration and capture; never dispatched into state.
  * - `closed` fires once when the stream tears down, whatever ended it, carrying a code and a reason. A close the peer started carries the peer's own close frame;
  *   any other carries the library's classification of the teardown - 1000 for a close the stream chose, an explicit close() or the caller's cancel of a connect
  *   in flight, and 1006 for one a failure forced, a socket error or a watchdog stall - with a reason naming what ended it.

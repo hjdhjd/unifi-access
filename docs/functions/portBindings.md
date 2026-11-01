@@ -18,8 +18,8 @@ resolution, and the access-point expansion all answer from one rule rather than 
 
 There are three quite different ways to get an empty list back, and all three are honest. A synthesized per-port access point carries no extensions - the
 expansion strips them on the way through - so it answers empty, which is what it should: it already is one port, and its door is that record's own location. A
-record a token-only census produced carries no extensions either, so every record answers empty on that client by construction. And single-door hardware that
-binds its port through no extension answers empty because there is nothing to answer with, its door likewise being its own location.
+record a token-only census produced carries no extensions either, so it answers empty until a device update of the original dialect delivers them. And
+single-door hardware that binds its port through no extension answers empty because there is nothing to answer with, its door likewise being its own location.
 
 It is re-evaluated on every call rather than memoized, joining [tamperState](tamperState.md), [terminalInput](terminalInput.md) and [deviceAccessMethodStates](deviceAccessMethodStates.md) in the
 per-record group the memo discipline does not cover: the answer is derived from one record a caller already holds rather than being a collection an observer

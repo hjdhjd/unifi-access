@@ -251,9 +251,10 @@ export function isReader(device: AccessStateDevice): boolean {
  * still classifies correctly the day it ships. It is the same flag that endpoint takes as its query parameter, which is what makes it the marker an access-method
  * write routes by. The class is independent of the roles: camera-class hardware need not carry the reader or the hub capability.
  *
- * Unlike {@link isHub} and {@link isReader}, whose capabilities every census carries, this reads a member of the record only the topology census establishes. The
- * official device inventory a token-only client seeds from never projects it, so every token-only record answers `false` here. An access-method write loses nothing
- * to that: the camera flag chooses only the endpoint its direct half writes, which only a client holding credentials reaches, and such a client seeds from the topology.
+ * Unlike {@link isHub} and {@link isReader}, whose capabilities every census carries, this reads a member the official device inventory a token-only client seeds
+ * from never projects, so a token-only record answers `false` here until a device update of the original dialect delivers the flag. An access-method write loses
+ * nothing to that: the camera flag chooses only the endpoint its direct half writes, which only a client holding credentials reaches, and such a client seeds from
+ * the topology.
  *
  * @param device - Any device configuration record (only its `is_camera` flag is read).
  *
@@ -270,8 +271,8 @@ export function isCamera(device: AccessStateDevice): boolean {
  * Whether a device's hardware can detect tampering - a unit that reports being opened, or pulled off the mount it was installed on.
  *
  * The check is the controller's own `tamper_proofing` capability, and both censuses carry it: the topology document lists it among a device's capabilities and so
- * does the official device inventory. That is what sets this apart from {@link tamperState}, which answers only where a census established the configuration rows
- * - a client holding only a token can ask whether the hardware detects tampering at all, even though nothing has told it what the hardware currently reports.
+ * does the official device inventory. That is what sets this apart from {@link tamperState}, which answers only where the configuration rows are established - a
+ * client holding only a token can ask whether the hardware detects tampering at all before anything has told it what the hardware currently reports.
  *
  * @param device - Any device configuration record (only its capabilities are read).
  *
@@ -299,10 +300,10 @@ export function isTamperCapable(device: AccessStateDevice): boolean {
  * is no evidence of gating.
  *
  * The absent answer covers the situations a caller may want to tell apart from a quiet device, and they are deliberately not collapsed into `false`. The record may
- * carry no such row; it may carry no configuration rows at all, which is every record a token-only census produced, so a token client reads `undefined` here by
- * construction while {@link isTamperCapable} still answers; the device's tampering alert may be switched off, which leaves its input row a reading the hardware
- * has stopped revising; or the row may carry a value outside the spellings the controller has been observed to write, which is not guessed at. A caller telling a
- * first observation from a change needs that absence distinct from a reported `false`.
+ * carry no such row; it may carry no configuration rows at all, which is every record a token-only census produced until a device update of the original dialect
+ * delivers its rows, so a token client can read `undefined` here while {@link isTamperCapable} still answers; the device's tampering alert may be switched off,
+ * which leaves its input row a reading the hardware has stopped revising; or the row may carry a value outside the spellings the controller has been observed to
+ * write, which is not guessed at. A caller telling a first observation from a change needs that absence distinct from a reported `false`.
  *
  * The reading is refreshed by the topology census and by the controller's original device-update dialect, whose every captured delivery is a full record carrying
  * the whole row array. The only rows the newer dialect delivers carry access-method values, projected from its access-method map, and never a tamper reading, so
@@ -360,9 +361,9 @@ export function tamperState(device: AccessStateDevice): boolean | undefined {
  * none, and answers nothing for every terminal.
  *
  * The absent answer covers the situations a caller wants to tell apart from a terminal with nothing wired to it, and they are deliberately not collapsed together.
- * The record may carry none of the terminal's keys; it may carry no configuration rows at all, which is every record a token-only census produced, so a token
- * client reads `{}` here by construction for every terminal; the wiring pair may be only half readable, which is no pair; or the hardware may report neither a
- * pair nor a duty, which is a UA Ultra whose port setting has never been established.
+ * The record may carry none of the terminal's keys; it may carry no configuration rows at all, which is every record a token-only census produced until a device
+ * update of the original dialect delivers its rows, so a token client can read `{}` here for every terminal; the wiring pair may be only half readable, which is
+ * no pair; or the hardware may report neither a pair nor a duty, which is a UA Ultra whose port setting has never been established.
  *
  * This is read live on every call, where the door-state entry a door carries is seeded once from the same hardware and then left to the notification stream. So a
  * consumer asking what a terminal reports right now reads this, and one asking what the controller last said about a door reads that.
@@ -399,8 +400,8 @@ export function terminalInput(device: AccessStateDevice, input: AccessTerminalIn
  *
  * There are three quite different ways to get an empty list back, and all three are honest. A synthesized per-port access point carries no extensions - the
  * expansion strips them on the way through - so it answers empty, which is what it should: it already is one port, and its door is that record's own location. A
- * record a token-only census produced carries no extensions either, so every record answers empty on that client by construction. And single-door hardware that
- * binds its port through no extension answers empty because there is nothing to answer with, its door likewise being its own location.
+ * record a token-only census produced carries no extensions either, so it answers empty until a device update of the original dialect delivers them. And
+ * single-door hardware that binds its port through no extension answers empty because there is nothing to answer with, its door likewise being its own location.
  *
  * It is re-evaluated on every call rather than memoized, joining {@link tamperState}, {@link terminalInput} and {@link deviceAccessMethodStates} in the
  * per-record group the memo discipline does not cover: the answer is derived from one record a caller already holds rather than being a collection an observer
@@ -430,15 +431,16 @@ export function portBindings(device: AccessStateDevice): readonly AccessPortBind
  *
  * The absent answer covers the situations a caller may want to tell apart from a method switched off, and they are deliberately not collapsed into `false`. The
  * record may carry no row for the method, which says nothing about whether the hardware can do it - a captured G2 Pro offering face unlock carries no face row,
- * and a captured UA Hub offering PIN entry carries no pin row; it may carry no configuration rows at all, which is every record a token-only census produced, so a
- * token client reads `{}` here by construction; or the row may carry a value outside the `"yes"` and `"no"` pair, which is not guessed at. So absence here is a
- * different statement from absence in the official settings reading, where a method the settings do not list is one the device cannot do.
+ * and a captured UA Hub offering PIN entry carries no pin row; it may carry no configuration rows at all, which is every record a token-only census produced until
+ * a device update of the original dialect delivers its rows, so a token client can read `{}` here; or the row may carry a value outside the `"yes"` and `"no"`
+ * pair, which is not guessed at. So absence here is a different statement from absence in the official settings reading, where a method the settings do not list
+ * is one the device cannot do.
  *
  * The reading is refreshed by the topology census, by the controller's original device-update dialect, whose every captured delivery is a full record carrying
  * the whole row array, and by the newer dialect's access-method map, whose values land on the rows the record already holds. That map establishes no row the
- * record lacks, so a record whose census carried no rows - every record on a token-only client - still answers `{}` however many maps arrive. And because a
- * topology fetch already in flight when a method is switched lands the reading it was answered with, a switch can read as reverted until the next delivery
- * corrects it - the eventual consistency the reducer accepts for every member a census supplies.
+ * record lacks, so a record holding no rows - a token-only client's record before an original-dialect update delivers them - still answers `{}` however many maps
+ * arrive. And because a topology fetch already in flight when a method is switched lands the reading it was answered with, a switch can read as reverted until
+ * the next delivery corrects it - the eventual consistency the reducer accepts for every member a census supplies.
  *
  * It is re-evaluated on every call rather than memoized, joining {@link tamperState}, {@link terminalInput} and {@link portBindings} in the per-record group the
  * memo discipline does not cover. The answer is a fresh object on every call, so a consumer watching for a change observes the device record and reads this from

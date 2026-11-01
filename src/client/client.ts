@@ -390,13 +390,14 @@ export class AccessClient implements AsyncDisposable {
    *
    * **A token-only client is a first-class client with a smaller surface, not a degraded one.** What a token reaches on the wire is exactly what it exposes. Its
    * device and door inventory is seeded from the official API's own listings, so `devices`, `hubs`, `device()`, and `hub()` answer with records carrying what those
-   * listings establish and nothing they do not. `accessPoints` reads empty and an Enterprise Access Hub is withheld from the hub views, because the per-port expansion
-   * and the hub's own placement are read from topology the listing does not carry. A hub's door commands take the official path, `close()` among them as the gate
-   * control command, while `restart()`, `updateDevice()`, and `fetchBootstrap` refuse with a capability error. A token refused the device listing connects with an
-   * empty inventory and says so once in the log. `isAdmin`, `controllerName`, and `controllerInfo` read `null`, because a token has no account whose privilege could
-   * be determined and the controller document is not something the published API serves. Restart detection is inert for that same reason - it watches the controller
-   * document's uptime, and there is none - while recovery from a dropped notification channel runs exactly as it does in any other mode. Door state and the inventory
-   * are seeded from the official reads, corrected live by the official notification socket, and re-read by the refresh failsafe and on recovery.
+   * listings establish and the members a device notification may write onto them, and nothing else. `accessPoints` reads empty and an Enterprise Access Hub is
+   * withheld from the hub views, because the per-port expansion and the hub's own placement are read from topology the listing does not carry. A hub's door
+   * commands take the official path, `close()` among them as the gate control command, while `restart()`, `updateDevice()`, and `fetchBootstrap` refuse with a
+   * capability error. A token refused the device listing connects with an empty inventory and says so once in the log. `isAdmin`, `controllerName`, and
+   * `controllerInfo` read `null`, because a token has no account whose privilege could be determined and the controller document is not something the published API
+   * serves. Restart detection is inert for that same reason - it watches the controller document's uptime, and there is none - while recovery from a dropped
+   * notification channel runs exactly as it does in any other mode. Door state and the inventory are seeded from the official reads, corrected live by the official
+   * notification socket, and re-read by the refresh failsafe and on recovery.
    *
    * @param opts - The controller address, at least one identity, and the optional injected dependencies.
    *

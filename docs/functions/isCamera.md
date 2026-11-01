@@ -17,9 +17,10 @@ The check is the controller's own `is_camera` flag on the record rather than a l
 still classifies correctly the day it ships. It is the same flag that endpoint takes as its query parameter, which is what makes it the marker an access-method
 write routes by. The class is independent of the roles: camera-class hardware need not carry the reader or the hub capability.
 
-Unlike [isHub](isHub.md) and [isReader](isReader.md), whose capabilities every census carries, this reads a member of the record only the topology census establishes. The
-official device inventory a token-only client seeds from never projects it, so every token-only record answers `false` here. An access-method write loses nothing
-to that: the camera flag chooses only the endpoint its direct half writes, which only a client holding credentials reaches, and such a client seeds from the topology.
+Unlike [isHub](isHub.md) and [isReader](isReader.md), whose capabilities every census carries, this reads a member the official device inventory a token-only client seeds
+from never projects, so a token-only record answers `false` here until a device update of the original dialect delivers the flag. An access-method write loses
+nothing to that: the camera flag chooses only the endpoint its direct half writes, which only a client holding credentials reaches, and such a client seeds from
+the topology.
 
 ## Parameters
 

@@ -25,9 +25,9 @@ ambiguity: eight ports speak the same terminals, so the hub itself answers with 
 none, and answers nothing for every terminal.
 
 The absent answer covers the situations a caller wants to tell apart from a terminal with nothing wired to it, and they are deliberately not collapsed together.
-The record may carry none of the terminal's keys; it may carry no configuration rows at all, which is every record a token-only census produced, so a token
-client reads `{}` here by construction for every terminal; the wiring pair may be only half readable, which is no pair; or the hardware may report neither a
-pair nor a duty, which is a UA Ultra whose port setting has never been established.
+The record may carry none of the terminal's keys; it may carry no configuration rows at all, which is every record a token-only census produced until a device
+update of the original dialect delivers its rows, so a token client can read `{}` here for every terminal; the wiring pair may be only half readable, which is
+no pair; or the hardware may report neither a pair nor a duty, which is a UA Ultra whose port setting has never been established.
 
 This is read live on every call, where the door-state entry a door carries is seeded once from the same hardware and then left to the notification stream. So a
 consumer asking what a terminal reports right now reads this, and one asking what the controller last said about a door reads that.

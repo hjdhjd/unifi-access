@@ -24,10 +24,10 @@ same trip made with it on moved the input row and raised the notification. So a 
 is no evidence of gating.
 
 The absent answer covers the situations a caller may want to tell apart from a quiet device, and they are deliberately not collapsed into `false`. The record may
-carry no such row; it may carry no configuration rows at all, which is every record a token-only census produced, so a token client reads `undefined` here by
-construction while [isTamperCapable](isTamperCapable.md) still answers; the device's tampering alert may be switched off, which leaves its input row a reading the hardware
-has stopped revising; or the row may carry a value outside the spellings the controller has been observed to write, which is not guessed at. A caller telling a
-first observation from a change needs that absence distinct from a reported `false`.
+carry no such row; it may carry no configuration rows at all, which is every record a token-only census produced until a device update of the original dialect
+delivers its rows, so a token client can read `undefined` here while [isTamperCapable](isTamperCapable.md) still answers; the device's tampering alert may be switched off,
+which leaves its input row a reading the hardware has stopped revising; or the row may carry a value outside the spellings the controller has been observed to
+write, which is not guessed at. A caller telling a first observation from a change needs that absence distinct from a reported `false`.
 
 The reading is refreshed by the topology census and by the controller's original device-update dialect, whose every captured delivery is a full record carrying
 the whole row array. The only rows the newer dialect delivers carry access-method values, projected from its access-method map, and never a tamper reading, so
