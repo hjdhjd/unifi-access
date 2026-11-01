@@ -1,8 +1,10 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * connector.ts: The connector both dialers hand undici - the one place a socket is held from the moment it is vended, so a reset or a teardown can end a dial in flight.
+ * connector.ts: The connector every dialer hands undici - the one place a socket is held from the moment it is vended, so a reset or a teardown can end a dial in
+ * flight - and the order every owned teardown lets a dispatcher and its connector go in.
  */
 import { buildConnector, errors } from "undici";
+import type { Dispatcher } from "undici";
 import type { Socket } from "node:net";
 
 /* The connector's own runtime shape. undici's types declare the call as returning `void` (node_modules/undici/types/connector.d.ts:34-36) while the
@@ -45,6 +47,44 @@ export interface OwnedConnector {
   readonly connect: buildConnector.connector;
   readonly lastDialFailure: Error | undefined;
   release(): void;
+}
+
+/**
+ * What an owned teardown lets go: a dispatcher this library built for itself, and the connector that dispatcher dials through. An injected dispatcher is never
+ * one - its lifecycle belongs to whoever injected it, and nothing here holds a connector beside it.
+ */
+export interface OwnedDispatcher {
+
+  readonly connector: OwnedConnector;
+  readonly dispatcher: Dispatcher;
+}
+
+/**
+ * Let an owned dispatcher and its connector go: the dispatcher's destroy, then the connector's release, in one synchronous stack. This is the one place that order
+ * is written, and every owned teardown goes through it.
+ *
+ * The destroy goes first because it is what settles a request in flight on an established connection as the pool reset: the dispatcher ends each of its
+ * connections with its own destroyed-client error, and the request carried on one rejects with that error. Released the other way round, the connector severs the
+ * socket first, under a request undici still counts as running - on an HTTP/2 session undici's socket-close handler then throws an internal assertion as an
+ * uncaught exception, which ends the process, and on HTTP/1.1 the request misreports as a socket failure.
+ *
+ * The destroy is called rather than awaited ahead of the release, because the release is what reaches a dial still in its handshake, and letting that dial go must
+ * depend on nothing that can stall or reject. The destroy and the release share one synchronous stack so that nothing can dial between them: the destroy marks the
+ * dispatcher destroyed before it returns, and a destroyed dispatcher dials nothing more.
+ *
+ * This function is local to this library and outside the parity suite, which holds the connector itself in step with homebridge-plugin-utils.
+ *
+ * @param owned - The dispatcher and the connector it dials through.
+ *
+ * @returns The dispatcher's destroy, which settles once the dispatcher's own teardown has completed.
+ */
+export async function releaseOwned({ connector, dispatcher }: OwnedDispatcher): Promise<void> {
+
+  const destroyed = dispatcher.destroy();
+
+  connector.release();
+
+  return destroyed;
 }
 
 /**

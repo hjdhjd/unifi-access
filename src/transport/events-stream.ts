@@ -36,15 +36,15 @@ import type { AccessEventsClosedPayload, AccessEventsPacketPayload } from "../di
 import type { AccessWebSocket, AccessWebSocketCloseEvent, AccessWebSocketErrorEvent, AccessWebSocketMessageEvent } from "./ws.ts";
 import { Agent, WebSocket } from "undici";
 import { classifyPacket, isAccessEventPacket } from "../protocol/events.ts";
+import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
-import type { OwnedConnector } from "./connector.ts";
+import type { OwnedDispatcher } from "./connector.ts";
 import type { StreamOptions } from "../event-bus.ts";
 import { channels } from "../diagnostics.ts";
 import { classifyTransportError } from "./failure.ts";
-import { createOwnedConnector } from "./connector.ts";
 import { noopLog } from "../logging.ts";
 import { toText } from "./ws.ts";
 import { wallClock } from "../clock.ts";
@@ -195,14 +195,14 @@ export class EventStream implements AsyncDisposable {
   readonly #identity: AccessIdentityLeg;
   readonly #log: AccessLogging;
   /* What we own when we built the default WebSocket ourselves, and null when a factory was injected - its owner manages the transport underneath it, and we never
-   * destroy what we did not create, exactly as Transport treats its dispatcher. The agent and the connector travel as one value so the two cannot disagree about
-   * whether there is anything to release.
+   * destroy what we did not create, exactly as Transport treats its dispatcher. The agent, carried as the dispatcher, and the connector travel as one value so the
+   * two cannot disagree about whether there is anything to release.
    *
    * The connector is where every socket is seen from the moment it is vended, which is what puts the whole connection within reach: destroying the agent releases
    * only what the agent still holds, a completed upgrade hands its socket to the WebSocket machinery - from that moment the connection is ours to sever or
    * nobody's - and a socket still in its handshake belongs to nothing else at all.
    */
-  readonly #owned: { readonly agent: Agent; readonly connector: OwnedConnector } | null;
+  readonly #owned: OwnedDispatcher | null;
   readonly #socketListeners: SocketListeners;
   readonly #ws: AccessWebSocket;
 
@@ -268,7 +268,7 @@ export class EventStream implements AsyncDisposable {
       const connector = createOwnedConnector({ allowH2, verifyTls: options.verifyTls ?? false });
       const agent = new Agent({ allowH2, connect: connector.connect, pipelining: 0 });
 
-      this.#owned = { agent, connector };
+      this.#owned = { connector, dispatcher: agent };
       this.#ws = new WebSocket(url, { dispatcher: agent, headers });
     }
 
@@ -733,14 +733,14 @@ export class EventStream implements AsyncDisposable {
     this.#ws.removeEventListener("open", this.#socketListeners.open);
   }
 
-  /* Release the connection this stream owns, and nothing at all when a factory was injected.
+  /* Release the connection this stream owns, and nothing at all when a factory was injected. `releaseOwned` holds the order the agent and the connector are let
+   * go in, and the reasons for it; what belongs to a stream alone is why the connector's release is needed here at all.
    *
-   * The severance happens first and synchronously, before anything is awaited, so that letting the connection go depends on nothing that can stall or reject - the
-   * agent's own teardown then follows for its bookkeeping. That order is what the guarantee rests on: a peer under no obligation to answer a close frame can hold
-   * a socket open indefinitely, and a socket the agent has handed to a completed upgrade is not among what the agent releases. A socket still in its handshake is
-   * severed by the same call, carrying the error undici needs on the destroy to fail the dial rather than leave it pending, and nothing can dial again behind it:
-   * undici's WebSocket establishes its connection exactly once (node_modules/undici/lib/web/websocket/websocket.js:179), and this call destroys the agent in the
-   * same breath. Destroying an already-destroyed socket does nothing, so a set the close handlers have already drained costs a walk and no more.
+   * A peer under no obligation to answer a close frame can hold a socket open indefinitely, and a socket the agent has handed to a completed upgrade is not among
+   * what the agent releases, so the connector's release is what severs it. A socket still in its handshake is severed by the same release, destroyed with the
+   * error undici needs to fail the dial rather than leave it pending, and nothing can dial again behind it: undici's WebSocket establishes its connection exactly
+   * once, from its constructor, and the agent is destroyed in the same stack as the release. Destroying an already-destroyed socket does nothing, so a set the
+   * close handlers have already drained costs a walk and no more.
    */
   async #releaseOwnedConnection(): Promise<void> {
 
@@ -749,9 +749,7 @@ export class EventStream implements AsyncDisposable {
       return;
     }
 
-    this.#owned.connector.release();
-
-    await this.#owned.agent.destroy();
+    await releaseOwned(this.#owned);
   }
 
   // The caller's own signal fired. The cause travels with the teardown, and naming the caller's signal is what settles a still-pending open handshake as the

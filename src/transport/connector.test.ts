@@ -1,18 +1,21 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * connector.test.ts: Tests for the owned connector - releasing what is held, a connection attempt still in flight and an established connection alike, and the
- * ALPN offer a function connector has to restate for itself.
+ * connector.test.ts: Tests for the owned connector - releasing what is held, a connection attempt still in flight and an established connection alike, the ALPN
+ * offer a function connector has to restate for itself, and the order an owned teardown lets a dispatcher and its connector go in.
  *
- * These drive the helper directly through an undici `Agent`, because the whole subject is what undici does with a socket the helper destroyed under it: the
- * rejection a pending request gets, and whether the peer sees the connection end. A silent loopback peer is what holds a connection attempt open for as long as a
- * test needs it, and the https responder is what supplies an established one.
+ * The connector's rows drive it directly through an undici `Agent`, because the whole subject is what undici does with a socket the helper destroyed under it:
+ * the rejection a pending request gets, and whether the peer sees the connection end. A silent loopback peer is what holds a connection attempt open for as long
+ * as a test needs it, and the https responder is what supplies an established one. The teardown order is read off structural fakes instead, because what it
+ * asserts is an order inside one synchronous stack, which a real dispatcher gives a test no way to observe.
  */
 import { Agent, errors, request } from "undici";
 import { DIAL_SETTLE_BOUND_MS, createHttpsLoopback, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
+import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import { describe, test } from "node:test";
+import type { Dispatcher } from "undici";
+import type { OwnedConnector } from "./connector.ts";
 import assert from "node:assert/strict";
 import { createLoopbackServer } from "./events-stream.helpers.ts";
-import { createOwnedConnector } from "./connector.ts";
 import { freePort } from "homebridge-plugin-utils/testing";
 import { resolveErrnoCause } from "../errors.ts";
 
@@ -139,5 +142,42 @@ describe("createOwnedConnector", () => {
 
     await withholdingAgent.destroy();
     await endedWithheld;
+  });
+});
+
+describe("releaseOwned", () => {
+
+  test("releaseOwned destroys the dispatcher and then releases the connector, with nothing awaited between them", async () => {
+
+    const calls: string[] = [];
+    const destroy = Promise.withResolvers<undefined>();
+
+    // The destroy's settlement is held unresolved, so a release that waited on it would be missing from the log read below.
+    const dispatcher = {
+
+      destroy: async (): Promise<void> => {
+
+        calls.push("destroy");
+
+        return destroy.promise;
+      }
+    } as unknown as Dispatcher;
+
+    const connector = {
+
+      release: (): void => {
+
+        calls.push("release");
+      }
+    } as unknown as OwnedConnector;
+
+    const released = releaseOwned({ connector, dispatcher });
+
+    // Read before anything is awaited: an await ahead of the destroy, or between the destroy and the release, leaves the log short at this point.
+    assert.deepEqual(calls, [ "destroy", "release" ], "the destroy and then the release, each inside the call itself");
+
+    destroy.resolve(undefined);
+
+    await released;
   });
 });

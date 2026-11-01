@@ -1,15 +1,20 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * loopback.helpers.ts: The loopback peers these suites drive real sockets against - a recording https responder, a silent peer that answers nothing, and a silent
- * peer that resets every connection it accepts - plus the accept-order ledger every loopback peer records its connections in.
+ * loopback.helpers.ts: The loopback peers these suites drive real sockets against - a recording https responder, an https peer that takes requests over HTTP/2 or
+ * HTTP/1.1 and answers none, a silent peer that answers nothing, and a silent peer that resets every connection it accepts - plus the accept-order ledger every
+ * loopback peer records its connections in.
  *
  * A peer lives here when more than one suite needs it, or when its lifecycle is the plumbing rather than the point. The notification stream's hand-rolled
  * WebSocket upgrade stays beside its own tests instead: it speaks raw TLS sockets and shares no server shape with an https responder, so the accept-order ledger
- * is all it takes from here.
+ * and the record of a TLS connection are all it takes from here.
  */
+import type { Http2ServerRequest, ServerHttp2Session } from "node:http2";
 import { listenOnLoopback, stopListening } from "homebridge-plugin-utils/testing";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
+import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
+import type { Server as TlsServer } from "node:tls";
+import { createSecureServer } from "node:http2";
 import { createServer } from "node:https";
 import { createServer as createTcpServer } from "node:net";
 import { setTimeout as setTimeoutAsync } from "node:timers/promises";
@@ -132,6 +137,40 @@ export interface AcceptedConnection {
   readonly closed: Promise<void>;
 }
 
+/** One connection a loopback peer accepted over TLS, as a test observes it: the `closed` every accepted connection carries, and the application protocol its
+ * handshake negotiated, read at the same moment. The protocol is what a test asserts before anything protocol-specific, because a row meant for one protocol that
+ * quietly ran over the other would pass for the wrong reason.
+ */
+export interface LoopbackConnection extends AcceptedConnection {
+
+  readonly alpnProtocol: string | false | null;
+}
+
+/**
+ * Take in one connection a loopback peer has just accepted: keep its socket for the peer's disposal to sever when the peer keeps them, swallow the error a client
+ * severing its end raises, and arm the `closed` a test reads. Every loopback peer accepts through this, so a connection is watched the same way whichever peer
+ * took it, and each peer adds only what is its own - reading the socket, acting on it, or recording the protocol it negotiated.
+ *
+ * @typeParam S  - The socket the peer accepted, a plain or a TLS one.
+ *
+ * @param socket - The socket just accepted.
+ * @param kept   - Where the peer keeps its sockets for disposal, when it keeps them at all.
+ *
+ * @returns The accepted connection, its `closed` armed before any event can fire on the socket.
+ */
+export function acceptConnection<S extends Socket>(socket: S, kept?: S[]): AcceptedConnection {
+
+  const closed = Promise.withResolvers<undefined>();
+
+  kept?.push(socket);
+  socket.once("close", () => closed.resolve(undefined));
+
+  // A client severing its end of the connection is the very thing these tests arrange, so the reset it raises here is expected rather than a fault.
+  socket.on("error", () => undefined);
+
+  return { closed: closed.promise };
+}
+
 /** A silent peer on loopback: how many connections it has accepted, where to reach it, and the connection at a given position in accept order. */
 export interface SilentLoopback extends AsyncDisposable {
 
@@ -183,17 +222,11 @@ async function createQuietLoopback(onAccept: (socket: Socket) => void): Promise<
   const sockets: Socket[] = [];
   const server = createTcpServer((socket) => {
 
-    const closed = Promise.withResolvers<undefined>();
+    const connection = acceptConnection(socket, sockets);
 
-    sockets.push(socket);
     socket.resume();
-    socket.once("close", () => closed.resolve(undefined));
-
-    // A client severing its end of the connection is the very thing these tests arrange, so the reset it raises here is expected rather than a fault.
-    socket.on("error", () => undefined);
-
     onAccept(socket);
-    ledger.record({ closed: closed.promise });
+    ledger.record(connection);
   });
 
   const host = "127.0.0.1:" + (await listenOnLoopback(server)).toString();
@@ -266,17 +299,7 @@ export async function createHttpsLoopback(respond: (hit: number) => { body: stri
   /* The accepted sockets are recorded on the server's own connection event rather than on a request, because what these tests watch is the connection's lifetime
    * and not the exchange carried over it: a keepalive socket serves several requests, and the one a release severs may be carrying none at all.
    */
-  server.on("secureConnection", (socket) => {
-
-    const closed = Promise.withResolvers<undefined>();
-
-    socket.once("close", () => closed.resolve(undefined));
-
-    // A client severing its end of the connection is what the release tests arrange, so the reset it raises here is expected rather than a fault.
-    socket.on("error", () => undefined);
-
-    ledger.record({ closed: closed.promise });
-  });
+  server.on("secureConnection", (socket) => ledger.record(acceptConnection(socket)));
 
   const host = "127.0.0.1:" + (await listenOnLoopback(server)).toString();
 
@@ -294,5 +317,85 @@ export async function createHttpsLoopback(respond: (hit: number) => { body: stri
     hits,
     host,
     origin: "https://" + host
+  };
+}
+
+/** One request an unanswering peer received, as a test observes it: the method and the path it carried. Each is typed as the platform's https request declares it,
+ * optional because that class carries a client's responses as well, though a request a server receives always carries each.
+ */
+export interface UnansweredRequest {
+
+  readonly method: string | undefined;
+  readonly path: string | undefined;
+}
+
+/** An https peer on loopback that answers nothing: where to reach it, the connection at a given position in accept order, and the request at a given position in
+ * arrival order.
+ */
+export interface UnansweringHttpsLoopback extends AsyncDisposable {
+
+  readonly host: string;
+  connection(index: number): Promise<LoopbackConnection>;
+  request(index: number): Promise<UnansweredRequest>;
+}
+
+/**
+ * An https peer on loopback that takes every request and answers none, over HTTP/2 or HTTP/1.1.
+ *
+ * A request this peer has received is in flight on an established connection for as long as a test needs it, which is the state a teardown meets once the dial
+ * is over and the one neither the silent peers nor the recording responder can hold. By default it is a secure HTTP/2 server that accepts HTTP/1.1 as well, so a
+ * client offering `h2` beside `http/1.1` negotiates `h2`. With `offerH2` false it is an https server instead, which speaks HTTP/1.1 alone and offers only
+ * `http/1.1` in its handshake, so a client that offers `http/1.1` negotiates it, whatever else it offers - which is how a test holds a request on the protocol it
+ * means to. Each connection is recorded at accept with the protocol it negotiated, and each request as it arrives, so a test can arm itself against a connection
+ * or a request before the client makes it.
+ *
+ * @param options         - Peer options.
+ * @param options.offerH2 - Whether the peer negotiates HTTP/2 with a client that offers it. Defaults to `true`.
+ *
+ * @returns The listening peer. Dispose it to sever every session and connection and stop listening.
+ */
+export async function createUnansweringHttpsLoopback({ offerH2 = true }: { offerH2?: boolean } = {}): Promise<UnansweringHttpsLoopback> {
+
+  const connections = createConnectionLedger<LoopbackConnection>();
+  const requests = createConnectionLedger<UnansweredRequest>();
+  const sessions: ServerHttp2Session[] = [];
+  const sockets: Socket[] = [];
+  const identity = { cert: loopbackCertificateFixture, key: loopbackPrivateKeyFixture };
+
+  // Each server hands this one handler its requests, and it reads only what the HTTP/2 server's request and the https server's request have in common.
+  const onRequest = (request: Http2ServerRequest | IncomingMessage): void => requests.record({ method: request.method, path: request.url });
+
+  /* Which server answers decides the protocol, rather than a setting on one server: the HTTP/2 server writes its own offer, with `h2` at its head, whatever list it
+   * is handed, while the https server offers `http/1.1` alone. Only the HTTP/2 server opens sessions, so only it records them for the disposal to end.
+   */
+  const server: TlsServer = offerH2 ? createSecureServer({ ...identity, allowHTTP1: true }, onRequest).on("session", (session) => sessions.push(session)) :
+    createServer(identity, onRequest);
+
+  server.on("secureConnection", (socket) => connections.record({ alpnProtocol: socket.alpnProtocol, ...acceptConnection(socket, sockets) }));
+
+  const host = "127.0.0.1:" + (await listenOnLoopback(server)).toString();
+
+  return {
+
+    [Symbol.asyncDispose]: async (): Promise<void> => {
+
+      /* Severing before closing rather than after: a server's close() resolves only once every connection has ended, and a request nobody answers holds its
+       * connection open. An HTTP/2 session is ended ahead of the socket it runs over, so no session outlives the connection under it.
+       */
+      for(const session of sessions) {
+
+        session.destroy();
+      }
+
+      for(const socket of sockets) {
+
+        socket.destroy();
+      }
+
+      await stopListening(server);
+    },
+    connection: async (index: number): Promise<LoopbackConnection> => connections.connection(index),
+    host,
+    request: async (index: number): Promise<UnansweredRequest> => requests.connection(index)
   };
 }

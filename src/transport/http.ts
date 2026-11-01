@@ -9,16 +9,16 @@ import type { AccessHttpRequestCommon, AccessHttpRequestEndOutcome, AccessHttpRe
 import type { AccessIdentityLeg, FatalError } from "../errors.ts";
 import { Pool, errors, interceptors, request } from "undici";
 import { armDeadline, wallClock } from "../clock.ts";
+import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { Clock } from "../clock.ts";
 import type { Dispatcher } from "undici";
 import { EventBus } from "../event-bus.ts";
 import type { IncomingHttpHeaders } from "node:http";
-import type { OwnedConnector } from "./connector.ts";
+import type { OwnedDispatcher } from "./connector.ts";
 import type { StreamOptions } from "../event-bus.ts";
 import { channels } from "../diagnostics.ts";
 import { classifyTransportError } from "./failure.ts";
-import { createOwnedConnector } from "./connector.ts";
 import { noopLog } from "../logging.ts";
 import { randomUUID } from "node:crypto";
 
@@ -350,7 +350,7 @@ export class Transport implements AsyncDisposable {
    * belongs to the injector, so a reset or a disposal here has nothing of its own to release.
    */
   #consecutiveFailures = 0;
-  #pool: { readonly connector: OwnedConnector; readonly dispatcher: Dispatcher } | { readonly connector: null; readonly dispatcher: Dispatcher };
+  #pool: OwnedDispatcher | { readonly connector: null; readonly dispatcher: Dispatcher };
   #throttledSince: number | null = null;
 
   constructor(options: TransportOptions) {
@@ -478,7 +478,7 @@ export class Transport implements AsyncDisposable {
       return;
     }
 
-    void this.#releaseOwnedPool(pool);
+    void releaseOwned(pool);
     this.#pool = this.#buildPool();
   }
 
@@ -531,7 +531,7 @@ export class Transport implements AsyncDisposable {
 
     if(pool.connector !== null) {
 
-      await this.#releaseOwnedPool(pool);
+      await releaseOwned(pool);
     }
   }
 
@@ -618,17 +618,6 @@ export class Transport implements AsyncDisposable {
 
       throw classified;
     }
-  }
-
-  /* Release one owned pool: the connector severs everything it still holds - a connection attempt in flight among it - first and synchronously, and the
-   * dispatcher's own teardown follows for its bookkeeping. That order is what the guarantee rests on, exactly as it is for the realtime stream's release: letting
-   * a connection go must depend on nothing that can stall or reject, and a socket still in its handshake is not among what the dispatcher itself releases.
-   */
-  async #releaseOwnedPool(pool: { readonly connector: OwnedConnector; readonly dispatcher: Dispatcher }): Promise<void> {
-
-    pool.connector.release();
-
-    return pool.dispatcher.destroy();
   }
 
   // Book one breaker outcome. Success closes the breaker (and announces recovery only on the closing edge, so `throttleExited` never flaps); failure either trips
@@ -788,7 +777,7 @@ export class Transport implements AsyncDisposable {
    * the retried verbs and statuses are documented beside their values. The profile's lists are copied into the interceptor's options because undici types them as
    * mutable arrays and the profile holds them readonly.
    */
-  #buildPool(): { connector: OwnedConnector; dispatcher: Dispatcher } {
+  #buildPool(): OwnedDispatcher {
 
     const userAgent: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (dispatchOptions, handler) => {
 

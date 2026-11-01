@@ -3,11 +3,12 @@
  * events-stream.helpers.ts: The two peers EventStream tests drive it against - a deterministic in-memory fake WebSocket for everything above the socket, and a
  * loopback TLS server that speaks the upgrade by hand for the things only a real socket can show.
  */
+import { acceptConnection, createConnectionLedger } from "./loopback.helpers.ts";
 import { listenOnLoopback, stopListening } from "homebridge-plugin-utils/testing";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
 import type { AccessWebSocket } from "./ws.ts";
+import type { LoopbackConnection } from "./loopback.helpers.ts";
 import type { TLSSocket } from "node:tls";
-import { createConnectionLedger } from "./loopback.helpers.ts";
 import { createHash } from "node:crypto";
 import { createServer } from "node:tls";
 
@@ -194,18 +195,6 @@ export class FakeWebSocket implements AccessWebSocket {
 export type LoopbackPeerBehavior = "answersClose" | "ignoresClose" | "neverUpgrades";
 
 /**
- * One connection the loopback server accepted, as a test observes it.
- *
- * `closed` is armed at accept rather than on demand, which is what the shared accept-order ledger this peer records into exists for. `alpnProtocol` is read at the
- * same moment, and is what the negotiated-protocol assertion reads.
- */
-export interface LoopbackConnection {
-
-  readonly alpnProtocol: string | false | null;
-  readonly closed: Promise<void>;
-}
-
-/**
  * A listening loopback server. `connection(index)` resolves with the connection at that position in accept order, whether it has already arrived or is still to
  * come, so a test can arm itself against a connection before the client makes it.
  */
@@ -239,17 +228,10 @@ export async function createLoopbackServer(behavior: LoopbackPeerBehavior): Prom
 
   server.on("secureConnection", (socket) => {
 
-    const closed = Promise.withResolvers<undefined>();
     let buffered = Buffer.alloc(0);
     let upgraded = false;
 
-    sockets.push(socket);
-    socket.once("close", () => closed.resolve(undefined));
-
-    // A client severing its end of the connection is the very thing these tests arrange, so the reset it raises here is expected rather than a fault.
-    socket.on("error", () => undefined);
-
-    ledger.record({ alpnProtocol: socket.alpnProtocol, closed: closed.promise });
+    ledger.record({ alpnProtocol: socket.alpnProtocol, ...acceptConnection(socket, sockets) });
 
     socket.on("data", (chunk: Buffer) => {
 

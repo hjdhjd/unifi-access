@@ -1,20 +1,23 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * http.test.ts: Unit tests for the HTTP transport - the send/request surface, AccessResponse decoding and ensureOk classification, transport-error classification
- * (timeout vs caller-abort vs network), the base and auth headers, the 401-relogin retry, and the full throttle circuit-breaker state machine
- * (closed -> open -> half-open -> closed).
+ * http.test.ts: Unit tests for the HTTP transport - the send/request surface, AccessResponse decoding and ensureOk classification, the status predicates, the base
+ * and auth headers, the 401-relogin retry, transport-error classification (timeout vs caller-abort vs network), the connection dial, a request in flight at a
+ * teardown, the full throttle circuit-breaker state machine (closed -> open -> half-open -> closed), the diagnostics channels, dispatcher ownership, certificate
+ * verification, and the event rails.
  *
- * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, and a fake Clock advances breaker time
+ * Most groups are driven deterministically: an undici MockAgent injects responses and failures without a live controller, and a fake Clock advances breaker time
  * without real-time waits. The injected dispatcher and clock let these tests assert the controller's throttle and retry behavior - the established behavioral
- * contract - exactly and without flakiness.
+ * contract - exactly and without flakiness. What a MockAgent cannot reach runs over real sockets instead, against loopback peers and through a transport that
+ * builds its own pool: the connection dial, a request in flight on an established connection at a reset or a disposal, and certificate verification.
  */
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_RETRY_PROFILE, ACCESS_API_TIMEOUT } from "../settings.ts";
 import { AccessAbortedError, AccessAuthError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessThrottledError,
   AccessTimeoutError } from "../errors.ts";
 import type { AccessHttpRequestEndPayload, AccessHttpRequestStartPayload, AccessHttpThrottleEnteredPayload,
   AccessHttpThrottleExitedPayload } from "../diagnostics.ts";
-import { DIAL_SETTLE_BOUND_MS, createHttpsLoopback, createResettingLoopback, createSilentLoopback, elapsedSince, pendingThroughRedialWait } from "./loopback.helpers.ts";
-import { TestClock, capturingLog, errnoError, expectAt, loggedAt, settle, silentLog } from "homebridge-plugin-utils/testing";
+import { DIAL_SETTLE_BOUND_MS, createHttpsLoopback, createResettingLoopback, createSilentLoopback, createUnansweringHttpsLoopback, elapsedSince,
+  pendingThroughRedialWait } from "./loopback.helpers.ts";
+import { TestClock, capturingLog, errnoError, expectAt, loggedAt, settle, silentLog, waitUntil } from "homebridge-plugin-utils/testing";
 import { Transport, controllerReachable, responseOk } from "./http.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
@@ -804,6 +807,92 @@ describe("Transport", () => {
       await connection.closed;
 
       assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "the severed connection attempt ends within the same bound");
+    });
+  });
+
+  /* What a request settles as when a reset or a disposal lands while it is in flight on an established connection, which is what a teardown meets once the dial is
+   * over.
+   *
+   * The owned pool is the subject here exactly as it is in the dial tests above, so no dispatcher is injected. The peer takes each request and answers none, and
+   * each test awaits the peer's receipt of its request before the teardown, so the request is in flight on the connection when the teardown lands. Each test
+   * asserts the protocol its connection negotiated ahead of the teardown, because a teardown that lets the pool go in the wrong order fails differently on each -
+   * an uncaught exception over HTTP/2 and a misreported socket failure over HTTP/1.1 - and a test meant for one protocol that ran over the other would pass for the
+   * wrong reason. The request is a PATCH, a verb the pool's retry profile leaves out, so what reaches the caller is the failure the teardown made rather than a
+   * retry's.
+   */
+  describe("a request in flight on an established connection", () => {
+
+    // What each request here settles as: the pool-reset interruption, carrying undici's own destroyed-client error as its cause and that error's code as its own.
+    const isPoolReset = (error: unknown): boolean => {
+
+      assert.ok(error instanceof AccessNetworkError);
+      assert.match(error.message, /connection pool was reset/);
+      assert.equal(error.code, "UND_ERR_DESTROYED");
+      assert.ok(error.cause instanceof errors.ClientDestroyedError);
+
+      return true;
+    };
+
+    test("reset() fails a request in flight on an HTTP/2 connection as the pool-reset interruption", async () => {
+
+      await using peer = await createUnansweringHttpsLoopback();
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+
+      const arriving = peer.connection(0);
+      const pending = transport.send(url(peer.host, "/x"), { method: "PATCH" });
+
+      await peer.request(0);
+
+      assert.equal((await arriving).alpnProtocol, "h2", "the request is in flight on an HTTP/2 connection");
+
+      transport.reset();
+
+      await assert.rejects(pending, isPoolReset);
+    });
+
+    test("disposal fails a request in flight on an HTTP/2 connection as the pool-reset interruption and settles at once", async () => {
+
+      await using peer = await createUnansweringHttpsLoopback();
+
+      const transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+      const arriving = peer.connection(0);
+      const pending = transport.send(url(peer.host, "/x"), { method: "PATCH" });
+
+      await peer.request(0);
+
+      assert.equal((await arriving).alpnProtocol, "h2", "the request is in flight on an HTTP/2 connection");
+
+      // The rejection is claimed before the disposal that causes it, so it is never a rejection nobody is waiting on.
+      const failing = assert.rejects(pending, isPoolReset);
+      let disposed = false;
+
+      /* The disposal is claimed and bounded on real time rather than awaited bare, because a disposal that never settles would otherwise hold this file open past
+       * the test's own failure instead of failing it within the bound.
+       */
+      void transport[Symbol.asyncDispose]().then(() => {
+
+        disposed = true;
+      });
+
+      await waitUntil(() => disposed, { description: "the disposal to settle", timeoutMs: DIAL_SETTLE_BOUND_MS });
+      await failing;
+    });
+
+    test("reset() fails a request in flight on an HTTP/1.1 connection as the pool-reset interruption", async () => {
+
+      await using peer = await createUnansweringHttpsLoopback({ offerH2: false });
+      await using transport = new Transport({ clock: new TestClock(), host: peer.host, log: silentLog() });
+
+      const arriving = peer.connection(0);
+      const pending = transport.send(url(peer.host, "/x"), { method: "PATCH" });
+
+      await peer.request(0);
+
+      assert.equal((await arriving).alpnProtocol, "http/1.1", "the request is in flight on an HTTP/1.1 connection");
+
+      transport.reset();
+
+      await assert.rejects(pending, isPoolReset);
     });
   });
 
