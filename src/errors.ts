@@ -381,9 +381,10 @@ export class AccessProtocolError extends FatalError {
 }
 
 /**
- * A connect option the library cannot act on, refused by {@link AccessClient.connect} before any request is sent: a controller address no URL can
- * carry, such as an IPv6 literal with a zone (`fe80::1%en0`) or a value carrying credentials, a path, a query or a fragment. The message names the address.
- * Fatal because the same configuration is refused the same way on every attempt, so the caller corrects it rather than retrying.
+ * A connect option the library cannot act on, refused by {@link AccessClient.connect} before any request is sent: a controller address that is missing or is not a
+ * string, or one no URL can carry, such as an IPv6 literal with a zone (`fe80::1%en0`) or a value carrying credentials, a path, a query or a fragment. Each refusal that
+ * names the address quotes it masked by {@link maskAddressCredentials}. Fatal because the same configuration is refused the same way on every attempt, so the caller
+ * corrects it rather than retrying.
  *
  * @category Errors
  */
@@ -720,9 +721,23 @@ export function isIdentityRefusal(error: unknown): error is AccessAuthError | (A
   return (error instanceof AccessAuthError) || ((error instanceof AccessApiError) && IDENTITY_REFUSAL_CODES.some((code) => (code === error.code)));
 }
 
+/* The error a reading of a failure reads: the rule every reading that opens the bootstrap wrapper opens it through, so those readings agree on the error they read.
+ *
+ * What is read is the error handed in, or the `cause` of an {@link AccessBootstrapError} handed in, and no further. The direct bootstrap wraps a document read the
+ * controller answered with a failure, a refusal or a status among them, in that error at the fetch stage, so this opens that one wrapper. Every other error is read as
+ * itself, so a network fault carrying a refusal somewhere below it is the network fault it is, and a bootstrap error wrapping another bootstrap error yields the inner
+ * wrapper, which no reading recognizes. It stays private to this module, because its readers are the readings here.
+ */
+function unwrapBootstrapError(error: unknown): unknown {
+
+  return (error instanceof AccessBootstrapError) ? error.cause : error;
+}
+
 /**
  * Whether a failure is the controller refusing the sign-in on either ground - the identity itself, as {@link isIdentityRefusal} reads one, or a privilege, as
- * {@link isPrivilegeRefusal} reads one - in every spelling the library produces for each.
+ * {@link isPrivilegeRefusal} reads one - in every spelling the library produces for each. It is the narrower reading of a refusal, and it chooses the library's refused
+ * announcement, because nothing changes until a person corrects the credentials or the privilege. It chooses no schedule: a caller retrying a connection chooses its
+ * schedule by {@link isControllerRefusal}, which reads a refused sign-in and a rate limit alike.
  *
  * What is read is the error handed in, or the `cause` of an {@link AccessBootstrapError} handed in, and no further. The direct bootstrap wraps a refused document
  * read in that error at the fetch stage, and the narrower predicates read the error handed in and never its `cause` chain, so this opens that one wrapper, the one
@@ -734,13 +749,13 @@ export function isIdentityRefusal(error: unknown): error is AccessAuthError | (A
  *
  * @param error - The error value to classify. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
  *
- * @returns `true` when the failure, or the cause a bootstrap error carries, is an identity or a privilege refusal; `false` for anything else.
+ * @returns `true` when the failure, or the cause a bootstrap error carries, is an identity or a privilege refusal; `false` for anything else, a rate limit among them.
  *
  * @category Utilities
  */
 export function isSignInRefusal(error: unknown): boolean {
 
-  const refusal = (error instanceof AccessBootstrapError) ? error.cause : error;
+  const refusal = unwrapBootstrapError(error);
 
   return isIdentityRefusal(refusal) || isPrivilegeRefusal(refusal);
 }
@@ -777,9 +792,9 @@ export function readinessOfStatus(statusCode: number): AccessControllerReadiness
 }
 
 /**
- * Read the status error a failure carries: an {@link AccessRequestError} handed in, or one carried as the `cause` of an {@link AccessBootstrapError} handed in, and
- * no further, on the terms {@link isSignInRefusal} opens that one wrapper. Every reader of the status a failure carries goes through here, so which wrapper is
- * opened is stated once. It is not published from the library's public surface, because its readers are the library's own.
+ * Read the status error a failure carries: an {@link AccessRequestError} handed in, or one carried as the `cause` of an {@link AccessBootstrapError} handed in, and no
+ * further, by the one rule {@link unwrapBootstrapError} states. Every reader of the status a failure carries goes through here, so every status reading opens the
+ * wrapper by that rule. It is not published from the library's public surface, because its readers are the library's own.
  *
  * @param error - The error value to read. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
  *
@@ -789,7 +804,7 @@ export function readinessOfStatus(statusCode: number): AccessControllerReadiness
  */
 export function statusErrorOf(error: unknown): AccessRequestError | null {
 
-  const carried = (error instanceof AccessBootstrapError) ? error.cause : error;
+  const carried = unwrapBootstrapError(error);
 
   return (carried instanceof AccessRequestError) ? carried : null;
 }
@@ -814,6 +829,34 @@ export function controllerReadinessOf(error: unknown): AccessControllerReadiness
   const statusError = statusErrorOf(error);
 
   return (statusError === null) ? null : readinessOfStatus(statusError.statusCode);
+}
+
+/**
+ * Whether a failure is the controller refusing in a way that asking again sooner cannot change: a refused identity or privilege, as {@link isSignInRefusal} reads one, in
+ * every spelling it reads, or a refused request rate, a controller limiting requests, the 429 the transport classifies as an {@link AccessRequestError} and
+ * {@link controllerReadinessOf} reads as `"limiting"`. In each the controller answered, and its answer stands until a person corrects the credentials or the privilege,
+ * or the controller lifts its limit, so a caller retrying a connection waits for any of them on the slower {@link ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS} rather than at the
+ * pace it keeps for a controller it cannot reach. The library's own recovery chooses its schedule by this reading, so a connect retry that branches on it walks that
+ * schedule for exactly the failures recovery walks it for.
+ *
+ * It pairs with {@link isSignInRefusal}, the narrower reading: this one chooses the schedule, and that one chooses how a loss is announced, because a refused sign-in
+ * waits on a person to correct the credentials or the privilege while a rate limit is the controller asking to be asked less often.
+ *
+ * An {@link AccessBootstrapError} handed in is read by the `cause` it carries, because the direct bootstrap wraps a refused or rate-limited document read in that error
+ * at the fetch stage, and no further, so a bootstrap error wrapping another bootstrap error answers false. Each reading this joins opens that one wrapper by the same
+ * rule, so every arm reads the same error. Every other error is read as itself, so a network fault carrying a refusal somewhere below it is the network fault it is.
+ * The answer is a plain `boolean` rather than a type guard, because in the wrapped case the refusal is the `cause` of the value handed in rather than that value.
+ *
+ * @param error - The error value to classify. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
+ *
+ * @returns `true` when the failure, or the cause a bootstrap error carries, is a refused identity, a refused privilege or a refused request rate; `false` for
+ *   anything else, a controller not ready yet among them.
+ *
+ * @category Utilities
+ */
+export function isControllerRefusal(error: unknown): boolean {
+
+  return isSignInRefusal(error) || (controllerReadinessOf(error) === "limiting");
 }
 
 /**

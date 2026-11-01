@@ -9,11 +9,11 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 
 /**
- * The normalized credentials the CLI connects with. `host` is the bare address `AccessClient.connect` expects (no scheme, port preserved) - we accept the documented
- * `controller` form in the file, which may carry an `https://` scheme, and normalize it here, so the connect path never has to think about schemes. `identity` is the
- * library's own {@link ConnectIdentity} union, composed at the loader from whatever the file supplies - a credential pair, a token, or both - so the identity is typed
- * end-to-end and the connect path spreads it without a cast. `verifyTls` is the file's strict-TLS opt-in, carried through to the connect options under the name the
- * library gives it.
+ * The normalized credentials the CLI connects with. `host` is the configured address, trimmed and with any leading scheme removed, which `AccessClient.connect` checks
+ * and refuses when it carries more than a host and a port - we accept the documented `controller` form in the file, which may carry an `https://` scheme, and remove the
+ * scheme here, so the connect path never has to think about schemes. `identity` is the library's own {@link ConnectIdentity} union, composed at the loader from whatever
+ * the file supplies - a credential pair, a token, or both - so the identity is typed end-to-end and the connect path spreads it without a cast. `verifyTls` is the file's
+ * strict-TLS opt-in, carried through to the connect options under the name the library gives it.
  *
  * @category CLI
  */
@@ -36,10 +36,11 @@ export interface LoadCredentialsOptions {
   home?: string;
 }
 
-/* The credentials file's on-disk shape. `controller` is the documented field name (a hostname, ip, or full URL); we translate it to the normalized `host` on load.
- * `tokens` is keyed by the UniFi application a token was issued for, so a sibling application's token sits beside the Access one without the file's shape changing,
- * and the loader hands the `access` entry to the library as the bare token its identity union expects - the qualification is the file's business, not the API's.
- * The identities are individually optional in the file - a credential pair, a token, or both - and the loader is where that any-of rule is enforced.
+/* The credentials file's on-disk shape. `controller` is the documented field name (a hostname or ip, optionally with a port and a leading scheme); the loader trims it,
+ * removes the scheme and passes the rest on as the normalized `host`. `tokens` is keyed by the UniFi application a token was issued for, so a sibling application's token
+ * sits beside the Access one without the file's shape changing, and the loader hands the `access` entry to the library as the bare token its identity union expects - the
+ * qualification is the file's business, not the API's. The identities are individually optional in the file - a credential pair, a token, or both - and the loader is
+ * where that any-of rule is enforced.
  */
 interface CredentialsFile {
 
@@ -54,25 +55,14 @@ interface CredentialsFile {
 // type, and the map-valued and boolean fields - each of which has its own reader below - cannot be asked for here.
 type CredentialsStringField = { [K in keyof CredentialsFile]-?: NonNullable<CredentialsFile[K]> extends string ? K : never }[keyof CredentialsFile];
 
-// Normalize the configured controller address to the bare host[:port] the connect path wants. A value carrying a scheme is parsed as a URL and reduced to its host
-// (scheme and path dropped, port kept); a bare value has any trailing path stripped. This is what lets ufa.json carry either "https://10.0.0.1" or "10.0.0.1" and
-// behave identically.
+/* Normalize the configured controller address for the connect path: trimmed, a leading `scheme://` removed, and the rest exactly as the file holds it. This is what
+ * lets ufa.json carry either "https://10.0.0.1" or "10.0.0.1" and behave identically. Every check on the address is the library's at connect, whose refusals cover
+ * credentials and a path and quote the address masked, so the loader parses none of it: a parse here would read credentials and a path out of the address and drop
+ * them silently, ahead of the library that refuses them.
+ */
 function normalizeHost(controller: string): string {
 
-  const trimmed = controller.trim();
-
-  if(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
-
-    try {
-
-      return new URL(trimmed).host;
-    } catch(error) {
-
-      throw new CliError("The controller address in the ufa.json configuration is not a valid URL.", { cause: error });
-    }
-  }
-
-  return trimmed.replace(/\/.*$/, "");
+  return controller.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
 }
 
 // Read a candidate file, returning its text or null when the file simply is not there (the expected "try the next location" case). Any other read failure is a real
@@ -240,12 +230,13 @@ export async function loadCredentials(opts: LoadCredentialsOptions = {}): Promis
 
   let parsed: unknown;
 
+  // The parser's own refusal quotes the text around the fault, which can be a password or a token the file holds, so the refusal carries no cause to render it from.
   try {
 
     parsed = JSON.parse(raw);
-  } catch(error) {
+  } catch {
 
-    throw new CliError("The ufa.json configuration at " + source + " is not valid JSON.", { cause: error });
+    throw new CliError("The ufa.json configuration at " + source + " is not valid JSON.");
   }
 
   if((typeof parsed !== "object") || (parsed === null)) {

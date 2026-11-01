@@ -359,8 +359,24 @@ describe("credential loading", () => {
 
     const credentials = await loadCredentials({ cwd, home });
 
-    // The address is normalized to the bare host the connect path wants: the scheme and any path are dropped, and a port that is not the scheme's default is kept.
-    assert.deepEqual(credentials, { host: "10.0.0.1:8443", identity: { password: "p", username: "u" } });
+    // The loader removes only the scheme, so the port and the path reach the library as the file holds them, and the library refuses the path at connect as more
+    // than a host and a port.
+    assert.deepEqual(credentials, { host: "10.0.0.1:8443/path", identity: { password: "p", username: "u" } });
+  });
+
+  test("the loader removes only a leading scheme, so credentials reach the library, which refuses them at connect with its quote masked", async () => {
+
+    const cwd = await mkdtemp(path.join(tmpdir(), "ufa-userinfo-"));
+
+    // A parse in the loader would read the credentials out of the address and drop them silently, ahead of the library that refuses them.
+    await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: "https://user:pass@10.0.0.1", password: "p", username: "u" }));
+
+    assert.equal((await loadCredentials({ cwd, home: cwd })).host, "user:pass@10.0.0.1");
+
+    // A scheme-free address is the trimmed address, whole: a password holding a `/` reaches the library uncut rather than cut at its first `/`.
+    await writeFile(path.join(cwd, "ufa.json"), JSON.stringify({ controller: " user:pa/ss@10.0.0.1 ", password: "p", username: "u" }));
+
+    assert.equal((await loadCredentials({ cwd, home: cwd })).host, "user:pa/ss@10.0.0.1");
   });
 
   test("the home directory is the fallback", async () => {
@@ -435,6 +451,25 @@ describe("credential loading", () => {
     await writeFile(path.join(cwd, "ufa.json"), "{not json");
 
     await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), { message: /not valid JSON/, name: "CliError" });
+  });
+
+  test("a configuration that is not valid JSON is refused with no cause, so none of the file's text reaches the message", async () => {
+
+    const cwd = await mkdtemp(path.join(tmpdir(), "ufa-secret-"));
+
+    // The parser's own refusal quotes the text around the fault, here the password, and the entry point renders a refusal's whole cause chain, so the refusal
+    // carries no cause at all.
+    await writeFile(path.join(cwd, "ufa.json"), "{\"password\": hunter2}");
+
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), (error: unknown) => {
+
+      assert.ok(error instanceof CliError);
+      assert.match(error.message, /not valid JSON/);
+      assert.ok(!error.message.includes("hunter2"), "the refusal holds none of the file's text");
+      assert.equal(error.cause, undefined, "the refusal carries no cause to render the file's text from");
+
+      return true;
+    });
   });
 
   test("a configuration that is valid JSON but not an object is refused", async () => {

@@ -344,13 +344,14 @@ describe("the controller address", () => {
     agent.assertNoPendingInterceptors();
   });
 
-  /* One row per place the derivation refuses: the formatter's zone check, the URL parser, and the check for more than a host and a port, the last once for
-   * credentials and once for a path. One row is token-only, whose connect builds no direct half at all. Each is refused before a request starts or a socket is built.
+  /* One row per place the derivation refuses an address it can read: the formatter's zone check, the refusal of credentials ahead of any parse, the URL parser, and the
+   * check for more than a host and a port, here for a path. One row is token-only, whose connect builds no direct half at all. Each is refused before a request starts or
+   * a socket is built, and each refusal names the address as it quotes it, the address as configured unless a `quoted` form says otherwise.
    */
-  const refusals: { host: string; identity: Partial<ConnectOptions>; label: string }[] = [
+  const refusals: { host: string; identity: Partial<ConnectOptions>; label: string; quoted?: string }[] = [
     { host: "fe80::1%en0", identity: { password: "p", username: "u" }, label: "an IPv6 zone" },
     { host: "access local", identity: { token: "t0ken" }, label: "a host the URL parser refuses, on a token-only client" },
-    { host: "user@10.0.0.1", identity: { password: "p", username: "u" }, label: "credentials" },
+    { host: "user@10.0.0.1", identity: { password: "p", username: "u" }, label: "credentials", quoted: "***@10.0.0.1" },
     { host: "10.0.0.1/proxy", identity: { password: "p", token: "t0ken", username: "u" }, label: "a path" }
   ];
 
@@ -361,11 +362,25 @@ describe("the controller address", () => {
       const refused = await refusedConnect(row.host, row.identity);
 
       assert.ok(refused.error instanceof AccessConfigurationError, JSON.stringify(row.host) + " is refused with the configuration error");
-      assert.ok(refused.error.message.includes("\"" + row.host + "\""), "the refusal names the address as configured");
+      assert.ok(refused.error.message.includes("\"" + (row.quoted ?? row.host) + "\""), "the refusal names the address as it quotes it");
       assert.deepEqual(refused.starts, [], "no request was started");
       assert.equal(refused.sockets, 0, "no notification socket was built");
     });
   }
+
+  test("refuses a missing host with the configuration error, quoting no value and with no cause, before any request", async () => {
+
+    // A JavaScript consumer's configuration can omit the address, which the cast hands in past the type. The refusal quotes no address, so this test stands apart from
+    // the table above, whose rows each find the address in their refusal.
+    const refused = await refusedConnect(undefined as unknown as string, { password: "p", username: "u" });
+
+    assert.ok(refused.error instanceof AccessConfigurationError, "a missing host is refused with the configuration error");
+    assert.equal(refused.error.message, "The controller address is missing or is not text; set it to the controller's hostname or IP address.",
+      "the refusal quotes no value");
+    assert.equal(refused.error.cause, undefined, "the refusal carries no cause");
+    assert.deepEqual(refused.starts, [], "no request was started");
+    assert.equal(refused.sockets, 0, "no notification socket was built");
+  });
 
   test("refuses an address no URL can carry ahead of a signal already aborted, because the options are read before the signal", async () => {
 

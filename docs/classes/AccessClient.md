@@ -543,7 +543,8 @@ when the options ask for a path the supplied identities cannot take - a token-on
 
 #### Throws
 
-[AccessConfigurationError](AccessConfigurationError.md) when no URL can carry the controller address, naming it. Raised before anything is sent.
+[AccessConfigurationError](AccessConfigurationError.md) when the controller address is missing or is not a string, quoting nothing, or when no URL can carry it, naming it. Raised
+  before anything is sent.
 
 #### Throws
 

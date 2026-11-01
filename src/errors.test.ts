@@ -6,13 +6,13 @@
  */
 import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
   AccessCertificateError, AccessConfigurationError, AccessDeclinedError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError,
-  AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError, assertNever, causeChain, controllerReadinessOf, formatErrorChain, isIdentityRefusal,
-  isPrivilegeRefusal, isSignInRefusal, resolveErrnoCause } from "./errors.ts";
+  AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError, assertNever, causeChain, controllerReadinessOf, formatErrorChain, isControllerRefusal,
+  isIdentityRefusal, isPrivilegeRefusal, isSignInRefusal, resolveErrnoCause } from "./errors.ts";
+import { controllerReadinessOf as barrelControllerReadinessOf, isControllerRefusal as barrelIsControllerRefusal } from "./index.ts";
 import { describe, test } from "node:test";
 import { ACCESS_API_RETRY_PROFILE } from "./settings.ts";
 import type { AccessControllerReadiness } from "./index.ts";
 import assert from "node:assert/strict";
-import { controllerReadinessOf as barrelControllerReadinessOf } from "./index.ts";
 import { errnoError } from "homebridge-plugin-utils/testing";
 
 describe("AccessError hierarchy", () => {
@@ -475,12 +475,12 @@ describe("isSignInRefusal", () => {
   });
 });
 
-describe("controllerReadinessOf", () => {
+// A status error as the transport classifies one, and the bootstrap wrapper the direct document fetch puts around it.
+const statusError = (statusCode: number): AccessRequestError => new AccessRequestError("The UniFi Access controller answered the request with HTTP status " +
+  String(statusCode) + ".", { statusCode });
+const wrapped = (cause: unknown): AccessBootstrapError => new AccessBootstrapError("Unable to fetch the controller configuration.", { cause, stage: "fetch" });
 
-  // A status error as the transport classifies one, and the bootstrap wrapper the direct document fetch puts around it.
-  const statusError = (statusCode: number): AccessRequestError => new AccessRequestError("The UniFi Access controller answered the request with HTTP status " +
-    String(statusCode) + ".", { statusCode });
-  const wrapped = (cause: unknown): AccessBootstrapError => new AccessBootstrapError("Unable to fetch the controller configuration.", { cause, stage: "fetch" });
+describe("controllerReadinessOf", () => {
 
   test("reads a 429 as a controller limiting requests and each status the transport retries as one not ready yet, bare or wrapped", () => {
 
@@ -525,6 +525,60 @@ describe("controllerReadinessOf", () => {
 
     assert.equal(Object.is(barrelControllerReadinessOf, controllerReadinessOf), true);
     assert.equal(reading, "limiting");
+  });
+});
+
+describe("isControllerRefusal", () => {
+
+  test("recognizes the transport's classification of a refused identity, a refused privilege and a refused request rate", () => {
+
+    assert.equal(isControllerRefusal(new AccessAuthError("auth", { identity: "credentials", statusCode: 401 })), true, "a refused identity is a refusal");
+    assert.equal(isControllerRefusal(new AccessAuthorizationError("authz", { identity: "credentials", statusCode: 403 })), true, "and so is a refused privilege");
+    assert.equal(isControllerRefusal(statusError(429)), true, "and so is a refused request rate");
+  });
+
+  test("recognizes each of the controller's own refusal codes answered inside a successful response, and no other code", () => {
+
+    for(const code of [ ...IDENTITY_REFUSAL_CODES, "CODE_OPERATION_FORBIDDEN" ]) {
+
+      assert.equal(isControllerRefusal(new AccessApiError("api", { code })), true, code + " is a refused sign-in, and so a refusal");
+    }
+
+    assert.equal(isControllerRefusal(new AccessApiError("api", { code: "CODE_NOT_EXISTS" })), false, "while a code that names no refusal is not one");
+  });
+
+  test("reads a bootstrap error by the cause it carries", () => {
+
+    // The direct bootstrap wraps a failed document read at the fetch stage, so this is the shape a refused or rate-limited recovery re-bootstrap arrives in.
+    assert.equal(isControllerRefusal(wrapped(new AccessAuthError("auth", { identity: "credentials", statusCode: 401 }))), true,
+      "a wrapped identity refusal is read through its wrapper");
+    assert.equal(isControllerRefusal(wrapped(new AccessAuthorizationError("authz", { identity: "credentials", statusCode: 403 }))), true,
+      "and so is a wrapped privilege refusal");
+    assert.equal(isControllerRefusal(wrapped(statusError(429))), true, "and so is a wrapped rate limit");
+    assert.equal(isControllerRefusal(wrapped(statusError(503))), false, "while a bootstrap error whose cause is no refusal is not one");
+  });
+
+  test("opens a bootstrap error alone, and only the one handed in", () => {
+
+    assert.equal(isControllerRefusal(new AccessNetworkError("net", { cause: statusError(429) })), false, "a wrapper of any other class is read as itself");
+    assert.equal(isControllerRefusal(wrapped(wrapped(statusError(429)))), false, "and a rate limit below a second bootstrap error is past the one wrapper opened");
+  });
+
+  test("does not recognize a value that is not one of the refusals", () => {
+
+    assert.equal(isControllerRefusal(statusError(501)), false, "a controller that failed to serve the request is no refusal");
+    assert.equal(isControllerRefusal(statusError(503)), false, "and neither is one not ready yet to serve it");
+    assert.equal(isControllerRefusal(new AccessNetworkError("net", { code: "ECONNREFUSED" })), false, "nor a controller that cannot be reached");
+    assert.equal(isControllerRefusal(new Error("refused")), false, "a plain error is not a refusal whatever its message says");
+    assert.equal(isControllerRefusal(null), false);
+  });
+
+  test("the barrel publishes the very function", () => {
+
+    /* Nothing else in the suite establishes that the reading reached the public surface, and TypeDoc reads the barrel alone, so a symbol missing from it has no
+     * page and no consumer. Identity rather than behavior is the assertion, because a re-export that resolved to another function would still answer correctly.
+     */
+    assert.ok(Object.is(barrelIsControllerRefusal, isControllerRefusal), "the barrel's isControllerRefusal is the errors function itself");
   });
 });
 

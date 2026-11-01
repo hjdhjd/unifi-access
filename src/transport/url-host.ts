@@ -1,9 +1,38 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * url-host.ts: The controller address as a URL carries it - the bracket-aware host formatter and the one derivation of the controller's URL authority.
+ * url-host.ts: The controller address as a URL carries it - the mask over the credentials an address can carry, the bracket-aware host formatter, and the one
+ * derivation of the controller's URL authority.
  */
 import { AccessConfigurationError } from "../errors.ts";
 import { isIP } from "node:net";
+
+/**
+ * Mask the credentials a controller address can carry, for a message or a log line that names the address: everything through its last `@` becomes `***@`, and an
+ * address carrying no `@` is returned unchanged. Each refusal that names the address quotes it through this mask, and a consumer naming the address in its own log
+ * applies the same rule.
+ *
+ * The mask reads the text rather than a parse, because a parse misreads a scheme-prefixed address: `https://user:pass@10.0.0.1` parses as the host `https` with the
+ * credentials in its path, where a mask over the parsed user and password finds nothing to hide. Masking through the last `@` can hide more than credentials, a host
+ * and a path standing before it among them, and hiding too much is the safe direction.
+ *
+ * @param address - The controller address as configured.
+ *
+ * @returns The address with everything through its last `@` masked as `***@`, or the address unchanged when it carries no `@`.
+ *
+ * @category Transport
+ */
+export function maskAddressCredentials(address: string): string {
+
+  const at = address.lastIndexOf("@");
+
+  return (at === -1) ? address : ("***@" + address.slice(at + 1));
+}
+
+// An address as a refusal quotes it: masked, inside double quotes.
+function quotedAddress(host: string): string {
+
+  return "\"" + maskAddressCredentials(host) + "\"";
+}
 
 /**
  * Format a host for a URL authority, wrapping an IPv6 literal in square brackets as the URL grammar requires.
@@ -32,7 +61,7 @@ export function formatUrlHost(host: string): string {
 
   if(host.includes("%")) {
 
-    throw new AccessConfigurationError("The address \"" + host + "\" carries an IPv6 zone, which a URL has no place for.");
+    throw new AccessConfigurationError("The controller address " + quotedAddress(host) + " carries an IPv6 zone, which a URL has no place for.");
   }
 
   return "[" + host + "]";
@@ -42,23 +71,42 @@ export function formatUrlHost(host: string): string {
  * Derive the controller's URL authority from the address the client is configured with: the host and port the URL parser reads from it, a bare IPv6 literal
  * bracketed first. The client derives it once at connect, and every URL it composes is the scheme, this authority and a path.
  *
- * A single trailing `/` is dropped first, because it is the empty path every composed URL places after the authority anyway, so an address carrying one says
- * nothing its slash-less form does not. It is dropped before formatting, because `isIP` reads `fe80::1/` as no address and would leave it unbracketed.
+ * A host that is missing or is not a string, as a hand-edited configuration can hand a JavaScript consumer, is refused first, before any text is read, so the caller
+ * meets the typed refusal rather than the `TypeError` its first read would raise. Its sentence quotes no value, because there is no address text to mask.
  *
- * The address is refused unless it parses as an authority. A parse alone is not enough, because a value can parse and still carry more than a host and a port:
- * credentials before an `@`, a path, a query or a fragment each parse as a URL part of their own, and every URL the client composes would then carry them. The
- * parse reads the authority with a path after it, the way every composed URL reads it, because an address ending in a second trailing `/`, an empty `?` or `#`, a
- * backslash or a trailing space parses alone as a bare host and still breaks every URL once a path follows it. The authority returned is the parser's reading, not
- * the address's text, so what the parser normalizes away (a dot segment, an empty user or port, a stray tab) never reaches a composed URL, and the host comes back
- * lowercased, an IPv6 literal in its canonical form and the scheme's default port omitted.
+ * A single trailing `/` is dropped, because it is the empty path every composed URL places after the authority anyway, so an address carrying one says nothing its
+ * slash-less form does not. It is dropped before formatting, because `isIP` reads `fe80::1/` as no address and would leave it unbracketed.
  *
- * @param host - The controller address as configured.
+ * The address is refused unless it parses as an authority. An address whose text before its last `@` is neither empty (`@host`) nor a lone colon (`:@host`) is refused
+ * before formatting or parsing, because that text is credentials or more, and a refusal from the parser would carry it in the cause, whose input is the whole URL the
+ * parser was handed; the empty and lone-colon markers each name an empty user and an empty password, so they carry no credentials and are the parser's to fold away. A
+ * parse alone is not enough, because a value can parse and still carry more than a host and a port: a path, a query or a fragment each parse as a URL part of their
+ * own, and every URL the client composes would then carry them. The parse reads the authority with a path after it, the way every composed URL reads it, because an
+ * address ending in a second trailing `/`, an empty `?` or `#`, a backslash or a trailing space parses alone as a bare host and still breaks every URL once a path
+ * follows it. The authority returned is the parser's reading, not the address's text, so what the parser normalizes away (a dot segment, an empty or lone-colon
+ * marker, an empty port, a stray tab) never reaches a composed URL, and the host comes back lowercased, an IPv6 literal in its canonical form and the scheme's default
+ * port omitted. Each refusal that names the address quotes it through {@link maskAddressCredentials}, so no message carries the credentials an address held.
+ *
+ * @param host - The controller address as configured. Typed `unknown` because a JavaScript consumer's configuration can hand in a value of any type.
  *
  * @returns The controller's URL authority.
  *
- * @throws {@link AccessConfigurationError} if no URL authority can carry the address, naming it, with the URL parser's own refusal as the cause when it refused.
+ * @throws {@link AccessConfigurationError} if the address is missing or is not a string, quoting no value and with no cause, or if no URL authority can carry the
+ *   address, naming it, with the URL parser's own refusal as the cause when it refused.
  */
-export function controllerAuthority(host: string): string {
+export function controllerAuthority(host: unknown): string {
+
+  if(typeof host !== "string") {
+
+    throw new AccessConfigurationError("The controller address is missing or is not text; set it to the controller's hostname or IP address.");
+  }
+
+  const at = host.lastIndexOf("@");
+
+  if((at > 0) && (host.slice(0, at) !== ":")) {
+
+    throw new AccessConfigurationError("The controller address " + quotedAddress(host) + " carries more than a host and a port.");
+  }
 
   const formatted = formatUrlHost(host.endsWith("/") ? host.slice(0, -1) : host);
 
@@ -69,12 +117,12 @@ export function controllerAuthority(host: string): string {
     parsed = new URL("https://" + formatted + "/");
   } catch(error) {
 
-    throw new AccessConfigurationError("The controller address \"" + host + "\" is not a host a URL can carry.", { cause: error });
+    throw new AccessConfigurationError("The controller address " + quotedAddress(host) + " is not a host a URL can carry.", { cause: error });
   }
 
-  if((parsed.username !== "") || (parsed.password !== "") || (parsed.pathname !== "/") || (parsed.search !== "") || (parsed.hash !== "")) {
+  if((parsed.pathname !== "/") || (parsed.search !== "") || (parsed.hash !== "")) {
 
-    throw new AccessConfigurationError("The controller address \"" + host + "\" carries more than a host and a port.");
+    throw new AccessConfigurationError("The controller address " + quotedAddress(host) + " carries more than a host and a port.");
   }
 
   return parsed.host;

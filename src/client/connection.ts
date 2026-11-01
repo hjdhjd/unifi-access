@@ -29,7 +29,8 @@
  * @module AccessConnectionMonitor
  */
 import { ACCESS_REBOOT_UPTIME_DROP_MINIMUM, ACCESS_RECOVERY_BACKOFF_MS, ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
-import { AccessAbortedError, AccessError, AccessNetworkError, controllerReadinessOf, formatErrorChain, isSignInRefusal, statusErrorOf } from "../errors.ts";
+import { AccessAbortedError, AccessError, AccessNetworkError, controllerReadinessOf, formatErrorChain, isControllerRefusal, isSignInRefusal,
+  statusErrorOf } from "../errors.ts";
 import type { AccessEventPacket, Nullable } from "../types/index.ts";
 import type { AccessControllerReadiness } from "../errors.ts";
 import type { AccessLogging } from "../logging.ts";
@@ -94,13 +95,13 @@ type LossClass = AccessControllerReadiness | "mustFix" | "refused" | "selfHealin
 const LOSS_ANNOUNCEMENTS: Readonly<Record<LossClass, { readonly level: "error" | "warn"; readonly sentence: string }>> = {
 
   limiting: { level: "warn",
-    sentence: "The UniFi Access controller is limiting requests; the connection is lost and recovery is polling until it accepts requests again." },
-  mustFix: { level: "error", sentence: "The UniFi Access controller cannot be reached until its certificate or its address is fixed; the connection is lost and " +
-    "recovery is polling for its return." },
+    sentence: "The UniFi Access controller is rate limiting requests; the connection is lost and recovery is retrying on the slower refusal schedule." },
+  mustFix: { level: "error",
+    sentence: "The UniFi Access controller cannot be reached until its certificate or its address is fixed; the connection is lost and recovery is polling." },
   "not-ready": { level: "warn", sentence: "The UniFi Access controller is not ready yet; the connection is lost and recovery is polling until it is ready." },
   refused: { level: "error",
     sentence: "The UniFi Access controller is refusing the sign-in; the connection is lost and recovery is retrying on the slower refusal schedule." },
-  selfHealing: { level: "warn", sentence: "The UniFi Access controller appears to be unreachable; the connection is lost and recovery is polling for its return." }
+  selfHealing: { level: "warn", sentence: "The UniFi Access controller appears unreachable; the connection is lost and recovery is polling." }
 };
 
 /* The class a loss is announced as. A refused sign-in is read first, and the controller's own readiness answer after it, both above the level table, which reads
@@ -356,13 +357,13 @@ export class ConnectionMonitor {
   readonly #transport: ThrottleSource;
   readonly #verifyProbe: (signal?: AbortSignal) => Promise<void>;
 
-  /* The state machine's own bookkeeping. The observable state is derived from the phase and the transport's live verdict rather than stored. `#lastFault` is the
-   * most recent typed fault: it supplies a transition's reason and the lost announcement's payload, and whether it is a refused sign-in chooses the recovery
-   * schedule. `#announcedLoss` is the class the episode's loss was last announced as, null until an episode reaches lost, so a loss is announced again only when
-   * its class changes and recovery is announced only after a genuine loss. `#reportedState` caches the last announced value purely to dedup. `#recovering` keeps a
-   * re-entrant fault from starting a second loop, and `#recoveryWake` is the handle that lets a detected restart interrupt a parked wait. `#lastUptime` is the
-   * restart detector's baseline: seeded at construction from what the store already holds, updated on every yield, and dying with the monitor - there is no reset
-   * path because there is no lifecycle event that would want one.
+  /* The state machine's own bookkeeping. The observable state is derived from the phase and the transport's live verdict rather than stored. `#lastFault` is the most
+   * recent typed fault: it supplies a transition's reason and the lost announcement's payload, and whether it is a refusal, a refused sign-in or a rate limit alike,
+   * chooses the recovery schedule. `#announcedLoss` is the class the episode's loss was last announced as, null until an episode reaches lost, so a loss is announced
+   * again only when its class changes and recovery is announced only after a genuine loss. `#reportedState` caches the last announced value purely to dedup.
+   * `#recovering` keeps a re-entrant fault from starting a second loop, and `#recoveryWake` is the handle that lets a detected restart interrupt a parked wait.
+   * `#lastUptime` is the restart detector's baseline: seeded at construction from what the store already holds, updated on every yield, and dying with the monitor -
+   * there is no reset path because there is no lifecycle event that would want one.
    */
   #announcedLoss: Nullable<LossClass> = null;
   #lastFault: Nullable<AccessError> = null;
@@ -600,10 +601,10 @@ export class ConnectionMonitor {
     this.#recompute();
   }
 
-  /* Conclude the connection is lost, recording the fault and the class it is announced as, which also marks the episode so a later return to healthy is announced
-   * as a recovery. One rule announces the loss, in the lost line and on `controllerLost` alike: the episode's first loss, and each turn of its announced class,
-   * never a failed attempt that leaves its class unchanged. The one derivation of the class chooses the line's sentence and its level, while the recovery schedule
-   * keeps its own refusal-or-not reading of the same fault.
+  /* Conclude the connection is lost, recording the fault and the class it is announced as, which also marks the episode so a later return to healthy is announced as a
+   * recovery. One rule announces the loss, in the lost line and on `controllerLost` alike: the episode's first loss, and each turn of its announced class, never a failed
+   * attempt that leaves its class unchanged. The one derivation of the class chooses the line's sentence and its level, while the recovery schedule keeps its own
+   * refusal-or-not reading of the same fault, so a refused sign-in turning into a rate limit is announced again on the rung it stood on.
    */
   #enterLost(reason: AccessError): void {
 
@@ -646,12 +647,12 @@ export class ConnectionMonitor {
     void this.#recover();
   }
 
-  /* The wait before each successive recovery attempt, chosen per attempt from the most recent recorded fault: a refused identity or privilege walks the refusal
-   * schedule, and anything else walks the network schedule. The choice is made when the loop asks for its next wait, which is after the attempt before it has
-   * recorded its own fault, so each wait answers the attempt just made. A change of cause starts the other schedule at its first rung, because each ladder's
-   * delays are measured from when its cause began...a refusal that follows a stretch of unreachability backs off from its own first refusal, and a controller that
-   * stops refusing and becomes unreachable is probed at once. The unbounded tail is what makes recovery poll indefinitely - the loop ends on success or disposal,
-   * never by running out of schedule.
+  /* The wait before each successive recovery attempt, chosen per attempt from the most recent recorded fault: a refusal, a refused sign-in or a rate limit alike, walks
+   * the refusal schedule, and anything else walks the network schedule. The choice is made when the loop asks for its next wait, which is after the attempt before it has
+   * recorded its own fault, so each wait answers the attempt just made. A change of cause starts the other schedule at its first rung, because each ladder's delays are
+   * measured from when its cause began...a refusal that follows a stretch of unreachability backs off from its own first refusal, and a controller that stops refusing
+   * and becomes unreachable is probed at once. A refused sign-in that turns into a rate limit, or back, changes no schedule, so it keeps its rung. The unbounded tail is
+   * what makes recovery poll indefinitely - the loop ends on success or disposal, never by running out of schedule.
    *
    * The same fault can carry a controller's own wait. A status error whose answer named a Retry-After asks recovery to wait at least that long, so each wait is
    * the larger of its rung and the hint, the hint capped at the refusal schedule's steady interval, which is the longest wait any schedule settles onto, so a
@@ -665,7 +666,7 @@ export class ConnectionMonitor {
 
     for(;;) {
 
-      const chosen = isSignInRefusal(this.#lastFault) ? ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS : NETWORK_RECOVERY_SCHEDULE_MS;
+      const chosen = isControllerRefusal(this.#lastFault) ? ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS : NETWORK_RECOVERY_SCHEDULE_MS;
 
       if(chosen !== schedule) {
 

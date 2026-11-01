@@ -71,8 +71,8 @@ import { wallClock } from "../clock.ts";
  * last group. A single trailing `/` is accepted and dropped, so `access.local/` connects as `access.local`, because it is the empty path every URL places after the
  * address anyway. A port addresses the UniFi console alone, because the Access developer API answers on a port of its own at the same host. Every URL the client
  * composes reads the address as the URL parser reads it, while every log and diagnostics payload carries it exactly as configured. An address no URL can carry is
- * refused with {@link AccessConfigurationError} before any request is sent: an IPv6 literal with a zone (`fe80::1%en0`), or a value
- * carrying credentials, a path, a query or a fragment.
+ * refused with {@link AccessConfigurationError} before any request is sent: a host that is missing or not a string, refused first and quoting nothing, an IPv6 literal
+ * with a zone (`fe80::1%en0`), or a value carrying credentials, a path, a query or a fragment.
  *
  * Each of the others has a default:
  *
@@ -404,7 +404,8 @@ export class AccessClient implements AsyncDisposable {
    *
    * @throws {TypeError} when the options ask for a path the supplied identities cannot take - a token-only client held to the direct API, or a credential-only client
    *   held to the official one. Caller misuse, raised before anything is sent.
-   * @throws {@link AccessConfigurationError} when no URL can carry the controller address, naming it. Raised before anything is sent.
+   * @throws {@link AccessConfigurationError} when the controller address is missing or is not a string, quoting nothing, or when no URL can carry it, naming it. Raised
+   *   before anything is sent.
    * @throws {@link AccessAuthError} when an identity is refused and the client cannot carry on without it - the credentials on any client, the token on a client
    *   with no direct path to fall back to - its `identity` field naming which one was refused, {@link AccessNetworkError} when the controller cannot be reached,
    *   {@link AccessRequestError} when the sign-in or the token's first read is answered with any other status, which {@link controllerReadinessOf} reads as a

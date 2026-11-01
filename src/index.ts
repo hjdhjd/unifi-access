@@ -29,9 +29,10 @@ export type { AccessApiCode, AccessBootstrapStage, AccessControllerReadiness, Ac
 export { formatErrorChain } from "./errors.ts";
 
 // The readings a consumer branches on to recognize a refused identity, a refused permission, or a sign-in refused on either ground, whichever spelling the controller
-// answered the refusal in and, for the sign-in reading, through the bootstrap wrapper it opens, and to recognize a controller limiting requests or not ready yet,
-// read through that same wrapper and answered as the readiness type above.
-export { controllerReadinessOf, isIdentityRefusal, isPrivilegeRefusal, isSignInRefusal } from "./errors.ts";
+// answered the refusal in and, for the sign-in reading, through the bootstrap wrapper it opens, and to recognize a controller limiting requests or not ready yet, read
+// through that same wrapper and answered as the readiness type above. isControllerRefusal joins a refused sign-in and a rate limit, and a consumer's own connect retry
+// chooses its schedule by it as recovery does, while isSignInRefusal, the narrower reading, chooses how a loss is announced.
+export { controllerReadinessOf, isControllerRefusal, isIdentityRefusal, isPrivilegeRefusal, isSignInRefusal } from "./errors.ts";
 
 // Logging - the consumer-injectable logger interface and the silent default the library falls back to when a consumer injects none.
 export { noopLog } from "./logging.ts";
@@ -61,6 +62,10 @@ export type { ConnectionEvents, ConnectionMonitor, ConnectionState, ConnectionTr
 // the interface alone would leave the same gap one level down in the events.
 export type { AccessWebSocket, AccessWebSocketCloseEvent, AccessWebSocketErrorEvent, AccessWebSocketListenerOptions,
   AccessWebSocketMessageEvent } from "./transport/ws.ts";
+
+// The mask a consumer names a controller address through in its own log, so a line naming the address carries none of the credentials it can hold. It is the rule each
+// refusal that names the address quotes it by, published so a consumer applies the library's own rule rather than restating it.
+export { maskAddressCredentials } from "./transport/url-host.ts";
 
 // Devices - the live projections the client hands out. Types only for the same reason: a handle comes from the client or the registry, never from a constructor a
 // consumer calls, so publishing the classes as values would offer a second composition path that cannot work.
