@@ -554,10 +554,9 @@ export class AccessClient implements AsyncDisposable {
       throw error;
     }
 
-    /* Whether the token was refused the device listing. A token is granted its permissions when it is issued and keeps them for its life, so a refusal of one
-     * listing is a fact about this client rather than about the moment it asked, and it latches exactly as the routing tier's capability verdicts latch: set once
-     * on the first refusal, never cleared, ended only by disposal. Re-asking on every refresh would spend a request per interval to learn the same answer and log
-     * the same warning each time.
+    /* Whether the token was refused the device listing. A token is granted its permissions when it is issued and keeps them for its life, so a refusal of one listing is
+     * a fact about this client rather than about the moment it asked, and it is held as the routing tier holds its capability verdicts: set on the refusal, never
+     * cleared, and ended only by disposal. Re-asking on every refresh would spend a request per interval to learn the same answer and log the same warning each time.
      */
     let inventoryRefused = false;
 
@@ -664,9 +663,12 @@ export class AccessClient implements AsyncDisposable {
        * client with no credentials, which has nothing to fall back to, and a refused token on a client whose direct path cannot serve, which keeps the refusal as the
        * error it arrived as, exactly as its routed commands do.
        *
-       * Only the refused token is said. The map records the Identity Enterprise verdict at `official: false`, and nothing on the client can change it; a refused token
-       * is a fault in what the caller configured, which the map alone would leave indistinguishable from that verdict, so it is warned once here in the words the
-       * routing service uses for the same refusal on a routed command. Nothing later says either, because the routing service is built without the official surface.
+       * Only the refused token is said. The map records the Identity Enterprise verdict at `official: false`, and nothing on the client can change it; a refused token is
+       * a fault in what the caller configured, which the map alone would leave indistinguishable from that verdict, so it is warned once here through
+       * `officialPathClosureSentence`, which the routing service reports its own closures of the official path through. Here a refused token closes the path to every
+       * command, a refused permission as much as a rejected token, because the fold withholds the facade from the client's `official` and from routing alike and the map
+       * publishes that as `official: false`; a routed door command refused a permission closes the path to door commands alone. Nothing later says either, because the
+       * routing service is built without the official surface.
        */
       const tokenFolded = isTokenRefusal(error) && directPathServes({ mode, override });
       const folded = (isOfficialApiAbsent(error) && hasCredentials) || tokenFolded;
@@ -683,7 +685,7 @@ export class AccessClient implements AsyncDisposable {
 
       if(tokenFolded) {
 
-        log.warn(officialPathClosureSentence(error.message, true), (error instanceof AccessApiError) ? { code: error.code } :
+        log.warn(officialPathClosureSentence({ directServes: true, reach: "every", refusal: error.message }), (error instanceof AccessApiError) ? { code: error.code } :
           { identity: error.identity, statusCode: error.statusCode });
       }
     }

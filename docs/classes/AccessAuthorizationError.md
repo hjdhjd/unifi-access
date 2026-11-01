@@ -6,11 +6,11 @@
 
 # Class: AccessAuthorizationError
 
-The identity authenticated but lacks the privilege the operation requires (typically a `403`; Access reserves many operations for administrator accounts).
-Fatal because the same identity will keep being refused. [AccessAuthorizationError.identity](#identity) names which one fell short, so a caller reporting the failure
-can point at the remedy that applies. At connect and on a routed command alike, a client whose direct path can serve folds a token refused a permission into
-credentials-only operation with a warning, so a consumer meets this error for a token only from a token-only client, from a client held to the official API, or
-from the official facade called directly.
+The identity authenticated but lacks the privilege the operation requires (typically a `403`; Access reserves many operations for administrator accounts). Fatal
+because the same identity will keep being refused. [AccessAuthorizationError.identity](#identity) names which one fell short, so a caller reporting the failure can point
+at the remedy that applies. At connect, a client whose direct path can serve folds a token refused a permission into credentials-only operation with a warning; on a
+routed door command the same client sends its door commands to that path with a warning, and a routed access-method write refused one takes its own direct path
+instead, so a consumer meets this error for a token only from a token-only client, from a client held to the official API, or from the official facade called directly.
 
 ## Extends
 

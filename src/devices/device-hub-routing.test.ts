@@ -1,15 +1,20 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * device-hub-routing.test.ts: Tests for the same door commands under the routing decision - which path each one takes, what it sends once the decision is made,
- * which commands a client held to one API refuses outright, and how a caller's abort signal reaches the official call. Every command test asserts the wire shape
- * through an intercepted request rather than through the projection's own return value, so what is being checked is what the controller would actually receive.
+ * which commands a client held to one API refuses outright, and how a caller's abort signal reaches the official call - and for the access-method write beside
+ * them, official first with its read-back. Every command test asserts the wire shape through an intercepted request rather than through the projection's own
+ * return value, so what is being checked is what the controller would actually receive.
  */
-import { AccessApiError, AccessCapabilityError } from "../errors.ts";
-import { DOOR_HUB, DOOR_MINI_DOOR, HUB, deviceFixture, intercept } from "./device.helpers.ts";
+import { AccessApiError, AccessCapabilityError, AccessDeclinedError } from "../errors.ts";
+import type { AccessOfficialAccessMethods, AccessOfficialDeviceSettings, AccessOfficialDeviceSettingsUpdate } from "../official/devices.ts";
+import { CAMERA, DOOR_HUB, DOOR_MINI_DOOR, HUB, cameraBootstrap, deviceFixture, intercept } from "./device.helpers.ts";
 import { describe, test } from "node:test";
 import { expectAt, present, silentLog } from "homebridge-plugin-utils/testing";
+import { ACCESS_METHODS } from "../protocol/vocabulary.ts";
 import type { AccessApiOverride } from "../client/routing.ts";
+import type { AccessBootstrapConfig } from "../types/index.ts";
 import { AccessDeviceRegistry } from "./registry.ts";
+import type { AccessMethod } from "../protocol/vocabulary.ts";
 import type { AccessOfficialCallOptions } from "../official/dispatch.ts";
 import type { AccessOfficialDoorUnlockOptions } from "../official/spaces.ts";
 import { AccessRoutingService } from "../client/routing.ts";
@@ -27,22 +32,56 @@ describe("the hub commands under routing", () => {
   interface RoutedOfficialCalls {
 
     lockRules: { call: AccessOfficialCallOptions | undefined; id: string; rule: unknown }[];
+    settingsReads: string[];
+    settingsWrites: { id: string; opts: AccessOfficialDeviceSettingsUpdate }[];
     unlocks: { call: AccessOfficialCallOptions | undefined; id: string; opts: AccessOfficialDoorUnlockOptions | undefined }[];
   }
 
-  const officialCalls = (): RoutedOfficialCalls => ({ lockRules: [], unlocks: [] });
+  const officialCalls = (): RoutedOfficialCalls => ({ lockRules: [], settingsReads: [], settingsWrites: [], unlocks: [] });
 
-  function routedFixture(options: { override?: AccessApiOverride;
+  // A device listing every official key the vocabulary's methods span, each switched on.
+  const EVERY_METHOD_ON: AccessOfficialAccessMethods = { "bt_button": { enabled: "yes" }, "bt_tap": { enabled: "yes" }, face: { enabled: "yes" },
+    nfc: { enabled: "yes" }, "pin_code": { enabled: "yes", "pin_code_shuffle": "no" }, "qr_code": { enabled: "yes" }, "touch_pass": { enabled: "yes" },
+    wave: { enabled: "yes" } };
+
+  /* The official settings a device reports and how a write moves them: `listed` is what the device reports, every method enabled unless a test says otherwise,
+   * and a write applies to the keys it lists unless `declines` is set, which is the silent decline the read-back exists to catch.
+   */
+  function routedFixture(options: { bootstrap?: AccessBootstrapConfig; declines?: boolean; listed?: AccessOfficialAccessMethods; override?: AccessApiOverride;
     refuse?: () => Error; } = {}): ReturnType<typeof deviceFixture> & { official: ReturnType<typeof officialCalls> } {
 
-    const fixture = deviceFixture(accessBootstrap2026Fixture);
+    const fixture = deviceFixture(options.bootstrap ?? accessBootstrap2026Fixture);
     const calls = officialCalls();
+    const held: Record<string, object> = structuredClone({ ...(options.listed ?? EVERY_METHOD_ON) });
     const routing = new AccessRoutingService({
 
       capabilities: { mode: "dual", official: true, override: options.override ?? "auto" },
       log: silentLog(),
       official: {
 
+        devices: {
+
+          fetchSettings: async (id: string): Promise<AccessOfficialDeviceSettings> => {
+
+            calls.settingsReads.push(id);
+
+            return { "access_methods": structuredClone(held), "device_id": id };
+          },
+          updateSettings: async (id: string, opts: AccessOfficialDeviceSettingsUpdate): Promise<void> => {
+
+            calls.settingsWrites.push({ id, opts });
+
+            for(const key of Object.keys(held)) {
+
+              const value = opts.access_methods[key as keyof AccessOfficialDeviceSettingsUpdate["access_methods"]];
+
+              if((options.declines !== true) && (value !== undefined)) {
+
+                held[key] = { ...held[key], ...value };
+              }
+            }
+          }
+        },
         spaces: {
 
           setLockRule: async (id: string, rule: unknown, call?: AccessOfficialCallOptions): Promise<void> => {
@@ -294,6 +333,102 @@ describe("the hub commands under routing", () => {
     assert.deepEqual(fixture.official.lockRules,
       [ { call: {}, id: DOOR_MINI_DOOR, rule: { interval: 2, type: "custom" } }, { call: {}, id: DOOR_MINI_DOOR, rule: { type: "lock_now" } } ]);
     assert.equal(fixture.captured.length, 0, "and the device-keyed direct resource was never reached");
+  });
+
+  describe("the access-method write", () => {
+
+    test("writes each name's official keys and nothing else, reads the settings back, and leaves the direct path alone while the method holds", async () => {
+
+      // The vocabulary's official column restated by hand, so the table and the request it produces are checked against each other rather than against themselves.
+      const officialKeys: Record<AccessMethod, string[]> = { face: ["face"], mobile: [ "bt_button", "bt_tap" ], nfc: ["nfc"], pin: ["pin_code"],
+        qr: ["qr_code"], touchPass: ["touch_pass"], wave: ["wave"] };
+
+      for(const method of ACCESS_METHODS) {
+
+        const fixture = routedFixture();
+
+        // eslint-disable-next-line no-await-in-loop
+        await present(fixture.registry.device(HUB), "the hub").setAccessMethod(method, false);
+
+        assert.deepEqual(fixture.official.settingsWrites, [{ id: HUB, opts: { "access_methods": Object.fromEntries(officialKeys[method].map((key) => [ key,
+          { enabled: "no" } ])) } }], method + " writes its own official keys");
+        assert.deepEqual(fixture.official.settingsReads, [HUB], method + " was read back");
+        assert.equal(fixture.captured.length, 0, method + " held, so nothing went out on the direct path");
+      }
+    });
+
+    test("takes a camera-class record to the camera keys once its official settings do not list the method", async () => {
+
+      /* A dual client's camera end to end: the official write goes first, the read-back does not list the method, and the direct write is the camera configuration
+       * endpoint's own Bluetooth family - bt, bt_button and bt_tap - rather than the bt_button key alone that every other device takes.
+       */
+      const fixture = routedFixture({ bootstrap: cameraBootstrap(), listed: {} });
+
+      intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + CAMERA + "/configs?is_camera=true" });
+
+      await present(fixture.registry.device(CAMERA), "the camera-class reader").setAccessMethod("mobile", true);
+
+      assert.deepEqual(fixture.official.settingsWrites, [{ id: CAMERA, opts: { "access_methods": { "bt_button": { enabled: "yes" }, "bt_tap": { enabled: "yes" } } } }]);
+      assert.deepEqual(fixture.official.settingsReads, [CAMERA], "the official path was tried first");
+
+      const captured = expectAt(fixture.captured, 0, "the direct write");
+
+      assert.equal(captured.path, "/proxy/access/api/v2/device/" + CAMERA + "/configs?is_camera=true");
+      assert.equal(captured.body, "[{\"key\":\"bt\",\"tag\":\"open_door_mode\",\"value\":\"yes\"},{\"key\":\"bt_button\",\"tag\":\"open_door_mode\",\"value\":\"yes\"}," +
+        "{\"key\":\"bt_tap\",\"tag\":\"open_door_mode\",\"value\":\"yes\"}]");
+    });
+
+    test("reads its verdict off the read-back: a held method completes, an unlisted one goes direct, and the other state is the controller's decline", async () => {
+
+      const held = routedFixture();
+
+      await present(held.registry.device(HUB), "the hub").setAccessMethod("nfc", false);
+
+      assert.equal(held.captured.length, 0, "a held method completes on the official path");
+
+      const unlisted = routedFixture({ listed: {} });
+
+      intercept(unlisted, { method: "PUT", path: "/proxy/access/api/v2/device/" + HUB + "/settings" });
+
+      await present(unlisted.registry.device(HUB), "the hub").setAccessMethod("nfc", false);
+
+      assert.equal(expectAt(unlisted.captured, 0, "the direct write").body, "[{\"key\":\"nfc\",\"tag\":\"open_door_mode\",\"value\":\"no\"}]",
+        "an unlisted method goes to the direct path");
+
+      const declined = routedFixture({ declines: true });
+
+      await assert.rejects(async () => present(declined.registry.device(HUB), "the hub").setAccessMethod("nfc", false), (error: unknown) => {
+
+        assert.ok(error instanceof AccessDeclinedError);
+        assert.equal(error.message, "The UniFi Access controller declined to disable the nfc access method for device \"Test alias 13\": the settings write answered " +
+          "success, and the method still reads enabled.", "the message names the method and the device by its display name");
+        assert.equal(error.method, "nfc");
+        assert.equal(error.reported, true);
+
+        return true;
+      });
+
+      assert.equal(declined.captured.length, 0, "and a decline is final, with no direct attempt");
+    });
+
+    test("switches through the official path alone on a client held to it, and through the direct path alone on one held to that", async () => {
+
+      const officialOnly = routedFixture({ override: "official-only" });
+
+      await present(officialOnly.registry.device(HUB), "the hub").setAccessMethod("pin", true);
+
+      assert.deepEqual(officialOnly.official.settingsWrites, [{ id: HUB, opts: { "access_methods": { "pin_code": { enabled: "yes" } } } }]);
+      assert.equal(officialOnly.captured.length, 0, "nothing went out on the direct path");
+
+      const directOnly = routedFixture({ override: "direct-only" });
+
+      intercept(directOnly, { method: "PUT", path: "/proxy/access/api/v2/device/" + HUB + "/settings" });
+
+      await present(directOnly.registry.device(HUB), "the hub").setAccessMethod("pin", true);
+
+      assert.deepEqual(directOnly.official.settingsWrites, [], "a client held to the direct API never reaches for the official one");
+      assert.equal(expectAt(directOnly.captured, 0, "the direct write").body, "[{\"key\":\"pin_code\",\"tag\":\"open_door_mode\",\"value\":\"yes\"}]");
+    });
   });
 
   describe("the caller's abort signal", () => {

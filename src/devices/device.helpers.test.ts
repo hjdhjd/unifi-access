@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * device.helpers.test.ts: Unit tests for the shared rig the device suites are driven through - the registry-over-a-real-store fixture, the interceptor that
- * answers one path, and the two door-state builders.
+ * answers one path, and the door-state builders.
  *
  * The interceptor's defaults are what have never been driven: the suites that assert a refusal hand it a status and a body of their own, so a default that
  * stopped answering 200 with the success envelope would still pass every one of them. The packet builder's extras are the same case from the other side - the

@@ -2,12 +2,15 @@
  *
  * device.ts: The projection base - a live read-through view over the state store - and the device layer that adds identity and the write-through command surface.
  */
+import { ACCESS_METHOD_KEYS, ACCESS_METHOD_ROW_TAG, accessMethodValue } from "../protocol/vocabulary.ts";
 import type { AccessDeviceConfig, AccessDeviceConfigPayload, Nullable } from "../types/index.ts";
 import type { AccessResponse, HttpMethod } from "../transport/http.ts";
 import type { AccessState, AccessStateDevice } from "../protocol/reducer.ts";
-import { deviceDisplayName, isHub, isTamperCapable as readTamperCapability, tamperState as readTamperState, selectAccessPoints } from "../state/selectors.ts";
-import { deviceRestartEndpoint, deviceSettingsEndpoint } from "./endpoints.ts";
+import { accessMethodsEndpoint, deviceRestartEndpoint, deviceSettingsEndpoint } from "./endpoints.ts";
+import { deviceAccessMethodStates, deviceDisplayName, isCamera, isHub, isTamperCapable as readTamperCapability, tamperState as readTamperState,
+  selectAccessPoints } from "../state/selectors.ts";
 import type { AccessDeviceContext } from "./context.ts";
+import type { AccessMethod } from "../protocol/vocabulary.ts";
 import { readResultEnvelope } from "../protocol/envelope.ts";
 
 // The sentence a refused restart falls back to when the controller sent no message of its own. The endpoint answers the same result envelope the door commands do,
@@ -190,6 +193,19 @@ export class AccessDevice extends Projection<AccessStateDevice> {
   }
 
   /**
+   * What this device's own configuration rows say about each access method, read through the state tier's own `deviceAccessMethodStates` selector: `true` for a
+   * method its row reports enabled, `false` for one reported disabled, and no entry where no row establishes a reading - a method the device has no row for, a
+   * record carrying no configuration rows at all as every token-only census produces, or a row carrying a value outside the `"yes"` and `"no"` pair. That
+   * selector's own documentation is the full statement of the contract.
+   *
+   * @throws {ReferenceError} If the device is no longer present in the controller state.
+   */
+  get accessMethodStates(): Partial<Readonly<Record<AccessMethod, boolean>>> {
+
+    return deviceAccessMethodStates(this.config);
+  }
+
+  /**
    * The identifier of the distinct device this one reaches the controller through, or `null` for a device that connects in its own right.
    *
    * This is the dependency an operator has to respect: hardware behind an Enterprise Access Hub takes both its uplink and its power from that hub, so it is
@@ -277,6 +293,54 @@ export class AccessDevice extends Projection<AccessStateDevice> {
     }
 
     return echo.record;
+  }
+
+  /**
+   * Switch one of this device's access methods - the ways a credential presented at it can open a door - on or off, by name. Write-through: it writes to the
+   * controller and returns, and the change is reflected once the realtime stream or the next refresh delivers it.
+   *
+   * The library knows which keys a method spans on each path and which endpoint each path writes, so the caller names the method and nothing more. The official
+   * path goes first where the client has one: its device settings write, and then a read of the settings back, because that write answers success for a method
+   * the controller declines. The method reading the state asked for completes the switch, and reading the other state throws {@link AccessDeclinedError}. A
+   * device whose official settings do not list the method, or list it with a value outside the `"yes"` and `"no"` pair, sends the switch to the Access
+   * application's own endpoints on a client that holds credentials, and so does an official failure other than a decline or an abort. There, camera-class
+   * hardware, as {@link isCamera} answers it, takes its rows on the camera configuration endpoint, `configs?is_camera=true`, and every other device on its
+   * `settings` collection, hubs included, each row in the shape the controller's access-method rows take: its key, the `open_door_mode` tag, and a `"yes"` or
+   * `"no"` value. Any 2xx there is success whatever its body, because no capture records what the controller answers a row array with.
+   *
+   * @param method  - The access method, by the library's own name for it.
+   * @param enabled - `true` to switch the method on, `false` to switch it off.
+   * @param opts    - Optional abort signal.
+   *
+   * @throws {@link AccessDeclinedError} when the controller accepts the official write and the read-back shows the method in the other state.
+   *   {@link AccessCapabilityError} when no path this client holds can carry the switch, as on a client with no direct path whose device's official settings do not
+   *   list the method or list it with a value outside the `"yes"` and `"no"` pair. Any other official failure as itself on a client with no direct path to take
+   *   instead. On the direct path, the classified `FatalError` on a non-2xx - {@link AccessAuthorizationError} when the account lacks the privilege the write
+   *   requires - or a transport-level `AccessError` on failure.
+   */
+  async setAccessMethod(method: AccessMethod, enabled: boolean, opts: { signal?: AbortSignal } = {}): Promise<void> {
+
+    /* The endpoint and the keys follow the record's own camera flag rather than the hub capability a configuration write routes by: a hub takes its access methods
+     * on the settings collection like every other device that is not camera-class. As with that write, this is URL routing rather than a validity guard.
+     */
+    const camera = isCamera(this.config);
+    const value = accessMethodValue(enabled);
+
+    // One row per key the method spans on this endpoint, with the tag and the value spellings the controller's access-method rows carry.
+    const rows = ACCESS_METHOD_KEYS[method][camera ? "camera" : "direct"].map((key) => ({ key, tag: ACCESS_METHOD_ROW_TAG, value }));
+
+    await this.ctx.routing.routedAccessMethod({
+
+      deviceId: this.id,
+      direct: async (): Promise<void> => {
+
+        await this.dispatch(accessMethodsEndpoint(this.ctx.host, this.id, camera ? "camera" : "settings"),
+          { body: rows, method: "PUT", ...((opts.signal !== undefined) && { signal: opts.signal }) });
+      },
+      enabled,
+      method,
+      ...((opts.signal !== undefined) && { signal: opts.signal })
+    });
   }
 
   /**

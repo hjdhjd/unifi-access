@@ -4,8 +4,10 @@
  * matters here is WHICH path each command takes and what the two runtime capability verdicts do to that choice over a client's life - questions that are about the
  * decision rather than about anything on the wire.
  */
-import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessCapabilityError } from "../errors.ts";
-import type { AccessCapabilities, AccessOfficialDoorSurface } from "./routing.ts";
+import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessCapabilityError, AccessDeclinedError, AccessNetworkError,
+  AccessRequestError, AccessThrottledError, AccessTimeoutError, formatErrorChain } from "../errors.ts";
+import type { AccessCapabilities, AccessOfficialRoutingSurface } from "./routing.ts";
+import type { AccessOfficialAccessMethods, AccessOfficialDeviceSettings, AccessOfficialDeviceSettingsUpdate } from "../official/devices.ts";
 import type { CapturingLog, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { HOST, officialPath } from "../official/domain.helpers.ts";
 import { TestClock, capturingLog, loggedAt, silentLog } from "homebridge-plugin-utils/testing";
@@ -40,17 +42,34 @@ interface RecordedCalls {
 
   direct: string[];
   lockRules: { call: AccessOfficialCallOptions | undefined; id: string; rule: unknown }[];
+  settingsReads: { call: AccessOfficialCallOptions | undefined; id: string }[];
+  settingsWrites: { call: AccessOfficialCallOptions | undefined; id: string; opts: AccessOfficialDeviceSettingsUpdate }[];
   unlocks: { call: AccessOfficialCallOptions | undefined; id: string; opts: AccessOfficialDoorUnlockOptions | undefined }[];
 }
 
 // What the official surface is being asked to do, which is what lets a refusal be scoped to one command - the granularity the floor memo files its verdicts at.
-type OfficialAttempt = { method: "setLockRule"; rule: unknown } | { method: "unlock"; opts: AccessOfficialDoorUnlockOptions | undefined };
+type OfficialAttempt = { method: "fetchSettings" } | { method: "setLockRule"; rule: unknown } | { method: "unlock"; opts: AccessOfficialDoorUnlockOptions | undefined } |
+  { method: "updateSettings"; opts: AccessOfficialDeviceSettingsUpdate };
+
+// The official keys every access method spans, each switched off: a device listing every method the vocabulary names, which is the default the fake controller holds.
+const EVERY_METHOD_OFF: AccessOfficialAccessMethods = { "bt_button": { enabled: "no" }, "bt_tap": { enabled: "no" }, face: { enabled: "no" }, nfc: { enabled: "no" },
+  "pin_code": { enabled: "no", "pin_code_shuffle": "no" }, "qr_code": { enabled: "no" }, "touch_pass": { enabled: "no" }, wave: { enabled: "no" } };
+
+/* What the fake controller holds for a device's official settings, and how it answers a write. A write applies to every key the device lists and to nothing else,
+ * which is the documented no-effect for a method the hardware does not offer; a declining controller applies nothing at all, which is the silent decline a
+ * read-back exists to catch.
+ */
+interface FakeSettings {
+
+  declines?: boolean;
+  listed?: AccessOfficialAccessMethods;
+}
 
 /* A recording official surface. `refuse` is consulted on every official call and, when it answers with an error, is what that call throws - which is how the two
  * capability codes and an ordinary fault are driven through the same path, and how a refusal aimed at one command alone is expressed. The difference between them
- * is exactly what the service is being tested on.
+ * is exactly what the service is being tested on. `settings` is what the fake controller holds for a device's access methods, and how it answers a write.
  */
-function officialSurface(calls: RecordedCalls, refuse?: (attempt: OfficialAttempt) => Error | undefined): AccessOfficialDoorSurface {
+function officialSurface(calls: RecordedCalls, refuse?: (attempt: OfficialAttempt) => Error | undefined, settings: FakeSettings = {}): AccessOfficialRoutingSurface {
 
   const attempt = (asked: OfficialAttempt): void => {
 
@@ -62,8 +81,38 @@ function officialSurface(calls: RecordedCalls, refuse?: (attempt: OfficialAttemp
     }
   };
 
+  const held: Record<string, object> = structuredClone({ ...(settings.listed ?? EVERY_METHOD_OFF) });
+
   return {
 
+    devices: {
+
+      fetchSettings: async (id: string, call?: AccessOfficialCallOptions): Promise<AccessOfficialDeviceSettings> => {
+
+        attempt({ method: "fetchSettings" });
+
+        calls.settingsReads.push({ call, id });
+
+        // The held map is the listing the device was seeded with as the writes have left it, so it answers in the shape it was seeded from.
+        return { "access_methods": structuredClone(held), "device_id": id };
+      },
+      updateSettings: async (id: string, opts: AccessOfficialDeviceSettingsUpdate, call?: AccessOfficialCallOptions): Promise<void> => {
+
+        attempt({ method: "updateSettings", opts });
+
+        calls.settingsWrites.push({ call, id, opts });
+
+        for(const key of Object.keys(held)) {
+
+          const value = opts.access_methods[key as keyof AccessOfficialDeviceSettingsUpdate["access_methods"]];
+
+          if((settings.declines !== true) && (value !== undefined)) {
+
+            held[key] = { ...held[key], ...value };
+          }
+        }
+      }
+    },
     spaces: {
 
       setLockRule: async (id: string, rule: unknown, call?: AccessOfficialCallOptions): Promise<void> => {
@@ -93,17 +142,17 @@ function storeWith(bootstrap = accessBootstrap2026Fixture): StateStore {
 }
 
 function makeService(options: { calls: RecordedCalls; capabilities?: Partial<AccessCapabilities>; log?: AccessLogging; official?: boolean;
-  refuse?: (attempt: OfficialAttempt) => Error | undefined; store?: StateStore; }): { service: AccessRoutingService; store: StateStore } {
+  refuse?: (attempt: OfficialAttempt) => Error | undefined; settings?: FakeSettings; store?: StateStore; }): { service: AccessRoutingService; store: StateStore } {
 
   const store = options.store ?? storeWith();
   const capabilities: AccessCapabilities = { mode: "dual", official: true, override: "auto", ...options.capabilities };
   const service = new AccessRoutingService({ capabilities, log: options.log ?? silentLog(),
-    official: ((options.official ?? true) ? officialSurface(options.calls, options.refuse) : null), store });
+    official: ((options.official ?? true) ? officialSurface(options.calls, options.refuse, options.settings) : null), store });
 
   return { service, store };
 }
 
-const newCalls = (): RecordedCalls => ({ direct: [], lockRules: [], unlocks: [] });
+const newCalls = (): RecordedCalls => ({ direct: [], lockRules: [], settingsReads: [], settingsWrites: [], unlocks: [] });
 const direct = (calls: RecordedCalls, label: string) => async (): Promise<void> => void calls.direct.push(label);
 const warnings = (log: CapturingLog): TestLogEntry[] => log.entries.filter((entry) => (entry.level === "warn"));
 
@@ -288,8 +337,9 @@ describe("the capability error's message", () => {
 
   test("names the operation, the target, the capability, and the mode on every arm that can refuse", async () => {
 
-    /* The class documents its message as carrying each of them, and a message is the whole of what this error offers a caller - so each arm is checked rather
-     * than one standing in for the rest. The revoked arm is reached by tripping the latch first, which is the only way to produce it.
+    /* The class documents its message as carrying each of them, and a message is the whole of what this error offers a caller - so each arm is checked rather than one
+     * standing in for the rest. Each revoked arm is reached by tripping the latch first, which is the only way to produce it: the Identity Enterprise code closes the
+     * official path to every command, and a refused door permission closes it to door commands.
      */
     const attributedUnlock = async (service: AccessRoutingService, calls: RecordedCalls): Promise<void> => {
 
@@ -308,6 +358,8 @@ describe("the capability error's message", () => {
       { capabilities: { mode: "dual" }, issue: attributedUnlock, label: "revoked", official: true, operation: /an unlock attributed to an actor/,
         reason: /no longer available to this session/,
         refuse: () => new AccessApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }), target: /for door "Test Name 11"/ },
+      { capabilities: { mode: "dual" }, issue: attributedUnlock, label: "door commands closed", official: true, operation: /an unlock attributed to an actor/,
+        reason: /door commands/, refuse: () => new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 }), target: /for door "Test Name 11"/ },
       { capabilities: { mode: "credential", official: false }, issue: entryDirectionUnlock, label: "entry direction with no official path", official: false,
         operation: /an unlock carrying an entry direction/, reason: /requires the official API/, target: /for door "Test Name 11"/ }
     ];
@@ -663,8 +715,8 @@ describe("the session revocation latch", () => {
 
   test("latches on a token refused a permission where the direct path can carry the command, and reports it once", async () => {
 
-    /* The token authenticated and was refused this operation. Its permissions were fixed when it was issued, so the refusal is a fact about this client rather than
-     * about the moment it asked, and a client holding credentials takes the direct path for this command and every one after it.
+    /* The token authenticated and was refused this operation. Its permissions were fixed when it was issued, so the refusal is a fact about this client rather than about
+     * the moment it asked, and a client holding credentials takes the direct path for this command and every door command after it.
      */
     let attempts = 0;
     const calls = newCalls();
@@ -679,7 +731,7 @@ describe("the session revocation latch", () => {
     await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
     await service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
 
-    assert.equal(attempts, 1, "the refused permission is asked once, and the latch answers every command after it");
+    assert.equal(attempts, 1, "the refused permission is asked once, and the latch answers every door command after it");
     assert.deepEqual(calls.direct, [ "first", "second" ], "each unlock completed on the direct path");
     assert.deepEqual(warnings(log).map((entry) => entry.params), [[{ identity: "token", statusCode: 403 }]],
       "the closure is reported once, however many commands follow it");
@@ -733,7 +785,7 @@ describe("the session revocation latch", () => {
     await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
     await service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
 
-    assert.equal(attempts, 1, "the refused permission is asked once, and the latch answers every command after it");
+    assert.equal(attempts, 1, "the refused permission is asked once, and the latch answers every door command after it");
     assert.deepEqual(calls.direct, [ "first", "second" ], "each unlock completed on the direct path");
     assert.deepEqual(warnings(log).map((entry) => entry.params), [[{ code: "CODE_OPERATION_FORBIDDEN" }]], "the closure is reported once, carrying the code");
     assert.ok(loggedAt(log.entries, "warn", ENVELOPE_REFUSAL), "the report carries the controller's own sentence");
@@ -767,6 +819,35 @@ describe("the session revocation latch", () => {
       assert.equal(attempts, 2, refusal.label + ": each command reached the official path before any refusal arrived");
       assert.deepEqual(calls.direct, [ "first", "second" ], refusal.label + ": each command completed on the direct path");
       assert.equal(warnings(log).length, 1, refusal.label + ": the closure is reported once");
+    }
+  });
+
+  test("reports a closure of door commands once, naming them, when door commands already in flight are refused a permission together", async () => {
+
+    /* Once a refused door permission has closed the official path to door commands, no door command reaches that path again, so only door commands already in flight
+     * can meet the refusal twice. Each spelling of the refusal closes the same reach, and the second refusal to arrive finds it already closed.
+     */
+    for(const refusal of [ new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 }),
+      new AccessApiError(ENVELOPE_REFUSAL, { code: "CODE_OPERATION_FORBIDDEN" }) ]) {
+
+      let attempts = 0;
+      const calls = newCalls();
+      const log = capturingLog();
+      const { service } = makeService({ calls, log, refuse: () => {
+
+        attempts++;
+
+        return refusal;
+      } });
+
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.all([ service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB }),
+        service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" }) ]);
+
+      assert.equal(attempts, 2, refusal.name + ": each command reached the official path before any refusal arrived");
+      assert.deepEqual(calls.direct, [ "first", "second" ], refusal.name + ": each command completed on the direct path");
+      assert.equal(warnings(log).length, 1, refusal.name + ": the closure is reported once");
+      assert.ok(loggedAt(log.entries, "warn", "This client's door commands will use the Access application's own endpoints"), refusal.name + ": naming door commands");
     }
   });
 
@@ -1124,5 +1205,465 @@ describe("the caller's abort signal", () => {
 
     assert.deepEqual(calls.unlocks, [{ call: {}, id: DOOR_HUB, opts: {} }], "the official path served the second command");
     assert.deepEqual(calls.direct, []);
+  });
+});
+
+describe("the access-method write", () => {
+
+  // The debug entries a log captured, which is where the write records an official failure it swallowed on its way to the direct path.
+  const debugs = (log: CapturingLog): TestLogEntry[] => log.entries.filter((entry) => (entry.level === "debug"));
+
+  // One routed write of a method switching it on, with its direct expression recorded under the method's own name.
+  interface WriteOptions {
+
+    deviceId?: string;
+    method?: "mobile" | "nfc";
+    signal?: AbortSignal;
+  }
+
+  async function write(service: AccessRoutingService, calls: RecordedCalls, options: WriteOptions = {}): Promise<void> {
+
+    await service.routedAccessMethod({ deviceId: options.deviceId ?? HUB, direct: direct(calls, options.method ?? "nfc"), enabled: true,
+      method: options.method ?? "nfc", ...((options.signal !== undefined) && { signal: options.signal }) });
+  }
+
+  test("goes official first, writing the state to every official key the method spans and then reading the settings back", async () => {
+
+    const calls = newCalls();
+    const { service } = makeService({ calls });
+
+    await write(service, calls, { method: "mobile" });
+
+    assert.deepEqual(calls.settingsWrites, [{ call: {}, id: HUB, opts: { "access_methods": { "bt_button": { enabled: "yes" }, "bt_tap": { enabled: "yes" } } } }]);
+    assert.deepEqual(calls.settingsReads, [{ call: {}, id: HUB }], "the read-back followed the write");
+    assert.deepEqual(calls.direct, [], "the method held, so the direct path was not taken");
+  });
+
+  test("takes the direct path when the device's official settings do not list the method", async () => {
+
+    // The hub's own captured specimen lists nothing, so the read-back carries no entry for the method and the write goes on to the endpoint that can reach it.
+    const calls = newCalls();
+    const { service } = makeService({ calls, settings: { listed: {} } });
+
+    await write(service, calls);
+
+    assert.equal(calls.settingsWrites.length, 1, "the official write was attempted first");
+    assert.equal(calls.settingsReads.length, 1);
+    assert.deepEqual(calls.direct, ["nfc"]);
+  });
+
+  test("takes the direct path when the read-back reports the method outside the yes-or-no pair", async () => {
+
+    /* The read-back is judged through the settings reading, which gives a value outside the pair no entry, so the method reads as unlisted rather than as the
+     * controller's decline. The fake applies nothing, which keeps that value in place for the read-back to find; the cast is how a value the type does not admit
+     * reaches a fake whose type is the wire's.
+     */
+    const calls = newCalls();
+    const { service } = makeService({ calls, settings: { declines: true, listed: { nfc: { enabled: "true" } } as unknown as AccessOfficialAccessMethods } });
+
+    await write(service, calls);
+
+    assert.equal(calls.settingsReads.length, 1, "the read-back ran");
+    assert.deepEqual(calls.direct, ["nfc"], "and found no reading to judge, so the write went on to the path that can reach the method");
+  });
+
+  test("throws the controller's decline, naming the method and the device, and never tries the direct path", async () => {
+
+    const calls = newCalls();
+    const { service } = makeService({ calls, settings: { declines: true } });
+
+    await assert.rejects(async () => write(service, calls), (error: unknown) => {
+
+      assert.ok(error instanceof AccessDeclinedError);
+      assert.match(error.message, /declined to enable the nfc access method for device "Test alias 13"/,
+        "the message names the method and the device's display name");
+      assert.ok(error.message.endsWith("."), "and reads as a sentence");
+      assert.equal(error.method, "nfc");
+      assert.equal(error.reported, false, "the read-back reports the method still off");
+
+      return true;
+    });
+
+    assert.deepEqual(calls.direct, [], "the controller answered and refused, so the other path is not asked to second-guess it");
+  });
+
+  test("falls back to the direct path on every official failure that is no verdict, logging what it swallowed", async () => {
+
+    /* Switching a method sets a state, so a write whose official attempt failed with its effect unknown is safe to make again on the other path. Each failure is
+     * thrown from the write or from the read-back after it, and each is recorded at debug before the direct attempt, so a write that keeps falling back leaves a
+     * trace and the official failure is not lost behind the direct one.
+     */
+    const failures: { at: OfficialAttempt["method"]; error: Error; label: string }[] = [
+      { at: "updateSettings", error: new AccessTimeoutError("The request timed out.", { elapsedMs: 3500 }), label: "a timeout" },
+      { at: "updateSettings", error: new AccessRequestError("The controller answered 503.", { statusCode: 503 }), label: "a 5xx" },
+      { at: "updateSettings", error: new AccessThrottledError("The client is throttled.", { cooldownMs: 1000 }), label: "the official transport's throttle" },
+      { at: "fetchSettings", error: new AccessNetworkError("The read-back could not reach the controller.", { code: "ECONNRESET" }), label: "a read-back failure" }
+    ];
+
+    for(const failure of failures) {
+
+      const calls = newCalls();
+      const log = capturingLog();
+      const { service } = makeService({ calls, log, refuse: (attempt) => ((attempt.method === failure.at) ? failure.error : undefined) });
+
+      // eslint-disable-next-line no-await-in-loop
+      await write(service, calls);
+
+      assert.deepEqual(calls.direct, ["nfc"], failure.label + " sends the write to the direct path");
+      assert.deepEqual(debugs(log).map((entry) => entry.params), [[{ deviceId: HUB, error: failure.error.message.replace(/\.$/, ""),
+        operation: "the nfc access method write" }]], failure.label + " is logged at debug with the operation, the device, and the error");
+      assert.deepEqual(warnings(log), [], failure.label + " closes nothing, so nothing is reported at warn");
+    }
+  });
+
+  test("falls back on a controller limiting requests and on a refusal it answers at a 400, as the official dispatch reads each", async () => {
+
+    /* The official dispatch reads a controller limiting requests as the status error it answered with, and a refusal at a 4xx in the controller's own vocabulary as
+     * that refusal, carrying the status error as its cause. Neither is a verdict, so each sends the write to its direct half with the debug line, and a client with no
+     * direct path keeps the limiting answer as itself. The errors are the ones the dispatch produces over a mocked controller rather than ones built by hand.
+     */
+    const dispatched = async (status: number, body: string): Promise<unknown> => {
+
+      const { pool, transport } = makeMockTransport({ host: officialHost(HOST) });
+      const dispatch = new OfficialDispatch({ transport });
+
+      pool.intercept({ method: "PUT", path: officialPath("/devices/" + HUB + "/settings") }).reply(status, body);
+
+      return dispatch.command(officialEndpoint(HOST, "/devices/" + HUB + "/settings"), { json: { "access_methods": {} }, method: "PUT" })
+        .catch((error: unknown) => error);
+    };
+    const limited = await dispatched(429, "");
+    const refused = await dispatched(400, JSON.stringify({ code: "CODE_PARAMS_INVALID", msg: "Invalid parameters." }));
+
+    assert.ok((limited instanceof AccessRequestError) && (limited.statusCode === 429), "the dispatch reads the 429 as the status error it answered with");
+    assert.ok((refused instanceof AccessApiError) && (refused.code === "CODE_PARAMS_INVALID") && (refused.cause instanceof AccessRequestError),
+      "and the 400's envelope as the controller's refusal, carrying the status error as its cause");
+
+    for(const refusal of [ limited, refused ]) {
+
+      const calls = newCalls();
+      const log = capturingLog();
+      const { service } = makeService({ calls, log, refuse: (attempt) => ((attempt.method === "updateSettings") ? refusal : undefined) });
+
+      // eslint-disable-next-line no-await-in-loop
+      await write(service, calls);
+
+      assert.deepEqual(calls.direct, ["nfc"], refusal.name + " sends the write to the direct path");
+      assert.ok(loggedAt(log.entries, "debug", "safe to repeat"), refusal.name + " is logged at debug on its way there");
+      assert.deepEqual(debugs(log).map((entry) => entry.params), [[{ deviceId: HUB, error: formatErrorChain(refusal), operation: "the nfc access method write" }]],
+        refusal.name + " is logged with the operation, the device, and the whole error chain");
+      assert.deepEqual(warnings(log), [], refusal.name + " closes nothing, so nothing is reported at warn");
+    }
+
+    const calls = newCalls();
+    const { service } = makeService({ calls, capabilities: { mode: "token" }, refuse: (attempt) => ((attempt.method === "updateSettings") ? limited : undefined) });
+
+    await assert.rejects(async () => write(service, calls), (error: unknown) => {
+
+      assert.ok(error instanceof AccessRequestError, "a token client keeps the limiting answer as itself");
+      assert.equal(error.statusCode, 429);
+
+      return true;
+    });
+
+    assert.deepEqual(calls.direct, [], "a token client holds no direct path to take");
+  });
+
+  test("never falls back on the caller's abort", async () => {
+
+    const calls = newCalls();
+    const { service } = makeService({ calls,
+      refuse: (attempt) => ((attempt.method === "updateSettings") ? new AccessAbortedError("The request was aborted by the caller's signal.") : undefined) });
+
+    await assert.rejects(async () => write(service, calls, { signal: new AbortController().signal }), AccessAbortedError);
+
+    assert.deepEqual(calls.direct, [], "the caller cancelled, so issuing the write on the other path is the one thing it asked not to happen");
+  });
+
+  test("refuses a method the device's official settings do not list on a client with no direct path, naming that as the reason", async () => {
+
+    for(const capabilities of [ { mode: "token" }, { mode: "dual", override: "official-only" } ] as const) {
+
+      const calls = newCalls();
+      const { service } = makeService({ calls, capabilities, settings: { listed: {} } });
+
+      // eslint-disable-next-line no-await-in-loop
+      await assert.rejects(async () => write(service, calls), (error: unknown) => {
+
+        assert.ok(error instanceof AccessCapabilityError, capabilities.mode + " refuses as a capability verdict");
+        assert.match(error.message, /the nfc access method write for device "Test alias 13"/, "the message names the operation and the device");
+        assert.match(error.message, /because this device's official settings report no enabled or disabled state for that method/,
+          "and the reason the controller itself gave");
+        assert.equal(/holds no credentials|held to the official API/.test(error.message), false, "ahead of what the client's own shape would say");
+
+        return true;
+      });
+
+      assert.deepEqual(calls.direct, [], capabilities.mode + " holds no direct path to take");
+    }
+  });
+
+  test("files a floor refusal against the write on that device alone, whether the write or the read-back answered it", async () => {
+
+    for(const at of [ "updateSettings", "fetchSettings" ] as const) {
+
+      let attempts = 0;
+      const calls = newCalls();
+
+      // Only the first official call of the refused kind is refused, so a later official attempt on the same device would be recorded rather than refused.
+      const { service } = makeService({ calls, refuse: (attempt) => {
+
+        if((attempt.method !== at) || (attempts > 0)) {
+
+          return undefined;
+        }
+
+        attempts++;
+
+        return new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
+      } });
+
+      // eslint-disable-next-line no-await-in-loop
+      await write(service, calls);
+
+      const writesAfterFirst = calls.settingsWrites.length;
+
+      // eslint-disable-next-line no-await-in-loop
+      await write(service, calls);
+
+      assert.equal(calls.settingsWrites.length, writesAfterFirst, at + ": the second write consulted the memo rather than asking again");
+      assert.deepEqual(calls.direct, [ "nfc", "nfc" ], at + ": each write completed on the direct path");
+
+      // The memo files the write against the command and the device, so a door command on the same device and the same write on another device stay official.
+      // eslint-disable-next-line no-await-in-loop
+      await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+      // eslint-disable-next-line no-await-in-loop
+      await write(service, calls, { deviceId: "aabbcc000004" });
+
+      assert.deepEqual(calls.unlocks, [{ call: {}, id: DOOR_HUB, opts: {} }], at + ": the unlock on the same device still went official");
+      assert.equal(calls.settingsWrites.at(-1)?.id, "aabbcc000004", at + ": and another device's write still reached the official path");
+      assert.deepEqual(calls.direct, [ "nfc", "nfc" ], at + ": neither of them took the direct path");
+    }
+  });
+
+  test("keeps every official failure as itself on a client with no direct path to take instead", async () => {
+
+    /* With nowhere else to go, the failure is the one thing that says why the write did not happen: a timeout reads as a timeout, a 5xx as the controller's own
+     * answer, and a rejected token as the token to fix, where a capability error would name a missing capability that is not what went wrong.
+     */
+    const failures = [ new AccessTimeoutError("The request timed out.", { elapsedMs: 3500 }), new AccessRequestError("The controller answered 500.", { statusCode: 500 }),
+      new AccessAuthError("The token was rejected.", { identity: "token", statusCode: 401 }) ];
+
+    for(const capabilities of [ { mode: "token" }, { mode: "dual", override: "official-only" } ] as const) {
+
+      for(const failure of failures) {
+
+        const calls = newCalls();
+        const log = capturingLog();
+        const { service } = makeService({ calls, capabilities, log, refuse: (attempt) => ((attempt.method === "updateSettings") ? failure : undefined) });
+
+        // eslint-disable-next-line no-await-in-loop
+        await assert.rejects(async () => write(service, calls), (error: unknown) => {
+
+          assert.equal(error, failure, capabilities.mode + ": " + failure.name + " reaches the caller as itself");
+
+          return true;
+        });
+
+        assert.deepEqual(calls.direct, [], capabilities.mode + ": no direct path was taken");
+        assert.deepEqual(warnings(log), [], capabilities.mode + ": and nothing was closed, so nothing was reported");
+      }
+    }
+  });
+
+  test("falls back on a permission refused to the settings write, closing nothing, so a door command after it still goes official", async () => {
+
+    /* The settings write needs a permission the door commands do not, so a token refused it may still carry every door command. The refusal speaks for the write
+     * alone: the write takes the direct path, and an attributed unlock - which only the official API can carry - still reaches the official path after it.
+     */
+    for(const refusal of [ new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 }),
+      new AccessApiError(ENVELOPE_REFUSAL, { code: "CODE_OPERATION_FORBIDDEN" }) ]) {
+
+      const calls = newCalls();
+      const log = capturingLog();
+      const { service } = makeService({ calls, log, refuse: (attempt) => ((attempt.method === "updateSettings") ? refusal : undefined) });
+
+      // eslint-disable-next-line no-await-in-loop
+      await write(service, calls);
+
+      assert.deepEqual(calls.direct, ["nfc"], refusal.name + ": the write completed on the direct path");
+      assert.deepEqual(warnings(log), [], refusal.name + ": and nothing closed the official path");
+
+      // eslint-disable-next-line no-await-in-loop
+      await service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+
+      assert.deepEqual(calls.unlocks, [{ call: {}, id: DOOR_HUB, opts: { actor: { id: "a1", name: "Automation" } } }],
+        refusal.name + ": the attributed unlock went official");
+    }
+  });
+
+  test("closes the official path on a rejected token, as a door command does", async () => {
+
+    // A rejected token is refused whatever it asks, so the write's refusal speaks for every routed command after it.
+    const calls = newCalls();
+    const log = capturingLog();
+    const { service } = makeService({ calls, log, refuse: () => new AccessAuthError(TOKEN_REJECTED, { identity: "token", statusCode: 401 }) });
+
+    await write(service, calls);
+
+    assert.deepEqual(calls.direct, ["nfc"], "the write completed on the direct path");
+    assert.deepEqual(warnings(log).map((entry) => entry.params), [[{ identity: "token", statusCode: 401 }]], "and the closure was reported once");
+
+    await assert.rejects(async () => service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB, direct: direct(calls, "unlock"),
+      doorId: DOOR_HUB }), { message: /no longer available to this session/, name: "AccessCapabilityError" });
+  });
+
+  test("keeps its official write and read-back after a refused door permission closes the official path to door commands", async () => {
+
+    /* A refused door permission speaks for the door commands, which all need it, and says nothing about the settings write, which needs a permission of its own. The
+     * write still goes official after it, so the read-back only that path takes still catches a decline the settings write answered success for.
+     */
+    const calls = newCalls();
+    const log = capturingLog();
+    const { service } = makeService({ calls, log,
+      refuse: (attempt) => ((attempt.method === "unlock") ? new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 }) : undefined),
+      settings: { declines: true } });
+
+    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await assert.rejects(async () => write(service, calls), AccessDeclinedError);
+
+    assert.equal(calls.settingsWrites.length, 1, "the write went official");
+    assert.equal(calls.settingsReads.length, 1, "and read the settings back");
+    assert.deepEqual(calls.direct, ["unlock"], "only the refused unlock took the direct path, and the decline reached the caller as itself");
+    assert.equal(warnings(log).length, 1, "the closure of door commands is the one report");
+  });
+
+  test("widens a closure of door commands to every command on a rejected token, reporting the widening", async () => {
+
+    /* A refused door permission closes the door commands alone, so the write after it still asks the official path. A rejected token is refused whatever it asks, so
+     * the write's refusal widens the closure to every command, and the write after that never reaches the official path at all. Each closure is reported once.
+     */
+    let settingsAttempts = 0;
+    const calls = newCalls();
+    const log = capturingLog();
+    const { service } = makeService({ calls, log, refuse: (attempt) => {
+
+      if(attempt.method === "unlock") {
+
+        return new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 });
+      }
+
+      if(attempt.method === "updateSettings") {
+
+        settingsAttempts++;
+
+        return new AccessAuthError(TOKEN_REJECTED, { identity: "token", statusCode: 401 });
+      }
+
+      return undefined;
+    } });
+
+    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await write(service, calls);
+    await write(service, calls);
+
+    assert.equal(settingsAttempts, 1, "only the first write asked the official path");
+    assert.deepEqual(calls.direct, [ "unlock", "nfc", "nfc" ], "each command completed on the direct path");
+    assert.deepEqual(warnings(log).map((entry) => entry.params), [ [{ identity: "token", statusCode: 403 }], [{ identity: "token", statusCode: 401 }] ],
+      "each closure is reported once, in the order it widened");
+    assert.match(warnings(log)[0]?.message ?? "", /This client's door commands will use/, "the first report names the door commands");
+    assert.match(warnings(log)[1]?.message ?? "", /This client's commands will use/, "and the widening names every command");
+  });
+
+  test("falls back on each permission refused to the settings write after a closure of door commands, widening nothing", async () => {
+
+    /* A token refused the door permission and the device permission alike. The door command's refusal closes the door commands; each write after it still asks the
+     * official path, is refused for the write alone, and falls back, so each write pays one official attempt and the closure is reported once.
+     */
+    let settingsAttempts = 0;
+    const calls = newCalls();
+    const log = capturingLog();
+    const { service } = makeService({ calls, log, refuse: (attempt) => {
+
+      if(attempt.method === "updateSettings") {
+
+        settingsAttempts++;
+      }
+
+      return [ "unlock", "updateSettings" ].includes(attempt.method) ? new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 }) : undefined;
+    } });
+
+    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await write(service, calls);
+    await write(service, calls);
+
+    assert.equal(settingsAttempts, 2, "each write asked the official path once");
+    assert.deepEqual(calls.direct, [ "unlock", "nfc", "nfc" ], "each command completed on the direct path");
+    assert.equal(debugs(log).length, 2, "each write's refusal is logged at debug on its way there");
+    assert.equal(warnings(log).length, 1, "and the closure of door commands is the one report");
+  });
+
+  test("keeps a closure of every command when a door command's refused permission arrives after it", async () => {
+
+    /* An unlock that took the official path before a rejected token closed it to every command can still be refused a permission afterward. That refusal reaches no
+     * further than the closure already in force, so it narrows nothing: the write after it never reaches the official path, and nothing more is reported.
+     */
+    let settingsAttempts = 0;
+    const calls = newCalls();
+    const log = capturingLog();
+    const recording = officialSurface(calls, (attempt) => {
+
+      if(attempt.method !== "updateSettings") {
+
+        return undefined;
+      }
+
+      settingsAttempts++;
+
+      return new AccessAuthError(TOKEN_REJECTED, { identity: "token", statusCode: 401 });
+    });
+
+    // The unlock is held until the write's rejected token has closed the path, and only then answers with its own refusal.
+    const { promise: held, resolve: release }: PromiseWithResolvers<void> = Promise.withResolvers();
+    const official: AccessOfficialRoutingSurface = { devices: recording.devices, spaces: { ...recording.spaces, unlock: async (): Promise<void> => {
+
+      await held;
+
+      throw new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 });
+    } } };
+    const service = new AccessRoutingService({ capabilities: { mode: "dual", official: true, override: "auto" }, log, official, store: storeWith() });
+    const unlock = service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+
+    await write(service, calls);
+    release();
+    await unlock;
+    await write(service, calls);
+
+    assert.equal(settingsAttempts, 1, "only the first write asked the official path");
+    assert.deepEqual(calls.direct, [ "nfc", "unlock", "nfc" ], "each command completed on the direct path");
+    assert.deepEqual(warnings(log).map((entry) => entry.params), [[{ identity: "token", statusCode: 401 }]], "and only the closure of every command is reported");
+  });
+
+  test("never reaches for the official path on a client held to the direct API", async () => {
+
+    const calls = newCalls();
+    const { service } = makeService({ calls, capabilities: { override: "direct-only" } });
+
+    await write(service, calls);
+
+    assert.deepEqual(calls.direct, ["nfc"]);
+    assert.deepEqual(calls.settingsWrites, [], "a client held to one channel does not attempt the channel it was held away from");
+  });
+
+  test("hands the caller's signal to the settings write and to its read-back", async () => {
+
+    const calls = newCalls();
+    const { service } = makeService({ calls });
+    const controller = new AbortController();
+
+    await write(service, calls, { signal: controller.signal });
+
+    assert.equal(calls.settingsWrites[0]?.call?.signal, controller.signal, "the write carries the caller's own signal");
+    assert.equal(calls.settingsReads[0]?.call?.signal, controller.signal, "and so does the read-back");
   });
 });

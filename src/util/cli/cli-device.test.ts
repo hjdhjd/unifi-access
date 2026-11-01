@@ -1,11 +1,11 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * cli-device.test.ts: Tests for the ufa device group - the fleet restart policy under the `all` keyword, the access-method settings with their read-back, and the
- * direct configuration write. Every test runs offline against the structural fake.
+ * cli-device.test.ts: Tests for the ufa device group - the fleet restart policy under the `all` keyword, the access-method settings read and switched by name,
+ * and the direct configuration write. Every test runs offline against the structural fake.
  */
+import { AccessAbortedError, AccessCapabilityError, AccessDeclinedError } from "../../index.ts";
 import { CREDENTIALS_PAIR, CREDENTIALS_TOKEN, makeCommandContext, makeFakeClient, parsedJson, rendered } from "./cli.helpers.ts";
 import { describe, test } from "node:test";
-import { AccessAbortedError } from "../../index.ts";
 import { CliError } from "./shared.ts";
 import assert from "node:assert/strict";
 import { device } from "./commands/device.ts";
@@ -415,6 +415,47 @@ describe("the device state command", () => {
     assert.deepEqual(Object.keys(parsed[HUB_ID]), [ "bindings", "online", "tamper", "terminals", "uplink" ]);
   });
 
+  /* A reader's access-method rows, filed the way the controller files them: one row per key under the access-method tag. The rows below carry a mobile key the
+   * read does not judge, and a pin row holding the placeholder the captures scrub it to, which is outside the pair and so establishes nothing.
+   */
+  const READER_ROWS = { "apple_pass": "no", "bt": "yes", "bt_button": "yes", "nfc": "yes", "pin_code": "REDACTED-00000008-", "qr_code": "yes" };
+  const methodRows = (rows: Record<string, string>): Record<string, unknown> => ({
+
+    "configs": Object.entries(rows).map(([ key, value ]) => ({ "device_id": READER_ID, key, "tag": "open_door_mode", value }))
+  });
+
+  test("it lists each access method a device's rows establish on a line of its own, under the device and in the vocabulary's own order", async () => {
+
+    const { calls, client } = makeFakeClient({ devices: [ { config: methodRows(READER_ROWS), id: READER_ID, name: "Front Reader" },
+      { id: HUB_ID, name: "The Hub" } ] });
+    const { ctx, lines } = makeCommandContext({ args: ["state"], calls, client });
+
+    await device.run(ctx);
+
+    const text = rendered(lines);
+
+    assert.equal(text.length, 6, "the reader's line, a line per method its rows establish, and the hub's line");
+    assert.match(text[0] ?? "", /^ +Front Reader +online yes, uplink none$/, "the readings line itself is unchanged");
+    assert.deepEqual(text.slice(1, 5).map((line) => line.trim()), [ "mobile enabled", "nfc enabled", "qr enabled", "touchPass disabled" ]);
+    assert.equal(text[1]?.indexOf("mobile"), text[0]?.indexOf("online"), "a method line sits in the description column, under the readings it belongs to");
+    assert.match(text[5] ?? "", /^ +The Hub +online yes, uplink none$/, "and a device whose rows establish no method lists none");
+  });
+
+  test("the JSON form carries the established methods keyed by name, and no member where the rows establish none", async () => {
+
+    const { calls, client } = makeFakeClient({ devices: [ { config: methodRows(READER_ROWS), id: READER_ID, name: "Front Reader" },
+      { id: HUB_ID, name: "The Hub" } ] });
+    const { ctx, lines } = makeCommandContext({ args: [ "state", "--json" ], calls, client });
+
+    await device.run(ctx);
+
+    const parsed = parsedJson<Record<string, Record<string, unknown>>>(lines);
+
+    assert.deepEqual(parsed[READER_ID], { accessMethods: { mobile: true, nfc: true, qr: true, touchPass: false }, online: true, uplink: null });
+    assert.deepEqual(Object.keys(parsed[READER_ID] ?? {}), [ "accessMethods", "online", "uplink" ]);
+    assert.equal("accessMethods" in (parsed[HUB_ID] ?? {}), false, "a device whose rows establish no method carries no member");
+  });
+
   test("it reports one named device, and lists what the controller has when nothing matches", async () => {
 
     const { calls, client } = makeFakeClient({ devices: [ { config: capable({ value: "true" }), id: ULTRA_ID, name: "Front Ultra" },
@@ -470,8 +511,6 @@ describe("the device state command", () => {
 
 describe("the device settings command", () => {
 
-  const ACCEPTED_LINE = "The settings change was accepted, but the read-back that reports whether each method held did not complete.";
-
   const officialSpec = { capabilities: { mode: "dual", official: true, override: "auto" } as const, devices: [{ id: READER_ID, name: "Front Reader" }],
     official: { settings: { "access_methods": { "face": { "enabled": "no" }, "nfc": { "enabled": "yes" } }, "device_id": READER_ID } } };
 
@@ -499,81 +538,86 @@ describe("the device settings command", () => {
     assert.equal(rendered(lines)[0], JSON.stringify(officialSpec.official.settings));
   });
 
-  test("a toggle writes the sparse update, awaits it, reads back, and reports what held", async () => {
+  test("a toggle switches the method through the device's routed write and reports it by name", async () => {
 
     const { calls, client } = makeFakeClient(officialSpec);
     const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "nfc" ], calls, client });
 
     await device.run(ctx);
 
-    // The write precedes the read-back in the recorded call order - the read that reports what held must never race the write it reports on.
-    assert.deepEqual(calls.official.map((call) => call.method), [ "devices.updateSettings", "devices.fetchSettings" ]);
-    assert.deepEqual(calls.official[0]?.args, [ READER_ID, { "access_methods": { "nfc": { "enabled": "yes" } } }, { signal: ctx.signal } ]);
-    assert.match(rendered(lines)[0] ?? "", /^nfc - enabled\.$/);
+    // The command composes no official call of its own: the library's routed write carries the change, the read-back with it.
+    assert.deepEqual(calls.accessMethods, [{ enabled: true, id: READER_ID, method: "nfc", signal: ctx.signal }]);
+    assert.deepEqual(calls.official, [], "the command itself asked the official surface for nothing");
+    assert.deepEqual(rendered(lines), ["nfc - enabled."]);
     assert.equal(calls.opens[0]?.refreshIntervalMs, false);
   });
 
-  test("a silent decline is surfaced per method rather than reported as success", async () => {
+  test("a decline is reported on its method's line in the library's own sentence, and the run goes on to the next method", async () => {
 
-    // The fake echoes success for the write and reports face still off on the read-back - the silent-decline shape unsupported hardware answers with.
-    const { calls, client } = makeFakeClient(officialSpec);
+    const declined = new AccessDeclinedError("The UniFi Access controller declined to enable the face access method for device \"Front Reader\": the settings write " +
+      "answered success, and the method still reads disabled.", { method: "face", reported: false });
+    const { calls, client } = makeFakeClient({ ...officialSpec, devices: [{ accessMethodErrors: { face: declined }, id: READER_ID, name: "Front Reader" }] });
     const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "face", "--disable", "nfc" ], calls, client });
 
     await device.run(ctx);
 
-    assert.deepEqual(calls.official[0]?.args,
-      [ READER_ID, { "access_methods": { "face": { "enabled": "yes" }, "nfc": { "enabled": "no" } } }, { signal: ctx.signal } ]);
-
-    const output = rendered(lines);
-
-    assert.match(output[0] ?? "", /^face - declined: /);
-    assert.match(output[1] ?? "", /^nfc - declined: /);
+    assert.deepEqual(calls.accessMethods.map((call) => [ call.method, call.enabled ]), [ [ "face", true ], [ "nfc", false ] ], "the enables go first, in order");
+    assert.deepEqual(rendered(lines), [ "face - declined: " + declined.message, "nfc - disabled." ]);
   });
 
-  test("a method the device does not offer reads back as absent and reports the decline by name", async () => {
+  test("a switch that fails for any other reason is reported on its method's line, and the run continues", async () => {
 
-    const { calls, client } = makeFakeClient(officialSpec);
-    const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "wave" ], calls, client });
+    // A method the device cannot switch on any path this client holds is the library's capability refusal, which reads on the line as the library wrote it.
+    const refused = new AccessCapabilityError("This UniFi Access client cannot carry the wave access method write for device \"Front Reader\", because this device's " +
+      "official settings report no enabled or disabled state for that method (connected in token mode).");
+    const { calls, client } = makeFakeClient({ ...officialSpec, devices: [{ accessMethodErrors: { wave: refused }, id: READER_ID, name: "Front Reader" }] });
+    const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "wave", "--enable", "nfc" ], calls, client });
 
     await device.run(ctx);
 
-    assert.match(rendered(lines)[0] ?? "", /^wave - declined: the device reports no such method/);
-    assert.equal(calls.official.length, 2, "the write and the read-back both happened");
+    assert.deepEqual(rendered(lines), [ "wave - failed: " + refused.message.replace(/\.$/, ""), "nfc - enabled." ]);
   });
 
-  test("an abort landing on the read-back names the accepted change and still ends the command as an abort", async () => {
+  test("an abort on the first method ends the run with nothing reported and no later method switched", async () => {
 
-    const { calls, client } = makeFakeClient({ ...officialSpec, official: { settingsError: new AccessAbortedError("stopped") } });
-    const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "nfc" ], calls, client });
+    const { calls, client } = makeFakeClient({ ...officialSpec,
+      devices: [{ accessMethodErrors: { nfc: new AccessAbortedError("stopped") }, id: READER_ID, name: "Front Reader" }] });
+    const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "nfc", "--enable", "face" ], calls, client });
 
     await assert.rejects(async () => device.run(ctx), AccessAbortedError);
 
-    // The write landed before the read-back began, and the one line says exactly that; the abort itself still travels to the entry point's cascade.
-    assert.deepEqual(calls.official.map((call) => call.method), [ "devices.updateSettings", "devices.fetchSettings" ]);
-    assert.deepEqual(rendered(lines), [ACCEPTED_LINE]);
-  });
-
-  test("a read-back failing on its own names the accepted change before the failure propagates as itself", async () => {
-
-    const failure = new Error("the read-back failed");
-    const { calls, client } = makeFakeClient({ ...officialSpec, official: { settingsError: failure } });
-    const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader", "--disable", "face" ], calls, client });
-
-    await assert.rejects(async () => device.run(ctx), (error: unknown) => error === failure);
-
-    assert.deepEqual(calls.official.map((call) => call.method), [ "devices.updateSettings", "devices.fetchSettings" ]);
-    assert.deepEqual(rendered(lines), [ACCEPTED_LINE]);
-  });
-
-  test("an abort landing on the write itself reports nothing, because nothing is known to have landed", async () => {
-
-    const { calls, client } = makeFakeClient({ ...officialSpec, official: { updateError: new AccessAbortedError("stopped") } });
-    const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "nfc" ], calls, client });
-
-    await assert.rejects(async () => device.run(ctx), AccessAbortedError);
-
-    assert.deepEqual(calls.official.map((call) => call.method), ["devices.updateSettings"]);
+    assert.deepEqual(calls.accessMethods.map((call) => call.method), ["nfc"], "the abort stopped the run before face was asked for");
     assert.deepEqual(rendered(lines), []);
+  });
+
+  test("--api holds a change to one API, whichever identity the file carries", async () => {
+
+    const { calls, client } = makeFakeClient(officialSpec);
+    const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader", "--disable", "pin", "--api", "direct-only" ], calls, client });
+
+    await device.run(ctx);
+
+    assert.equal(calls.opens[0]?.api, "direct-only", "the client opened held to the direct API");
+    assert.deepEqual(calls.accessMethods.map((call) => [ call.method, call.enabled ]), [[ "pin", false ]]);
+    assert.deepEqual(rendered(lines), ["pin - disabled."]);
+
+    // An unknown spelling is the shared parse's own usage error, refused before anything connects.
+    const unknown = makeCommandContext({ args: [ "settings", "Front Reader", "--disable", "pin", "--api", "sideways" ], calls, client });
+
+    await assert.rejects(async () => device.run(unknown.ctx), { exitCode: 2, message: /--api value must be one of: auto, direct-only, official-only/, name: "CliError" });
+    assert.equal(calls.opens.length, 1, "the refused invocation opened nothing");
+  });
+
+  test("an abort on a later method ends the run after the lines already reported", async () => {
+
+    const { calls, client } = makeFakeClient({ ...officialSpec,
+      devices: [{ accessMethodErrors: { face: new AccessAbortedError("stopped") }, id: READER_ID, name: "Front Reader" }] });
+    const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "nfc", "--enable", "face", "--enable", "qr" ], calls, client });
+
+    await assert.rejects(async () => device.run(ctx), AccessAbortedError);
+
+    assert.deepEqual(calls.accessMethods.map((call) => call.method), [ "nfc", "face" ]);
+    assert.deepEqual(rendered(lines), ["nfc - enabled."], "the method switched before the abort is still reported");
   });
 
   test("a settings read that fails with no change requested reports nothing, because no write preceded it", async () => {
@@ -587,12 +631,21 @@ describe("the device settings command", () => {
     assert.deepEqual(rendered(lines), []);
   });
 
-  test("an unknown method and a contradictory pair are refused before anything connects", async () => {
+  test("an unknown method, an official key spelled in its place, and a contradictory pair are refused before anything connects", async () => {
 
     const { calls, client } = makeFakeClient(officialSpec);
     const unknown = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "telepathy" ], calls, client });
 
-    await assert.rejects(async () => device.run(unknown.ctx), { exitCode: 2, message: /bt_button/, name: "CliError" });
+    await assert.rejects(async () => device.run(unknown.ctx), { exitCode: 2, message: /must be one of: face, mobile, nfc, pin, qr, touchPass, wave,/, name: "CliError" });
+
+    // The official keys are the wire's spelling rather than the library's names, so bt_button and the keys no name maps are refused the same way.
+    for(const key of [ "bt_button", "bt_shake", "mobile_wave", "pin_code" ]) {
+
+      const official = makeCommandContext({ args: [ "settings", "Front Reader", "--disable", key ], calls, client });
+
+      // eslint-disable-next-line no-await-in-loop
+      await assert.rejects(async () => device.run(official.ctx), { exitCode: 2, message: new RegExp("received \"" + key + "\""), name: "CliError" });
+    }
 
     const contradiction = makeCommandContext({ args: [ "settings", "Front Reader", "--enable", "nfc", "--disable", "nfc" ], calls, client });
 
@@ -602,22 +655,94 @@ describe("the device settings command", () => {
     assert.equal(calls.credentialLoads, 0);
   });
 
-  test("a credential-only identity is refused, naming the official API", async () => {
+  test("a credential-only identity switches a method, and is refused only the read, naming the official API", async () => {
 
-    const { calls, client } = makeFakeClient(officialSpec);
+    const { calls, client } = makeFakeClient({ capabilities: { mode: "credential", official: false, override: "auto" },
+      devices: [{ id: READER_ID, name: "Front Reader" }] });
+    const change = makeCommandContext({ args: [ "settings", "Front Reader", "--disable", "pin" ], calls, client, credentials: CREDENTIALS_PAIR });
+
+    await device.run(change.ctx);
+
+    assert.deepEqual(calls.accessMethods.map((call) => [ call.method, call.enabled ]), [[ "pin", false ]], "the change gates on no surface");
+    assert.deepEqual(rendered(change.lines), ["pin - disabled."]);
+
     const { ctx } = makeCommandContext({ args: [ "settings", "Front Reader" ], calls, client, credentials: CREDENTIALS_PAIR });
 
     await assert.rejects(async () => device.run(ctx), (error: unknown) => {
 
       assert.ok(error instanceof CliError);
-      assert.match(error.message, /device settings command/);
+      assert.match(error.message, /device settings read/);
       assert.match(error.message, /official API/);
 
       return true;
     });
 
-    assert.equal(calls.opens.length, 0);
-    assert.equal(calls.credentialLoads, 1);
+    assert.equal(calls.opens.length, 1, "only the change connected");
+    assert.equal(calls.credentialLoads, 2);
+  });
+
+  test("the read lists every method by name in the library's order, over a reader's captured settings", async () => {
+
+    // The Ultra's own specimen: mobile unlock read from bt_button, TouchPass from touch_pass, and no face, PIN, QR, or wave reader to report.
+    const { calls, client } = makeFakeClient({ ...officialSpec, official: { settings: { "access_methods": { "bt_button": { "enabled": "yes" },
+      "bt_tap": { "enabled": "yes" }, "nfc": { "enabled": "yes" }, "touch_pass": { "enabled": "no" } }, "device_id": READER_ID } } });
+    const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader" ], calls, client });
+
+    await device.run(ctx);
+
+    assert.deepEqual(rendered(lines), [ "face - not available on this device.", "mobile - enabled.", "nfc - enabled.", "pin - not available on this device.",
+      "qr - not available on this device.", "touchPass - disabled.", "wave - not available on this device." ]);
+    assert.deepEqual(calls.official.map((call) => call.method), ["devices.fetchSettings"]);
+  });
+
+  test("the read lists every method as not available over a hub's empty settings", async () => {
+
+    const { calls, client } = makeFakeClient({ ...officialSpec, official: { settings: { "access_methods": {}, "device_id": READER_ID } } });
+    const { ctx, lines } = makeCommandContext({ args: [ "settings", "Front Reader" ], calls, client });
+
+    await device.run(ctx);
+
+    assert.deepEqual(rendered(lines), [ "face", "mobile", "nfc", "pin", "qr", "touchPass", "wave" ].map((method) => method + " - not available on this device."));
+  });
+
+  test("--scrub pseudonymizes the --json document, and changes nothing on the per-name lines", async () => {
+
+    const { calls, client } = makeFakeClient(officialSpec);
+    const plain = makeCommandContext({ args: [ "settings", "Front Reader", "--json" ], calls, client });
+    const scrubbed = makeCommandContext({ args: [ "settings", "Front Reader", "--json", "--scrub" ], calls, client });
+
+    await device.run(plain.ctx);
+    await device.run(scrubbed.ctx);
+
+    const document = parsedJson<{ "access_methods": unknown; "device_id": string }>(scrubbed.lines);
+
+    assert.match(plain.lines.join(""), new RegExp(READER_ID), "the unscrubbed document carries the device's identifier");
+    assert.equal(scrubbed.lines.join("").includes(READER_ID), false, "and the scrubbed one carries a stand-in in its place");
+    assert.deepEqual(document.access_methods, officialSpec.official.settings.access_methods, "the methods' own states read as the controller sent them");
+
+    const lines = makeCommandContext({ args: [ "settings", "Front Reader" ], calls, client });
+    const scrubbedLines = makeCommandContext({ args: [ "settings", "Front Reader", "--scrub" ], calls, client });
+
+    await device.run(lines.ctx);
+    await device.run(scrubbedLines.ctx);
+
+    assert.deepEqual(rendered(scrubbedLines.lines), rendered(lines.lines), "the per-name lines carry no identifying value for the scrub to change");
+  });
+
+  test("the usage names the methods, the read and the change forms, and the --api choice", async () => {
+
+    const { calls, client } = makeFakeClient(officialSpec);
+    const { ctx, lines } = makeCommandContext({ args: [ "settings", "--help" ], calls, client });
+
+    await device.run(ctx);
+
+    const usage = rendered(lines).join("\n");
+
+    assert.match(usage, /Methods: face, mobile, nfc, pin, qr, touchPass, wave\./);
+    assert.match(usage, /--enable METHOD/);
+    assert.match(usage, /--disable METHOD/);
+    assert.match(usage, /--api VALUE/);
+    assert.equal(calls.opens.length, 0, "the usage screen answers without a controller");
   });
 
   test("token mode resolves the device through the same projections every other identity resolves through", async () => {

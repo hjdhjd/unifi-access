@@ -4,7 +4,7 @@
  * controller's two notification dialects, so these tests run every captured packet through it, assert the dialect pairs collapse to the same kind, and assert the
  * translation allowlist field by field against named specimens rather than against anything re-derived from the same fixture.
  */
-import { DEVICE_FIELD_EXCLUSIONS, DEVICE_FIELD_MAP, DOOR_STATE_FACT_GUARDS, LOCATION_FIELD_EXCLUSIONS, LOCATION_FIELD_MAP, classifyPacket,
+import { DEVICE_FIELD_EXCLUSIONS, DEVICE_FIELD_MAP, DEVICE_FIELD_PROJECTIONS, DOOR_STATE_FACT_GUARDS, LOCATION_FIELD_EXCLUSIONS, LOCATION_FIELD_MAP, classifyPacket,
   isAccessEventPacket } from "./events.ts";
 import { capturedPackets, classifyAs, findPacket } from "./capture.helpers.ts";
 import { describe, test } from "node:test";
@@ -94,7 +94,7 @@ function completedState(packet: AccessEventPacket): unknown {
 
 // The canonical field names a translated device payload may carry, and the wire fields that must never survive translation into it.
 const DEVICE_ADMITTED = [ "adopting", "device_type", "firmware", "guid", "hw_type", "ip", "is_online", "location_id", "revision", "start_time", "unique_id" ];
-const DEVICE_EXCLUDED = [ "access_method", "alias", "cap", "category", "connected_hub_id", "direction", "mac", "name", "settings", "version" ];
+const DEVICE_EXCLUDED = [ "alias", "cap", "category", "connected_hub_id", "direction", "mac", "name", "settings", "version" ];
 const LOCATION_ADMITTED = [ "extras", "location_type", "name", "unique_id", "up_id" ];
 const LOCATION_EXCLUDED = [ "device_ids", "guard", "last_activity", "state", "thumbnail" ];
 
@@ -271,6 +271,59 @@ describe("v2 device payload translation", () => {
   });
 });
 
+describe("the access-method map's projection", () => {
+
+  // The one captured packet carrying the map: the G2 Pro's own update. Every value in it is one of the pair except the pin entry's, which the capture scrubbed.
+  const specimen = findPacket((entry) => (entry.event === "access.data.v2.device.update") && isRecord(entry.data?.["access_method"]),
+    "the v2 G2 Pro update carrying its access-method map");
+
+  // The rows the specimen's map projects into, in the order the map delivered its entries.
+  const SPECIMEN_ROWS = [ { key: "nfc", value: "yes" }, { key: "bt_button", value: "yes" }, { key: "bt_tap", value: "yes" }, { key: "face", value: "yes" },
+    { key: "qr_code", value: "yes" } ];
+
+  // The specimen with its map replaced, so a case names the values it is about while every other field stays the capture's own.
+  const withMap = (map: unknown): AccessEventPacket => ({ ...specimen, data: { ...specimen.data, "access_method": map } }) as AccessEventPacket;
+
+  test("projects each entry the pair admits into a value-only row, in the order the map delivered them", () => {
+
+    const map = specimen.data?.["access_method"];
+    const { payload } = classifyAs(specimen, "deviceChanged");
+
+    assert.ok(isRecord(map), "the specimen carries its map as a record");
+
+    const pin = map["pin_code"];
+
+    assert.ok((typeof pin === "string") && pin.startsWith("REDACTED-"), "the capture scrubbed the pin entry's value");
+
+    // No tag, no device identity, and no timestamps: a row the merge can land on a held row and can never admit as one of its own. The scrubbed pin entry sits
+    // outside the pair, so it projects nothing.
+    assert.deepEqual(payload.configs, SPECIMEN_ROWS);
+    assert.equal(Object.hasOwn(payload, "access_method"), false, "the map's own wire name does not survive translation");
+  });
+
+  test("leaves a value outside the pair out of the rows, and the member out of a payload projecting none", () => {
+
+    assert.deepEqual(classifyAs(withMap({ "face": "maybe", "nfc": "no" }), "deviceChanged").payload.configs, [{ key: "nfc", value: "no" }]);
+
+    // A member carried empty would read as a statement about the rows where the wire established no reading at all.
+    for(const map of [ { "nfc": "true", "pin_code": "REDACTED-00000008-" }, {}, null, "yes", ["yes"] ]) {
+
+      assert.equal(Object.hasOwn(classifyAs(withMap(map), "deviceChanged").payload, "configs"), false, JSON.stringify(map) + " should project no member");
+    }
+  });
+
+  test("projects onto the device facet of a packet that also carries door state", () => {
+
+    // The door-state arm translates its device facet through the same translation, so a map arriving beside door state reaches the rows exactly as a map
+    // arriving alone does. The entry is borrowed from the Door Mini's own door-state specimen.
+    const carrier = findPacket((entry) => (entry.event === "access.data.v2.device.update") && Array.isArray(entry.data?.["location_states"]),
+      "a v2 device update carrying door state");
+    const event = classifyAs({ ...specimen, data: { ...specimen.data, "location_states": carrier.data?.["location_states"] } }, "doorStateChanged");
+
+    assert.deepEqual(event.device?.payload.configs, SPECIMEN_ROWS);
+  });
+});
+
 describe("v2 location payload translation", () => {
 
   const stateBearing = findPacket((entry) => (entry.event === "access.data.v2.location.update") && (entry.data?.["guard"] !== undefined),
@@ -398,10 +451,12 @@ describe("the newer dialect's field census", () => {
       }
     }
 
-    // What each dialect declares: an allowlist's wire names and its exclusion set together, and for an entry the door identity beside every fact a report may state.
+    /* What each dialect declares: an allowlist's wire names, the device's projection table, and the exclusion set together, and for an entry the door identity
+     * beside every fact a report may state.
+     */
     const declared = {
 
-      device: new Set([ ...Object.keys(DEVICE_FIELD_MAP), ...DEVICE_FIELD_EXCLUSIONS ]),
+      device: new Set([ ...Object.keys(DEVICE_FIELD_MAP), ...Object.keys(DEVICE_FIELD_PROJECTIONS), ...DEVICE_FIELD_EXCLUSIONS ]),
       entry: new Set([ "location_id", ...Object.keys(DOOR_STATE_FACT_GUARDS) ]),
       location: new Set([ ...Object.keys(LOCATION_FIELD_MAP), ...LOCATION_FIELD_EXCLUSIONS ])
     };
@@ -412,6 +467,25 @@ describe("the newer dialect's field census", () => {
 
       assert.deepEqual(missing(carried[dialect], declared[dialect]), [], "the " + dialect + " census carries a field that is neither admitted nor declared");
       assert.deepEqual(missing(declared[dialect], carried[dialect]), [], "the " + dialect + " census declares a name no captured payload carries");
+    }
+  });
+
+  test("each wire name sits in exactly one declaration", () => {
+
+    // The census above reads the declarations as one union, so a name declared twice - projected and excluded at once, say - would pass it. Counting each name
+    // across every declaration of its dialect is what keeps the declarations apart.
+    const declarations = {
+
+      device: [ Object.keys(DEVICE_FIELD_MAP), Object.keys(DEVICE_FIELD_PROJECTIONS), [...DEVICE_FIELD_EXCLUSIONS] ],
+      location: [ Object.keys(LOCATION_FIELD_MAP), [...LOCATION_FIELD_EXCLUSIONS] ]
+    };
+
+    for(const [ dialect, lists ] of Object.entries(declarations)) {
+
+      for(const name of new Set(lists.flat())) {
+
+        assert.equal(lists.filter((list) => list.includes(name)).length, 1, name + " should sit in exactly one " + dialect + " declaration");
+      }
     }
   });
 });

@@ -30,9 +30,10 @@ has stopped revising; or the row may carry a value outside the spellings the con
 first observation from a change needs that absence distinct from a reported `false`.
 
 The reading is refreshed by the topology census and by the controller's original device-update dialect, whose every captured delivery is a full record carrying
-the whole row array. The newer dialect carries no configuration rows at all, so a controller emitting only that one refreshes this at the periodic topology
-re-read alone. And because a topology fetch already in flight when the condition flips lands the reading it was answered with, a flip can read as reverted until
-the next delivery corrects it - the eventual consistency the reducer accepts for every member a census supplies.
+the whole row array. The only rows the newer dialect delivers carry access-method values, projected from its access-method map, and never a tamper reading, so
+a controller emitting only that one refreshes this at the periodic topology re-read alone. And because a topology fetch already in flight when the condition
+flips lands the reading it was answered with, a flip can read as reverted until the next delivery corrects it - the eventual consistency the reducer accepts for
+every member a census supplies.
 
 ## Parameters
 

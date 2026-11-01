@@ -31,7 +31,7 @@ export function deviceEndpoint(host: string, id: string): string {
 /**
  * The endpoint a device's configuration write targets. The controller keeps two collections for a device's settings and picks between them by what the device is:
  * hub-capable hardware writes to `configs`, everything else to `settings`. The caller decides which, because the choice is a read of the device's live capability
- * rather than anything this module can see.
+ * rather than anything this module can see. Access methods are written to the same collections by a rule of their own, which `accessMethodsEndpoint` owns.
  *
  * @param host - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed and any port kept.
  * @param id   - The device's `unique_id`.
@@ -44,6 +44,25 @@ export function deviceEndpoint(host: string, id: string): string {
 export function deviceSettingsEndpoint(host: string, id: string, kind: "configs" | "settings"): string {
 
   return deviceEndpoint(host, id) + "/" + kind;
+}
+
+/**
+ * The endpoint a device's access-method write targets. Camera-class hardware takes its access methods on the Access application's camera configuration endpoint -
+ * its `configs` collection, with the camera flag the record carries repeated as a query parameter - and every other device takes them on its `settings` collection,
+ * hubs included. That is a different rule from the one a configuration write follows, so it has a builder of its own, composed on the collection builder above so
+ * the collection names keep one home. The caller decides which, because the choice is a read of the device's own record rather than anything this module can see.
+ *
+ * @param host - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed and any port kept.
+ * @param id   - The device's `unique_id`.
+ * @param kind - `"camera"` for the camera configuration endpoint, `"settings"` for the settings collection.
+ *
+ * @returns The fully-qualified endpoint URL.
+ *
+ * @category Devices
+ */
+export function accessMethodsEndpoint(host: string, id: string, kind: "camera" | "settings"): string {
+
+  return (kind === "camera") ? deviceSettingsEndpoint(host, id, "configs") + "?is_camera=true" : deviceSettingsEndpoint(host, id, "settings");
 }
 
 /**

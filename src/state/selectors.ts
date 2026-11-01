@@ -23,10 +23,12 @@
  *
  * @module AccessStateSelectors
  */
+import { ACCESS_METHOD_KEYS, ACCESS_METHOD_ROW_TAG, readAccessMethodStates } from "../protocol/vocabulary.ts";
 import type { AccessControllerConfig, AccessDoorStateEntry, Nullable } from "../types/index.ts";
 import type { AccessState, AccessStateDevice, AccessStateRoot } from "../protocol/reducer.ts";
 import type { AccessTerminalInput, AccessTerminalInputFacts } from "../protocol/terminal-inputs.ts";
 import { portExtensionsOf, readPortBindings } from "../protocol/port-bindings.ts";
+import type { AccessMethod } from "../protocol/vocabulary.ts";
 import type { AccessPortBinding } from "../protocol/port-bindings.ts";
 import { readTerminalInput } from "../protocol/terminal-inputs.ts";
 
@@ -242,6 +244,29 @@ export function isReader(device: AccessStateDevice): boolean {
 }
 
 /**
+ * Whether a device is camera-class hardware - a device built on a camera, whose access methods the controller keeps on its camera configuration endpoint rather
+ * than on the settings collection every other device takes them on.
+ *
+ * The check is the controller's own `is_camera` flag on the record rather than a list of camera model names, so camera-class hardware this library has never seen
+ * still classifies correctly the day it ships. It is the same flag that endpoint takes as its query parameter, which is what makes it the marker an access-method
+ * write routes by. The class is independent of the roles: camera-class hardware need not carry the reader or the hub capability.
+ *
+ * Unlike {@link isHub} and {@link isReader}, whose capabilities every census carries, this reads a member of the record only the topology census establishes. The
+ * official device inventory a token-only client seeds from never projects it, so every token-only record answers `false` here. An access-method write loses nothing
+ * to that: the camera flag chooses only the endpoint its direct half writes, which only a client holding credentials reaches, and such a client seeds from the topology.
+ *
+ * @param device - Any device configuration record (only its `is_camera` flag is read).
+ *
+ * @returns `true` when the record carries the camera flag set.
+ *
+ * @category State
+ */
+export function isCamera(device: AccessStateDevice): boolean {
+
+  return device.is_camera === true;
+}
+
+/**
  * Whether a device's hardware can detect tampering - a unit that reports being opened, or pulled off the mount it was installed on.
  *
  * The check is the controller's own `tamper_proofing` capability, and both censuses carry it: the topology document lists it among a device's capabilities and so
@@ -280,9 +305,10 @@ export function isTamperCapable(device: AccessStateDevice): boolean {
  * first observation from a change needs that absence distinct from a reported `false`.
  *
  * The reading is refreshed by the topology census and by the controller's original device-update dialect, whose every captured delivery is a full record carrying
- * the whole row array. The newer dialect carries no configuration rows at all, so a controller emitting only that one refreshes this at the periodic topology
- * re-read alone. And because a topology fetch already in flight when the condition flips lands the reading it was answered with, a flip can read as reverted until
- * the next delivery corrects it - the eventual consistency the reducer accepts for every member a census supplies.
+ * the whole row array. The only rows the newer dialect delivers carry access-method values, projected from its access-method map, and never a tamper reading, so
+ * a controller emitting only that one refreshes this at the periodic topology re-read alone. And because a topology fetch already in flight when the condition
+ * flips lands the reading it was answered with, a flip can read as reverted until the next delivery corrects it - the eventual consistency the reducer accepts for
+ * every member a census supplies.
  *
  * @param device - Any device configuration record (only its configuration rows are read).
  *
@@ -376,8 +402,9 @@ export function terminalInput(device: AccessStateDevice, input: AccessTerminalIn
  * record a token-only census produced carries no extensions either, so every record answers empty on that client by construction. And single-door hardware that
  * binds its port through no extension answers empty because there is nothing to answer with, its door likewise being its own location.
  *
- * It is re-evaluated on every call rather than memoized, joining {@link tamperState} and {@link terminalInput} in the per-record group the memo discipline does not
- * cover: the answer is derived from one record a caller already holds rather than being a collection an observer dedups against.
+ * It is re-evaluated on every call rather than memoized, joining {@link tamperState}, {@link terminalInput} and {@link deviceAccessMethodStates} in the
+ * per-record group the memo discipline does not cover: the answer is derived from one record a caller already holds rather than being a collection an observer
+ * dedups against.
  *
  * What a binding means is the consumer's to decide. Which of a multi-door hub's doors is the one it cares about is policy this library holds no opinion about, and
  * commanding a particular door of such hardware stays the door commands' `doorId` target rather than anything the order of this list implies.
@@ -391,6 +418,43 @@ export function terminalInput(device: AccessStateDevice, input: AccessTerminalIn
 export function portBindings(device: AccessStateDevice): readonly AccessPortBinding[] {
 
   return readPortBindings(device);
+}
+
+/**
+ * What a device's own configuration rows say about each access method, by name: `true` for a method its row reports enabled, `false` for one reported disabled,
+ * and no entry where nothing has established a reading.
+ *
+ * Each method is judged on one row: the one filed under the controller's access-method tag whose key is the first the method's direct write spans, which is the
+ * spelling the captured rows carry. A row carrying that key under another tag is not an access-method row and is not read. The value rule is the one
+ * {@link accessMethodStates} applies to the official settings, so a method reads one way whichever surface stated it.
+ *
+ * The absent answer covers the situations a caller may want to tell apart from a method switched off, and they are deliberately not collapsed into `false`. The
+ * record may carry no row for the method, which says nothing about whether the hardware can do it - a captured G2 Pro offering face unlock carries no face row,
+ * and a captured UA Hub offering PIN entry carries no pin row; it may carry no configuration rows at all, which is every record a token-only census produced, so a
+ * token client reads `{}` here by construction; or the row may carry a value outside the `"yes"` and `"no"` pair, which is not guessed at. So absence here is a
+ * different statement from absence in the official settings reading, where a method the settings do not list is one the device cannot do.
+ *
+ * The reading is refreshed by the topology census, by the controller's original device-update dialect, whose every captured delivery is a full record carrying
+ * the whole row array, and by the newer dialect's access-method map, whose values land on the rows the record already holds. That map establishes no row the
+ * record lacks, so a record whose census carried no rows - every record on a token-only client - still answers `{}` however many maps arrive. And because a
+ * topology fetch already in flight when a method is switched lands the reading it was answered with, a switch can read as reverted until the next delivery
+ * corrects it - the eventual consistency the reducer accepts for every member a census supplies.
+ *
+ * It is re-evaluated on every call rather than memoized, joining {@link tamperState}, {@link terminalInput} and {@link portBindings} in the per-record group the
+ * memo discipline does not cover. The answer is a fresh object on every call, so a consumer watching for a change observes the device record and reads this from
+ * it, rather than handing this to `observe` as a selector, where a fresh object would compare unequal and wake on every dispatch.
+ *
+ * @param device - Any device configuration record (only its configuration rows are read).
+ *
+ * @returns Each method with an established reading, mapped to whether it is enabled.
+ *
+ * @category State
+ */
+export function deviceAccessMethodStates(device: AccessStateDevice): Partial<Readonly<Record<AccessMethod, boolean>>> {
+
+  const rows = device.configs ?? [];
+
+  return readAccessMethodStates((method) => rows.find((row) => (row.tag === ACCESS_METHOD_ROW_TAG) && (row.key === ACCESS_METHOD_KEYS[method].direct[0]))?.value);
 }
 
 /**

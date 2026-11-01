@@ -19,6 +19,7 @@ import type { AccessState } from "./reducer.ts";
 import type { AccessTypedEvent } from "./events.ts";
 import assert from "node:assert/strict";
 import { classifyPacket } from "./events.ts";
+import { isRecord } from "../json.ts";
 import { present } from "homebridge-plugin-utils/testing";
 import { topologyDevices } from "../testing.helpers.ts";
 
@@ -860,6 +861,28 @@ describe("the device-record merge", () => {
     assert.deepEqual(merged, [NEW_ROW]);
   });
 
+  test("an empty row array onto a record holding no rows leaves the state and the record's shape alone", () => {
+
+    // The original dialect's half of the no-rows guard, beside the access-method map's own row below: an array that admits nothing is no `configs` member, so a
+    // record the token-only census produced keeps the shape that census gave it and nothing wakes.
+    const state = listingSeeded();
+    const next = reduce(state, rowDelivery([]));
+
+    assert.equal(Object.is(next, state), true, "a delivery that established no row changes nothing at all");
+    assert.equal(Object.hasOwn(present(next.devices.get(HUB_ID), "the listed hub"), "configs"), false, "and the record gains no rows member");
+  });
+
+  test("rows the admission refuses, onto a record holding no rows, leave the state and the record's shape alone", () => {
+
+    // Neither row is one the controller sent whole - the first carries no tag, and the second carries a key and a value alone - so the merge admits neither, and
+    // the delivery reads as the empty array above does.
+    const state = listingSeeded();
+    const next = reduce(state, rowDelivery([ { "device_id": HUB_ID, "key": "test_only_missing_tag", "value": "1" }, { "key": "dps_mode", "value": "not_available" } ]));
+
+    assert.equal(Object.is(next, state), true, "a delivery whose every row was refused changes nothing at all");
+    assert.equal(Object.hasOwn(present(next.devices.get(HUB_ID), "the listed hub"), "configs"), false, "and the record gains no rows member");
+  });
+
   test("a full snapshot that stops carrying a row leaves it standing", () => {
 
     /* The documented cost of reading absence as silence, asserted so the trade-off is deliberate rather than accidental. The merge cannot tell a row the
@@ -931,6 +954,144 @@ describe("the device-record merge", () => {
 
     assert.equal(merged.length, held.length + 1, "one identity, one row");
     assert.deepEqual(rowAt(merged, merged.length - 1), { ...NEW_ROW, "value": "2" }, "and the row carries the later statement");
+  });
+
+  describe("the newer dialect's access-method map", () => {
+
+    // The one captured packet carrying the map: the G2 Pro's own update, which restates every value the 2026 document's rows hold and carries a revision that
+    // document does not.
+    const specimen = findPacket((entry) => (entry.event === "access.data.v2.device.update") && isRecord(entry.data?.["access_method"]),
+      "the v2 G2 Pro update carrying its access-method map");
+
+    // The EAH document's G2 Pro, whose rows carry no face and no QR row, so the specimen's map names keys that record does not hold.
+    const EAH_READER_ID = "aabbcc000006";
+
+    /* The specimen as a typed event: its map's named values replaced, re-addressed to another record where a case names one, and stripped to its identity and
+     * its map where a case needs the map's effect alone, apart from the revision and the other fields the whole specimen carries.
+     */
+    const mapDelivery = (options: { alone?: boolean; id?: string; values?: Readonly<Record<string, string>> } = {}): AccessTypedEvent => {
+
+      const data = present(specimen.data, "the specimen's payload");
+      const map = data["access_method"];
+
+      assert.ok(isRecord(map), "the specimen carries its map as a record");
+
+      const id = options.id ?? READER_ID;
+      const access = { ...map, ...options.values };
+
+      return classify({ ...specimen, data: (options.alone === true) ? { "access_method": access, id } : { ...data, "access_method": access, id },
+        meta: { ...present(specimen.meta, "the specimen's metadata"), id } });
+    };
+
+    test("a map restating the values the record holds returns the very same state", () => {
+
+      // The specimen's revision is not the document's, so its first delivery moves the record for that alone. The second delivery is the one the rows answer for.
+      const state = stateFrom(accessBootstrap2026Fixture);
+      const event = mapDelivery();
+      const once = reduce(state, event);
+      const twice = reduce(once, event);
+
+      assert.notEqual(Object.is(once, state), true, "the first delivery really did move the revision");
+      assert.equal(Object.is(heldRows(once, READER_ID), heldRows(state, READER_ID)), true, "while a map restating every held value moved no row");
+      assert.equal(Object.is(twice, once), true, "and a delivery that changes nothing wakes nobody");
+    });
+
+    test("one changed value moves that row alone, value only, at the position it held", () => {
+
+      const state = stateFrom(accessBootstrap2026Fixture);
+      const held = heldRows(state, READER_ID);
+      const target = held.findIndex((row) => row.key === "nfc");
+
+      assert.ok(target >= 0, "the G2 Pro holds an NFC row");
+
+      const next = reduce(state, mapDelivery({ alone: true, values: { "nfc": "no" } }));
+      const merged = heldRows(next, READER_ID);
+
+      assert.notEqual(Object.is(next, state), true, "one changed value is one change");
+      assert.equal(merged.length, held.length, "and no row was added");
+      assert.deepEqual(rowAt(merged, target), { ...rowAt(held, target), "value": "no" },
+        "the value moved, and the tag, the device identity, and the timestamps the row held stayed");
+
+      for(const [ index, row ] of held.entries()) {
+
+        if(index !== target) {
+
+          assert.equal(Object.is(rowAt(merged, index), row), true, "the row at index " + String(index) + " should be the very object the document supplied");
+        }
+      }
+    });
+
+    test("a key the record holds no row for is not admitted", () => {
+
+      // The map names face and QR, which this record holds no row for, and restates the values of the rows it does hold. A projected row carries no tag and no
+      // device identity, so the merge can land it on a held row and never admit it as a row of its own.
+      const state = stateFrom(accessBootstrapEahFixture);
+
+      assert.equal(heldRows(state, EAH_READER_ID).some((row) => [ "face", "qr_code" ].includes(row.key)), false, "the record holds no face or QR row");
+      assert.equal(Object.is(reduce(state, mapDelivery({ alone: true, id: EAH_READER_ID })), state), true);
+    });
+
+    test("a value outside the pair leaves the held row standing", () => {
+
+      // The value differs from the one held, so a projection that let it through would move the row. The captured pin entry cannot show this, because the
+      // scrub wrote the same placeholder into the topology's pin row.
+      const state = stateFrom(accessBootstrap2026Fixture);
+
+      assert.equal(heldRows(state, READER_ID).find((row) => row.key === "nfc")?.value, "yes");
+      assert.equal(Object.is(reduce(state, mapDelivery({ alone: true, values: { "nfc": "maybe" } })), state), true);
+    });
+
+    test("a map onto a record holding no rows leaves the state and the record's shape alone", () => {
+
+      // A token-only client's records hold no rows, and its socket delivers the same stream. An empty array would be a member no census established, and a wake
+      // for a delivery that left the record holding nothing new.
+      const state = listingSeeded();
+
+      assert.equal(Object.hasOwn(present(state.devices.get(READER_ID), "the listed G2 Pro"), "configs"), false, "a projected listing establishes no rows");
+      assert.equal(Object.is(reduce(state, mapDelivery({ alone: true })), state), true);
+
+      // The whole specimen moves the record's other fields, and still gives it no rows.
+      const moved = present(reduce(state, mapDelivery()).devices.get(READER_ID), "the listed G2 Pro after the whole specimen");
+
+      assert.equal(moved.revision, specimen.data?.["revision"], "the specimen's other fields landed");
+      assert.equal(Object.hasOwn(moved, "configs"), false);
+    });
+
+    test("a fold, then a topology refresh whose rows agree member for member, keeps the device's reference", () => {
+
+      // The refreshed document agrees with the folded record member for member: the NFC row reads what the map moved it to, and the revision is the one the
+      // specimen carried, which is the one field the specimen and the document otherwise disagree on.
+      const state = stateFrom(accessBootstrap2026Fixture);
+      const folded = reduce(state, mapDelivery({ values: { "nfc": "no" } }));
+      const document = structuredClone(accessBootstrap2026Fixture);
+      const record = present(topologyDevices(document).find((device) => device.unique_id === READER_ID), "the G2 Pro in the refreshed document");
+      const revision = specimen.data?.["revision"];
+
+      assert.ok(typeof revision === "string", "the specimen carries its revision as a string");
+
+      record.revision = revision;
+      record.configs = record.configs.map((row) => ((row.key === "nfc") ? { ...row, "value": "no" } : row));
+
+      const refreshed = reduce(folded, bootstrapEvent(document));
+
+      assert.equal(heldRows(folded, READER_ID).find((row) => row.key === "nfc")?.value, "no", "the fold moved the row");
+      assert.equal(Object.is(refreshed.devices.get(READER_ID), folded.devices.get(READER_ID)), true, "and the agreeing refresh found nothing to replace");
+    });
+
+    test("a map arriving beside door state folds onto the rows as one arriving alone does", () => {
+
+      // The door-state arm merges its device facet through the device change, so the map lands on the same rows the plain update lands it on. The entry is
+      // borrowed from the Door Mini's own door-state specimen.
+      const carrier = findPacket((entry) => (entry.event === "access.data.v2.device.update") && Array.isArray(entry.data?.["location_states"]),
+        "a v2 device update carrying door state");
+      const event = classify({ ...specimen, data: { "access_method": { "nfc": "no" }, "id": READER_ID, "location_states": carrier.data?.["location_states"] } });
+      const state = stateFrom(accessBootstrap2026Fixture);
+      const folded = heldRows(reduce(state, event), READER_ID);
+
+      assert.equal(event.kind, "doorStateChanged");
+      assert.equal(folded.find((row) => row.key === "nfc")?.value, "no");
+      assert.deepEqual(folded, heldRows(reduce(state, mapDelivery({ alone: true, values: { "nfc": "no" } })), READER_ID));
+    });
   });
 });
 

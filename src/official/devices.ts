@@ -1,8 +1,11 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * devices.ts: The official API's device domain - the adopted device inventory, per-device access-method settings, and the doorbell trigger.
+ * devices.ts: The official API's device domain - the adopted device inventory, per-device access-method settings and the reading of each method's state from
+ * them, and the doorbell trigger.
  */
+import { ACCESS_METHOD_KEYS, readAccessMethodStates } from "../protocol/vocabulary.ts";
 import type { AccessOfficialCallOptions, OfficialDispatch, OfficialDomainOptions } from "./dispatch.ts";
+import type { AccessMethod } from "../protocol/vocabulary.ts";
 import { officialEndpoint } from "./endpoints.ts";
 
 /**
@@ -197,6 +200,26 @@ export interface AccessOfficialDoorbellTriggerOptions {
 
   cancel?: boolean;
   room_name?: string;
+}
+
+/**
+ * Read a device's official access-method settings as each access method's state, by name: `true` for a method the settings report enabled, `false` for one they
+ * report disabled, and no entry at all for a method they do not list, which is a method the device cannot do rather than one switched off. A method the settings
+ * list with a value outside the `"yes"` and `"no"` pair has no entry either, because a spelling the wire has not been observed to write is not guessed at.
+ *
+ * Each method is judged on the first of the official keys it spans, so a method spanning more than one key, as mobile unlock does, reads one way wherever it is
+ * read. The routed access-method write judges its read-back through this, so a consumer's own read and that write's verdict rest on one rule, and the value rule
+ * is the one the state tier's `deviceAccessMethodStates` applies to a device's own configuration rows.
+ *
+ * @param settings - The device's settings, as the official settings read answers them.
+ *
+ * @returns Each method the settings list with an established reading, mapped to whether it is enabled.
+ *
+ * @category Official
+ */
+export function accessMethodStates(settings: AccessOfficialDeviceSettings): Partial<Readonly<Record<AccessMethod, boolean>>> {
+
+  return readAccessMethodStates((method) => settings.access_methods[ACCESS_METHOD_KEYS[method].official[0]]?.enabled);
 }
 
 /**

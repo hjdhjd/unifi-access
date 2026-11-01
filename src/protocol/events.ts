@@ -21,6 +21,7 @@ import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfigP
   AccessDoorStateSuspend, AccessEventDoorbellCancel, AccessEventDoorbellRing, AccessEventPacket, AccessEventTamperAlert, AccessKnownJsonValue, AccessLocationConfig,
   DeepWirePartial, Nullable } from "../types/index.ts";
 import type { AccessStateDevice, AccessStateDoor } from "./reducer.ts";
+import { accessMethodValue, readAccessMethodValue } from "./vocabulary.ts";
 import { isRecord } from "../json.ts";
 
 // The notification names this classifier recognizes. Naming them once here makes this module the single home of the event vocabulary, which is otherwise re-parsed
@@ -39,19 +40,22 @@ const EVENT_TAMPER_ALERT = "access.tamper_resistant";
 
 /* The fields a v2 device payload contributes to canonical state, mapped from the wire name the newer dialect uses to the name the bootstrap vocabulary uses. This
  * table is an allowlist, not a translation of everything present: a field is admitted only where its equivalence to a bootstrap field was confirmed by comparing a
- * live payload against the same device's bootstrap record. Every other field the dialect sends is dropped from the canonical payload and reaches consumers on the
- * raw packet rail instead, so nothing is lost, it simply does not overwrite modeled state.
+ * live payload against the same device's bootstrap record. A field that states bootstrap values in a shape of its own reaches canonical state only through the
+ * projection table below, and every other field the dialect sends is dropped from the canonical payload. The raw packet rail delivers every field verbatim
+ * whatever these tables say, so nothing is lost, and a dropped field simply does not overwrite modeled state.
  *
  * The exclusions are deliberate and each has a reason the wire demonstrated. `name` and `alias` are display variants rather than the bootstrap's own values, so
  * merging them would overwrite user-facing state with strings the bootstrap vocabulary never carries. `mac` is identity a census established, held in one spelling
  * whatever case the wire sends, so a notification restating it adds nothing. `version` carries a real string where the bootstrap carries null, so merging it would
- * flip that field against every refresh forever. `connected_hub_id`
- * agrees with the bootstrap's hub reference on readers but arrives empty on a hub describing itself, which would clobber a real value with an empty string. `cap` is
- * null on most notifications and, where it is populated at all, carries a reduced subset of the bootstrap's capabilities array, so merging it would truncate the
- * fuller record just as `settings` would: `settings` is a reduced projection of the fuller `configs` array. `category`, `direction`, and `access_method` have no
- * bootstrap counterpart at all. The dialect further sends structured state the bootstrap document models nowhere: `location_states` carries per-door lock and DPS
- * state, which is translated into the door-state event rather than merged here, because it describes doors rather than the device reporting them; `wire_state`
- * carries the wiring terminals, which has nothing to reconcile it against and so reaches consumers on the raw packet rail like every other unlisted field.
+ * flip that field against every refresh forever. `connected_hub_id` agrees with the bootstrap's hub reference on readers but arrives empty on a hub describing
+ * itself, which would clobber a real value with an empty string. `cap` is null on most notifications, and where it is populated it is not a subset of the
+ * bootstrap's capabilities array: the captured hub's, at the guid and firmware of its own topology record, names capabilities that record does not carry, so the
+ * union a capability list merges by would admit capabilities no census established, and the record would then disagree with every topology refresh. `settings`
+ * restates rows of the fuller `configs` array under the key and tag the topology's own rows carry, and no reading this library derives rests on a key those rows
+ * carry, so folding them would move stored state that nothing reads. `category` and `direction` have no bootstrap counterpart at all. The dialect further sends
+ * structured state the bootstrap document models nowhere: `location_states` carries per-door lock and DPS state, which is translated into the door-state event
+ * rather than merged here, because it describes doors rather than the device reporting them; `wire_state` carries the wiring terminals, which has nothing to
+ * reconcile it against and so reaches consumers on the raw packet rail like every other unlisted field.
  */
 export const DEVICE_FIELD_MAP = {
 
@@ -68,12 +72,26 @@ export const DEVICE_FIELD_MAP = {
   "start_time": "start_time"
 } as const;
 
-/* The fields a v2 device payload carries that the table above deliberately leaves out, declared so the classifier's suite can census the committed corpus against
- * both lists: every field a captured payload carries is in exactly one of them, and a field the controller starts sending fails that census rather than dropping
- * in silence. The reasons live in the paragraph above the table.
+/* The fields a v2 device payload carries in a shape of its own, mapped from the wire name to the canonical member each is projected into rather than copied to.
+ *
+ * `access_method` is the device's access-method map, each wire key beside its `"yes"` or `"no"` value, and it states the same readings the record's configuration
+ * rows carry under the same keys. It is projected into those rows as one value-only row `{ key, value }` per entry the shared yes-or-no reading admits, and the
+ * reducer's keyed row merge lands each one on the row the record already holds under that key, value only, and never admits one as a row of its own, because a
+ * row carrying no tag and no device identity is not one the controller sent whole. So the topology stays the authority on which rows a record holds, and this
+ * keeps their values current between refreshes. The join rests on the premise that merge already states, that a key is unique within one device's rows, and a
+ * value outside the pair is left out rather than projected, so a held row is never overwritten with a reading the library would not report.
  */
-export const DEVICE_FIELD_EXCLUSIONS: ReadonlySet<string> = new Set([ "access_method", "alias", "cap", "category", "connected_hub_id", "direction", "location_states",
-  "mac", "name", "settings", "version", "wire_state" ]);
+export const DEVICE_FIELD_PROJECTIONS = {
+
+  "access_method": "configs"
+} as const;
+
+/* The fields a v2 device payload carries that the tables above deliberately leave out, declared so the classifier's suite can census the committed corpus against
+ * every declaration: every field a captured payload carries is in exactly one of the allowlist, the projection table, and this set, and a field the controller
+ * starts sending fails that census rather than dropping in silence. The reasons live in the paragraph above the allowlist.
+ */
+export const DEVICE_FIELD_EXCLUSIONS: ReadonlySet<string> = new Set([ "alias", "cap", "category", "connected_hub_id", "direction", "location_states", "mac", "name",
+  "settings", "version", "wire_state" ]);
 
 /* The fields a v2 location payload contributes to canonical state, on the same allowlist discipline as the device table. The excluded fields are the ones with no
  * bootstrap counterpart by value: `device_ids`, `state`, and `last_activity` are v2-only, `thumbnail` is a reshaped projection of the extras thumbnail pair, and
@@ -91,12 +109,13 @@ export const LOCATION_FIELD_MAP = {
 // The fields a v2 location payload carries that the table above deliberately leaves out, on the same census discipline as the device set.
 export const LOCATION_FIELD_EXCLUSIONS: ReadonlySet<string> = new Set([ "device_ids", "guard", "last_activity", "state", "thumbnail" ]);
 
-/* The canonical field names each table admits, and the payload shapes built from them. Deriving the payload type from the table rather than restating it is what
- * makes the allowlist compile-enforced: reading an excluded field off a translated payload fails to build, so a translator that leaked one could not be consumed
- * silently, and adding a row to a table widens its payload type in the same edit.
+/* The canonical field names each table admits or projects into, and the payload shapes built from them. Deriving the payload type from the tables rather than
+ * restating it is what makes the allowlist compile-enforced: reading an excluded field off a translated payload fails to build, so a translator that leaked one
+ * could not be consumed silently, and adding a row to a table widens its payload type in the same edit.
  */
 type TranslatedDeviceField = (typeof DEVICE_FIELD_MAP)[keyof typeof DEVICE_FIELD_MAP];
-type TranslatedDevicePayload = Pick<AccessDeviceConfigPayload, TranslatedDeviceField>;
+type ProjectedDeviceField = (typeof DEVICE_FIELD_PROJECTIONS)[keyof typeof DEVICE_FIELD_PROJECTIONS];
+type TranslatedDevicePayload = Pick<AccessDeviceConfigPayload, ProjectedDeviceField | TranslatedDeviceField>;
 type TranslatedLocationField = (typeof LOCATION_FIELD_MAP)[keyof typeof LOCATION_FIELD_MAP];
 type TranslatedLocationPayload = Pick<DeepWirePartial<AccessLocationConfig>, TranslatedLocationField>;
 
@@ -112,7 +131,9 @@ const EPOCH_MILLISECONDS_THRESHOLD = 1000000000000;
  * **State transitions** advance the modeled state:
  *
  * - `deviceChanged` - a device record changed. Both notification dialects produce this one kind, with the newer dialect's payload already translated into the
- *   bootstrap vocabulary, so a consumer never sees the dialect split.
+ *   bootstrap vocabulary, so a consumer reads one set of field names whichever dialect arrived. The configuration rows are where the two still differ in shape:
+ *   the original dialect delivers each row whole, while the newer dialect's access-method map arrives as rows carrying only a key and a value, with no tag, no
+ *   device identity, and no timestamps.
  * - `deviceRemoved` - a device was removed. Identity-only by design: the older dialect sends a record here and the newer one sends nothing, and the removal needs
  *   only the identity. The full payload the older dialect sends stays available on the raw packet rail.
  * - `locationChanged` - a door, floor, or building record changed, again with the newer dialect translated.
@@ -370,8 +391,9 @@ export function isAccessEventPacket(value: unknown): value is AccessEventPacket 
     ((value["data"] === null) || isRecord(value["data"]));
 }
 
-/* Translate a newer-dialect device payload into the bootstrap vocabulary. Only the fields the table names are read, so an unlisted wire field cannot reach the
- * result, and the return type derives from the same table, so the two cannot drift.
+/* Translate a newer-dialect device payload into the bootstrap vocabulary. Only the fields the allowlist and the projection table name are read - the allowlist's
+ * copied under their canonical names, the projection table's reshaped into the member it names - so an unlisted wire field cannot reach the result, and the
+ * return type derives from the same tables, so the two cannot drift.
  *
  * The identity is taken from the envelope rather than the payload's own `id` field. They agree on every captured specimen, but taking the envelope's value means the
  * stored record's self-identity and the key it is stored under come from one source and cannot disagree.
@@ -389,9 +411,44 @@ function translateDevicePayload(data: Record<string, AccessKnownJsonValue>, id: 
     translated["start_time"] = normalizeEpochSeconds(startTime);
   }
 
-  // The one widening cast in this module. The table's values are canonical field names and the loop copies wire values under them, which the compiler cannot verify
-  // for untyped wire data; the derived type above is what keeps the admitted set honest from here on.
+  // A map whose every entry falls outside the pair projects nothing, and the member is left out rather than carried empty, so the payload says nothing about
+  // the rows where the wire established no reading.
+  const accessMethodRows = projectAccessMethods(data["access_method"]);
+
+  if(accessMethodRows.length > 0) {
+
+    translated[DEVICE_FIELD_PROJECTIONS.access_method] = accessMethodRows;
+  }
+
+  // The one widening cast in this module. The tables' values are canonical member names, and the copy loop and the projection write wire-derived values under them,
+  // which the compiler cannot verify for untyped wire data; the derived type above is what keeps the admitted set honest from here on.
   return translated;
+}
+
+/* Project the newer dialect's access-method map into value-only configuration rows, one per entry the shared yes-or-no reading admits, in the order the map
+ * delivered them. Each value is written back through the same vocabulary it was read by, so a projected row spells its value exactly as the row it lands on
+ * does. A map that is not a record projects nothing, as an absent one does.
+ */
+function projectAccessMethods(map: AccessKnownJsonValue): AccessKnownJsonValue[] {
+
+  const rows: AccessKnownJsonValue[] = [];
+
+  if(!isRecord(map)) {
+
+    return rows;
+  }
+
+  for(const [ key, value ] of Object.entries(map)) {
+
+    const enabled = readAccessMethodValue(value);
+
+    if(enabled !== undefined) {
+
+      rows.push({ key, value: accessMethodValue(enabled) });
+    }
+  }
+
+  return rows;
 }
 
 // Translate a newer-dialect location payload, on the same discipline as the device translation above.

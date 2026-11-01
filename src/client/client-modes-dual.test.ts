@@ -107,10 +107,10 @@ describe("a dual-mode client", () => {
 
   test("folds a refused token at connect to credentials-only, saying so once", async () => {
 
-    /* Both legs run at connect and only the token's read is refused, in any of the spellings the controller answers a refused token in: the login and the document
-     * pair answer normally, so the credentials are known good and the client holds a direct path for every command they can carry. The refusal closes the official
-     * path from the start, as the same refusal on a routed command closes it, and the one warning names the token as the thing to fix, which the capability map
-     * alone could not tell apart from a controller that has no official API.
+    /* Both legs run at connect and only the token's read is refused, in any of the spellings the controller answers a refused token in: the login and the document pair
+     * answer normally, so the credentials are known good and the client holds a direct path for every command they can carry. The refusal closes the official path to
+     * every command from the start, a refused permission as much as a rejected token, because the connect fold withholds the facade from the client and its routing
+     * alike, and the one warning names the token as the thing to fix, which the capability map alone could not tell apart from a controller that has no official API.
      */
     const refusals = [
 
@@ -141,7 +141,8 @@ describe("a dual-mode client", () => {
 
       assert.deepEqual(warns.map((entry) => entry.params), [[refusal.context]], refusal.label + ": the closure is reported once, carrying the refusal's context");
       assert.ok(warns[0]?.message.startsWith(refusal.sentence + " "), refusal.label + ": the report opens with the refusal's own sentence");
-      assert.ok(loggedAt(warns, "warn", "own endpoints for the life of this connection"), refusal.label + ": and says the commands take the direct path");
+      assert.ok(loggedAt(warns, "warn", "This client's commands will use the Access application's own endpoints for the life of this connection."),
+        refusal.label + ": and says every command takes the direct path");
     }
   });
 

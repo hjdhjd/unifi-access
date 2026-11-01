@@ -21,8 +21,9 @@ expansion strips them on the way through - so it answers empty, which is what it
 record a token-only census produced carries no extensions either, so every record answers empty on that client by construction. And single-door hardware that
 binds its port through no extension answers empty because there is nothing to answer with, its door likewise being its own location.
 
-It is re-evaluated on every call rather than memoized, joining [tamperState](tamperState.md) and [terminalInput](terminalInput.md) in the per-record group the memo discipline does not
-cover: the answer is derived from one record a caller already holds rather than being a collection an observer dedups against.
+It is re-evaluated on every call rather than memoized, joining [tamperState](tamperState.md), [terminalInput](terminalInput.md) and [deviceAccessMethodStates](deviceAccessMethodStates.md) in the
+per-record group the memo discipline does not cover: the answer is derived from one record a caller already holds rather than being a collection an observer
+dedups against.
 
 What a binding means is the consumer's to decide. Which of a multi-door hub's doors is the one it cares about is policy this library holds no opinion about, and
 commanding a particular door of such hardware stays the door commands' `doorId` target rather than anything the order of this list implies.

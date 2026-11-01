@@ -394,6 +394,36 @@ export function parseWholeMinutes(value: string, flag: string): number {
   return durationMs / DURATION_UNITS.m;
 }
 
+// The routing override's accepted spellings - the library vocabulary verbatim, satisfies-linked so a library rename breaks the compile rather than drifting this copy.
+const API_OVERRIDES = [ "auto", "direct-only", "official-only" ] as const satisfies readonly AccessApiOverride[];
+
+/**
+ * Parse an `--api` value into the library's routing override, or refuse an unknown spelling calmly. Every command that takes the flag parses it here, so the
+ * flag is spelled and validated one way wherever it appears.
+ *
+ * @param value - The raw flag value, or `undefined` when the flag was absent.
+ *
+ * @returns The override, or `undefined` when the flag was absent.
+ *
+ * @throws {@link CliError} (exit 2) when the value is not an override the library knows.
+ *
+ * @category CLI
+ */
+export function parseApiOverride(value: string | undefined): AccessApiOverride | undefined {
+
+  if(value === undefined) {
+
+    return undefined;
+  }
+
+  if(!isMember(API_OVERRIDES, value)) {
+
+    throw new CliError("The --api value must be one of: " + API_OVERRIDES.join(", ") + ", but received \"" + value + "\".", { exitCode: 2 });
+  }
+
+  return value;
+}
+
 /**
  * A compiled filter term: one question asked of each raw packet. The engine compiles the operator's whole filter expression into a list of these and requires every one
  * of them to answer `true`, so the AND composition lives in the caller's `every` rather than inside any term.

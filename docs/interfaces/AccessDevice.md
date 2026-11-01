@@ -33,6 +33,29 @@ delivers it, not synchronously after the `await`, so a consumer observes rather 
 
 ## Accessors
 
+### accessMethodStates
+
+#### Get Signature
+
+```ts
+get accessMethodStates(): Partial<Readonly<Record<AccessMethod, boolean>>>;
+```
+
+What this device's own configuration rows say about each access method, read through the state tier's own `deviceAccessMethodStates` selector: `true` for a
+method its row reports enabled, `false` for one reported disabled, and no entry where no row establishes a reading - a method the device has no row for, a
+record carrying no configuration rows at all as every token-only census produces, or a row carrying a value outside the `"yes"` and `"no"` pair. That
+selector's own documentation is the full statement of the contract.
+
+##### Throws
+
+If the device is no longer present in the controller state.
+
+##### Returns
+
+`Partial`\<`Readonly`\<`Record`\<[`AccessMethod`](../type-aliases/AccessMethod.md), `boolean`\>\>\>
+
+***
+
 ### config
 
 #### Get Signature
@@ -268,6 +291,51 @@ non-2xx classifies and throws, and a 2xx whose envelope reports anything other t
 [AccessCapabilityError](../classes/AccessCapabilityError.md) when this client has no path that can carry the restart - one held to the official API, which cannot express it, or one
   holding only a token, whose credentials the Access application's own endpoints require. [AccessApiError](../classes/AccessApiError.md) when the controller accepts the request but
   reports the restart unsuccessful, the classified `FatalError` on a non-2xx, or a transport-level `AccessError` on failure.
+
+***
+
+### setAccessMethod()
+
+```ts
+setAccessMethod(
+   method, 
+   enabled, 
+   opts?
+): Promise<void>;
+```
+
+Switch one of this device's access methods - the ways a credential presented at it can open a door - on or off, by name. Write-through: it writes to the
+controller and returns, and the change is reflected once the realtime stream or the next refresh delivers it.
+
+The library knows which keys a method spans on each path and which endpoint each path writes, so the caller names the method and nothing more. The official
+path goes first where the client has one: its device settings write, and then a read of the settings back, because that write answers success for a method
+the controller declines. The method reading the state asked for completes the switch, and reading the other state throws [AccessDeclinedError](../classes/AccessDeclinedError.md). A
+device whose official settings do not list the method, or list it with a value outside the `"yes"` and `"no"` pair, sends the switch to the Access
+application's own endpoints on a client that holds credentials, and so does an official failure other than a decline or an abort. There, camera-class
+hardware, as [isCamera](../functions/isCamera.md) answers it, takes its rows on the camera configuration endpoint, `configs?is_camera=true`, and every other device on its
+`settings` collection, hubs included, each row in the shape the controller's access-method rows take: its key, the `open_door_mode` tag, and a `"yes"` or
+`"no"` value. Any 2xx there is success whatever its body, because no capture records what the controller answers a row array with.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `method` | `"face"` \| `"mobile"` \| `"nfc"` \| `"pin"` \| `"qr"` \| `"touchPass"` \| `"wave"` | The access method, by the library's own name for it. |
+| `enabled` | `boolean` | `true` to switch the method on, `false` to switch it off. |
+| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts.signal?` | `AbortSignal` | - |
+
+#### Returns
+
+`Promise`\<`void`\>
+
+#### Throws
+
+[AccessDeclinedError](../classes/AccessDeclinedError.md) when the controller accepts the official write and the read-back shows the method in the other state.
+  [AccessCapabilityError](../classes/AccessCapabilityError.md) when no path this client holds can carry the switch, as on a client with no direct path whose device's official settings do not
+  list the method or list it with a value outside the `"yes"` and `"no"` pair. Any other official failure as itself on a client with no direct path to take
+  instead. On the direct path, the classified `FatalError` on a non-2xx - [AccessAuthorizationError](../classes/AccessAuthorizationError.md) when the account lacks the privilege the write
+  requires - or a transport-level `AccessError` on failure.
 
 ***
 

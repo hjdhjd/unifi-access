@@ -2,10 +2,17 @@
  *
  * vocabulary.test.ts: Unit tests for the cross-channel translations. Each of these exists because the controller describes one reality in more than one way, so
  * these tests assert the folds that hide that from consumers, and assert the one reason code whose meaning this library states differently from the reference. The
- * unlock authentication glosses are held to their exact wording and to the fragment voice a consumer's own sentence needs.
+ * unlock authentication glosses are held to their exact wording and to the fragment voice a consumer's own sentence needs, and the access-method names are held
+ * to their closed set and to the barrel that publishes them, and the reading every access-method surface shares to its pair.
  */
-import { ACCESS_AUTHENTICATION_TYPES, ACCESS_DOORBELL_REASON_CODES, isMacAddress, normalizeActorType, normalizeMacAddress } from "./vocabulary.ts";
+import { ACCESS_AUTHENTICATION_TYPES, ACCESS_DOORBELL_REASON_CODES, ACCESS_METHODS, ACCESS_METHOD_KEYS, ACCESS_METHOD_ROW_TAG, accessMethodValue, isMacAddress,
+  normalizeActorType, normalizeMacAddress, readAccessMethodStates, readAccessMethodValue } from "./vocabulary.ts";
+import { AccessDeclinedError as BarrelAccessDeclinedError, accessMethodStates as barrelAccessMethodStates, ACCESS_METHODS as barrelAccessMethods } from "../index.ts";
 import { describe, test } from "node:test";
+import { AccessDeclinedError } from "../errors.ts";
+import type { AccessMethod } from "./vocabulary.ts";
+import type { AccessMethod as BarrelAccessMethod } from "../index.ts";
+import { accessMethodStates } from "../official/devices.ts";
 import assert from "node:assert/strict";
 
 /* The address pair's contract as a table of exact pairs rather than as a description of a pattern: every shape a hardware address is written in, and what the
@@ -200,5 +207,94 @@ describe("ACCESS_AUTHENTICATION_TYPES", () => {
       assert.equal((/^[A-Z][a-z]/).test(meaning), false, "the meaning of " + token + " should not begin as a sentence");
       assert.equal(meaning.endsWith("."), false, "the meaning of " + token + " should not end as a sentence");
     }
+  });
+});
+
+describe("ACCESS_METHODS", () => {
+
+  test("names every access method a device can be switched by, and no others", () => {
+
+    assert.deepEqual([...ACCESS_METHODS], [ "face", "mobile", "nfc", "pin", "qr", "touchPass", "wave" ]);
+  });
+
+  test("the barrel publishes the very names, the decline, and the settings reading the library defines", () => {
+
+    /* Nothing else in the suite establishes that these reached the public surface, and typedoc reads the barrel alone - a symbol missing from it has no page and
+     * no consumer. Identity rather than behavior is the assertion, because a re-export that resolved to something else would still answer correctly. The type has
+     * no runtime presence, so a value typed by the barrel's own spelling of it is what holds it there.
+     */
+    const named: BarrelAccessMethod = "touchPass";
+
+    assert.equal(Object.is(barrelAccessMethods, ACCESS_METHODS), true);
+    assert.equal(Object.is(BarrelAccessDeclinedError, AccessDeclinedError), true);
+    assert.equal(Object.is(barrelAccessMethodStates, accessMethodStates), true);
+    assert.ok(ACCESS_METHODS.includes(named), "and the type the barrel publishes names the list's own members");
+  });
+
+  test("every key the configuration-row read judges is among the keys a camera-class write lands", () => {
+
+    // The row read judges each method by its first direct key, so a write on the camera endpoint reads back through that read only where the camera column
+    // carries the same key. Mobile unlock is the method whose columns differ, and its direct key sits inside the camera set rather than beside it.
+    for(const method of ACCESS_METHODS) {
+
+      const keys = ACCESS_METHOD_KEYS[method];
+
+      assert.ok(keys.camera.some((key) => key === keys.direct[0]), method + " should be read back through a key its camera-class write lands");
+    }
+  });
+});
+
+describe("the access-method reading", () => {
+
+  test("reads the pair every surface spells the state in, and nothing else", () => {
+
+    // Spelled here rather than read back from the module, so the assertion does not agree with the implementation by construction.
+    assert.equal(readAccessMethodValue("yes"), true);
+    assert.equal(readAccessMethodValue("no"), false);
+
+    // A value outside the pair establishes no reading, which is a different answer from a method reported off: a guessed false would be a verdict the
+    // controller never gave. The scrubbed pin rows of the captures carry exactly such a value.
+    for(const value of [ "REDACTED-00000008-", "true", "false", "Yes", "NO", "", "on", true, false, 1, 0, null, undefined, {}, ["yes"] ]) {
+
+      assert.equal(readAccessMethodValue(value), undefined, JSON.stringify(value) + " should establish no reading");
+    }
+  });
+
+  test("writes the state in the same pair it reads, and a written value reads back as the state it was written from", () => {
+
+    assert.equal(accessMethodValue(true), "yes");
+    assert.equal(accessMethodValue(false), "no");
+
+    for(const enabled of [ true, false ]) {
+
+      assert.equal(readAccessMethodValue(accessMethodValue(enabled)), enabled);
+    }
+  });
+
+  test("files access-method rows under the controller's own tag", () => {
+
+    assert.equal(ACCESS_METHOD_ROW_TAG, "open_door_mode");
+  });
+
+  test("asks the surface once per method, in the vocabulary's own order, and lists each established reading by name", () => {
+
+    const asked: AccessMethod[] = [];
+    const values: Partial<Record<AccessMethod, string>> = { face: "no", mobile: "yes", nfc: "maybe", qr: "yes" };
+    const states = readAccessMethodStates((method) => {
+
+      asked.push(method);
+
+      return values[method];
+    });
+
+    assert.deepEqual(asked, [...ACCESS_METHODS]);
+
+    // The method the surface reports outside the pair and every method it reports nothing for have no entry, rather than a false one.
+    assert.deepEqual(states, { face: false, mobile: true, qr: true });
+  });
+
+  test("answers an empty reading for a surface that carries no value at all", () => {
+
+    assert.deepEqual(readAccessMethodStates(() => undefined), {});
   });
 });

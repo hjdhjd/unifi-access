@@ -316,8 +316,8 @@ function applyControllerChange(state: AccessState, controller: AccessControllerC
 }
 
 /* Merge a partial into an existing device. A notification for an unknown device is a no-op: membership comes from a census - the topology document, or the official
- * listings on a client with no topology - and a partial has no full record to merge onto. The controller's camera-class hardware exercises exactly this path,
- * appearing in notifications while being absent from every census; the periodic re-read is what reconciles any genuine drift.
+ * listings on a client with no topology - and a partial has no full record to merge onto. Camera-class hardware the captured controller reported exercises exactly
+ * this path, appearing in its notifications while absent from its census; the periodic re-read is what reconciles any genuine drift.
  *
  * The payload's address, when it carries one, takes the library's spelling before the merge rather than after it. The merge decides by value whether anything
  * changed, so a payload restating the stored address in the other case would otherwise read as a change: the merge would clone the stored record to hold the
@@ -681,7 +681,8 @@ const ROW_IDENTITY: keyof AccessDeviceEntryConfig = "key";
  * The cost is the one the null-skip already accepts for a cleared member: a row or a capability the controller stops reporting stands until the next full topology
  * reconcile. On a credential client the periodic refresh and any reconnect bound that; on a token client the census is the only reconcile there is, so a capability
  * a listing stops carrying stands for the session, which is unobserved because the capability list is a hardware fact. A row the record has never held appends at
- * the tail, so the next full reconcile may read the record as changed once where the controller orders its rows elsewhere.
+ * the tail, so the next full reconcile may read the record as changed once where the controller orders its rows elsewhere. A value the newer dialect moved
+ * carries no timestamp, so the row keeps the modification time it held before the move, and the next full reconcile may likewise read the record as changed once.
  */
 function mergeDeviceRecord(held: AccessStateDevice, patch: Record<string, AccessKnownJsonValue>): AccessStateDevice {
 
@@ -689,11 +690,16 @@ function mergeDeviceRecord(held: AccessStateDevice, patch: Record<string, Access
   const capabilities = patch["capabilities"];
   const resolved: Record<string, AccessKnownJsonValue> = { ...patch };
 
-  // A record holding no rows merges onto an empty list rather than taking the delivered array as it stands, so the admission guard governs every row on every path
-  // and a record never admits an array nothing vouched for.
+  /* A record holding no rows merges onto an empty list rather than taking the delivered array as it stands, so the admission guard governs every row on every path
+   * and a record never admits an array nothing vouched for. Where that admits nothing, the member is handed to the merge as the null it reads as not carried,
+   * because an empty list would be a `configs` member no census established: the record would change shape, and wake its observers, on a delivery that left it
+   * holding nothing new.
+   */
   if(Array.isArray(rows)) {
 
-    resolved["configs"] = mergeKeyedRows(held.configs ?? [], rows);
+    const merged = mergeKeyedRows(held.configs ?? [], rows);
+
+    resolved["configs"] = ((held.configs === undefined) && (merged.length === 0)) ? null : merged;
   }
 
   if(Array.isArray(capabilities)) {

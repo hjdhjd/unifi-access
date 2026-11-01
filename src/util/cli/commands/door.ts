@@ -5,7 +5,7 @@
  */
 import type { AccessApiOverride, AccessClient, AccessLockRule, AccessOfficialDoorUnlockActor, AccessOfficialEmergencyState,
   AccessStateDoor } from "../../../index.ts";
-import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand, isMember, parseWholeMinutes,
+import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand, isMember, parseApiOverride, parseWholeMinutes,
   refuseDocumentFlags } from "../shared.ts";
 import type { CommandContext, CommandSpec } from "../shared.ts";
 import { doorLabel, doorName, findDoorTarget } from "../lookup.ts";
@@ -14,32 +14,14 @@ import type { UfaCredentials } from "../credentials.ts";
 import { parseArgs } from "node:util";
 import { renderDocument } from "../output/format.ts";
 
-// The routing override's accepted spellings - the library vocabulary verbatim, satisfies-linked so a library rename breaks the compile rather than drifting this copy.
-const API_OVERRIDES = [ "auto", "direct-only", "official-only" ] as const satisfies readonly AccessApiOverride[];
-
-// The site-wide emergency states - the library's own tri-state vocabulary verbatim, satisfies-linked for the same reason.
+// The site-wide emergency states - the library's own tri-state vocabulary verbatim, satisfies-linked so a library rename breaks the compile rather than drifting
+// this copy.
 const EMERGENCY_STATES = [ "evacuation", "lockdown", "normal" ] as const satisfies readonly AccessOfficialEmergencyState[];
 
 // The lock-rule vocabulary as the CLI spells it, mapped one-to-one onto the wire verbs. The values are satisfies-linked to the library's own rule union, so the map
 // cannot drift from the vocabulary it translates; a DURATION argument reaches the `custom` rule through the duration grammar instead of this map.
 const LOCK_RULE_VERBS = { "keep-lock": "keep_lock", "keep-unlock": "keep_unlock", "lock-early": "lock_early", "lock-now": "lock_now",
   "reset": "reset" } as const satisfies Record<string, AccessLockRule["type"]>;
-
-// Parse the --api flag into the library's override vocabulary, or refuse an unknown spelling calmly.
-function parseApiOverride(value: string | undefined): AccessApiOverride | undefined {
-
-  if(value === undefined) {
-
-    return undefined;
-  }
-
-  if(!isMember(API_OVERRIDES, value)) {
-
-    throw new CliError("The --api value must be one of: " + API_OVERRIDES.join(", ") + ", but received \"" + value + "\".", { exitCode: 2 });
-  }
-
-  return value;
-}
 
 // Parse an --actor value into the official attribution pair, split on the LAST colon so a name may itself carry colons. Both halves are required by the wire's own
 // shape, so a missing half is named rather than sent empty.

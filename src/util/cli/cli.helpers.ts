@@ -9,10 +9,10 @@
  * passing against a mock that answered everything. The rig's one cast to the client type lives in `asAccessClient`, shared by the context's opener and the
  * tests that hand the fake straight to a library function typed for a real client.
  */
-import { AccessApiError, portBindings as readPortBindings, isTamperCapable as readTamperCapability, tamperState as readTamperState,
-  terminalInput as readTerminalInput } from "../../index.ts";
-import type { AccessApiOverride, AccessCapabilities, AccessClient, AccessDoorStateEntry, AccessEventPacket, AccessLockRule, AccessOfficialDoorUnlockActor,
-  AccessPortBinding, AccessStateDevice, AccessTerminalInput, AccessTerminalInputFacts } from "../../index.ts";
+import { AccessApiError, deviceAccessMethodStates as readAccessMethodStates, portBindings as readPortBindings, isTamperCapable as readTamperCapability,
+  tamperState as readTamperState, terminalInput as readTerminalInput } from "../../index.ts";
+import type { AccessApiOverride, AccessCapabilities, AccessClient, AccessDoorStateEntry, AccessEventPacket, AccessLockRule, AccessMethod,
+  AccessOfficialDoorUnlockActor, AccessPortBinding, AccessStateDevice, AccessTerminalInput, AccessTerminalInputFacts } from "../../index.ts";
 import type { CommandContext, LoadCredentials, OpenClient } from "./shared.ts";
 import { Output } from "./output/format.ts";
 import type { UfaCredentials } from "./credentials.ts";
@@ -43,6 +43,7 @@ export type FakeOfficialMethod = "command" | "devices.fetchAll" | "devices.fetch
  */
 export interface FakeCalls {
 
+  accessMethods: { enabled: boolean; id: string; method: string; signal: AbortSignal | undefined }[];
   closes: string[];
   consumed: string[];
   credentialLoads: number;
@@ -71,9 +72,12 @@ export interface FakeDoorSpec {
  * One device in a fake inventory. `present` is what a vanished record looks like from a command's point of view: reading the record throws, exactly as a live
  * projection does once its record leaves controller state. `doorId` is the door the handle drives, defaulting to the handle's own id. `beforeRestart` and
  * `beforeUnlock` fire inside the command they name, which is how a test arranges for controller state to change while a command is in flight.
+ * `accessMethodErrors` is what the access-method switch throws for each method it names, after the switch is recorded, standing in for the library's own
+ * decline, abort, or failure on that method.
  */
 export interface FakeDeviceSpec {
 
+  accessMethodErrors?: Readonly<Record<string, Error>>;
   beforeRestart?: () => void;
   beforeUnlock?: () => void;
   config?: Record<string, unknown>;
@@ -141,7 +145,8 @@ export interface FakeClientSpec {
 
 function makeCalls(): FakeCalls {
 
-  return { closes: [], consumed: [], credentialLoads: 0, disposals: 0, lockRules: [], official: [], opens: [], restarts: [], unlocks: [], updates: [] };
+  return { accessMethods: [], closes: [], consumed: [], credentialLoads: 0, disposals: 0, lockRules: [], official: [], opens: [], restarts: [], unlocks: [],
+    updates: [] };
 }
 
 // Build one fake device handle: a record, an identity, a name, the door it drives and that door's own record, and the commands a command module can issue against
@@ -165,7 +170,7 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
     return config;
   };
 
-  /* The fake's record read as the state record the library's own tamper functions take. The fake supplies the members they read and nothing obliges it to carry
+  /* The fake's record read as the state record the library's own per-record reads take. The fake supplies the members they read and nothing obliges it to carry
    * the rest, so this states what the structural stand-in is standing in for. Delegating to the library rather than re-implementing the readings here is what
    * keeps the fake's answers from drifting away from the semantics the commands are being tested against.
    */
@@ -173,6 +178,10 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
 
   const handle: Record<string, unknown> = {
 
+    get accessMethodStates(): Partial<Readonly<Record<AccessMethod, boolean>>> {
+
+      return readAccessMethodStates(stateRecord());
+    },
     close: async (): Promise<void> => {
 
       calls.closes.push(spec.id);
@@ -221,6 +230,21 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
       if(spec.restartError !== undefined) {
 
         return Promise.reject(spec.restartError);
+      }
+
+      return Promise.resolve();
+    },
+    setAccessMethod: async (method: string, enabled: boolean, opts: { signal?: AbortSignal } = {}): Promise<void> => {
+
+      record();
+
+      calls.accessMethods.push({ enabled, id: spec.id, method, signal: opts.signal });
+
+      const error = spec.accessMethodErrors?.[method];
+
+      if(error !== undefined) {
+
+        return Promise.reject(error);
       }
 
       return Promise.resolve();

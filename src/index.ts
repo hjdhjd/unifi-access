@@ -21,8 +21,8 @@
 
 // Errors - the typed hierarchy. Consumers branch on these with `instanceof`, so they are value exports; the bootstrap-stage and identity-leg tags are types.
 export { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
-  AccessCertificateError, AccessConfigurationError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError,
-  AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError } from "./errors.ts";
+  AccessCertificateError, AccessConfigurationError, AccessDeclinedError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError,
+  AccessStallError, AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError } from "./errors.ts";
 export type { AccessApiCode, AccessBootstrapStage, AccessControllerReadiness, AccessIdentityLeg } from "./errors.ts";
 
 // The rendering a consumer logs a failure through, so the diagnosis a wrapped error carries below the sentence that was caught reaches an operator.
@@ -91,9 +91,11 @@ export type { AccessEventsPacketIdKind, AccessEventsPacketNoIdKind } from "./dia
 // pair is published for the same reason a consumer keys on an address at all: whatever it stored under one spelling, it folds with the library's own rule. The
 // terminal vocabulary publishes here on the same terms: a consumer iterating the terminals a hub can report reads the library's own list rather than restating it.
 // The port-binding vocabulary publishes here too, on those same terms: the extension name a consumer holding a raw record selects a port binding on, and the record
-// shape the state tier's own bindings read answers with.
-export { ACCESS_AUTHENTICATION_TYPES, ACCESS_DOORBELL_REASON_CODES, isMacAddress, normalizeActorType, normalizeMacAddress } from "./protocol/vocabulary.ts";
-export type { AccessActorType } from "./protocol/vocabulary.ts";
+// shape the state tier's own bindings read answers with. The access-method names publish on the same terms as the terminals: a consumer naming a method to switch
+// reads the library's own list, and the keys each name spans on each write path stay the library's knowledge.
+export { ACCESS_AUTHENTICATION_TYPES, ACCESS_DOORBELL_REASON_CODES, ACCESS_METHODS, isMacAddress, normalizeActorType,
+  normalizeMacAddress } from "./protocol/vocabulary.ts";
+export type { AccessActorType, AccessMethod } from "./protocol/vocabulary.ts";
 export { ACCESS_TERMINAL_INPUTS } from "./protocol/terminal-inputs.ts";
 export type { AccessTerminalInput, AccessTerminalInputFacts } from "./protocol/terminal-inputs.ts";
 export { PORT_EXTENSION } from "./protocol/port-bindings.ts";
@@ -103,8 +105,11 @@ export type { AccessPortBinding } from "./protocol/port-bindings.ts";
 // establishes a delivery is authentic. The facade and its domains are types rather than values, because a consumer receives them from the client rather than
 // constructing them: the client is the one composition root and official access hangs off it rather than beside it, so the token session and the request path
 // underneath stay internal. The values here are what a consumer calls on its own webhook endpoint, which needs no client at all: the guard that narrows a
-// parsed body to the delivery union, and the verification that establishes the delivery is authentic.
+// parsed body to the delivery union, and the verification that establishes the delivery is authentic. The reading that turns a device's official settings into
+// each access method's state publishes beside them, because it is the rule the routed access-method write judges its read-back by, so a consumer reading the
+// settings itself reads them the same way.
 export { isAccessWebhookDelivery, verifyWebhookSignature } from "./official/webhooks.ts";
+export { accessMethodStates } from "./official/devices.ts";
 export type { OfficialAccessPolicies } from "./official/policies.ts";
 export type { OfficialApi } from "./official/api.ts";
 export type { OfficialApiServer } from "./official/server.ts";
@@ -160,17 +165,19 @@ export type { AccessOfficialCertificateUpload } from "./official/server.ts";
 // State - the memoized derived views a consumer reads its observed state through, and the store's own construction surface. The selectors are value exports because
 // a consumer calls them as free functions, and passes them to `client.state.observe` to be told when what they select changes. The store factory is the one
 // documented exception to composing through the client, for a harness that needs the real engine standalone. The classification predicates are published beside the
-// selectors because they are the one home of device-role qualification - the hub predicates are what the projections rest on - and a consumer re-deriving any of
-// them is the drift the selectors module warns against. The tamper pair publishes here on the same terms: a capability predicate and a per-record read, so that
-// what a record says about tampering has one home rather than being re-derived from the raw configuration rows by every consumer that wants it, and the terminal read
-// publishes on those same terms for what a hub reports about the terminals on its back. The display name publishes on the same terms: the alias-over-name rule has one
-// home, read by the projection's own name and by a routing refusal alike, rather than being restated by every consumer that labels a device. The port-binding read
-// publishes on those same terms for which door each of a hub's ports is bound to, so a consumer ranking a multi-door hub's doors reads the list rather than parsing
-// the extensions itself.
+// selectors because they are the one home of device-role qualification - the hub predicates are what the projections rest on - and of the camera class an
+// access-method write routes by, and a consumer re-deriving any of them is the drift the selectors module warns against. The tamper pair publishes here on the same
+// terms: a capability predicate and a per-record read, so that what a record says about tampering has one home rather than being re-derived from the raw configuration
+// rows by every consumer that wants it, and the terminal read publishes on those same terms for what a hub reports about the terminals on its back. The display name
+// publishes on the same terms: the alias-over-name rule has one home, read by the projection's own name and by a routing refusal alike, rather than being restated by
+// every consumer that labels a device. The port-binding read publishes on those same terms for which door each of a hub's ports is bound to, so a consumer ranking a
+// multi-door hub's doors reads the list rather than parsing the extensions itself. The access-method read publishes on the tamper pair's terms too, so what a
+// device's own configuration rows say about each access method has one home, read by the value rule the official settings reading applies.
 export { createStateStore } from "./state/store.ts";
 export type { StateStore, StateStoreOptions } from "./state/store.ts";
-export { deviceDisplayName, isEnterpriseHubRecord, isHub, isReader, isTamperCapable, portBindings, selectAccessPoints, selectController, selectControllerName,
-  selectControllerUptime, selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState, terminalInput } from "./state/selectors.ts";
+export { deviceAccessMethodStates, deviceDisplayName, isCamera, isEnterpriseHubRecord, isHub, isReader, isTamperCapable, portBindings, selectAccessPoints,
+  selectController, selectControllerName, selectControllerUptime, selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState,
+  terminalInput } from "./state/selectors.ts";
 
 // Settings - the externally observable timing and retry constants behind the library's defaults, exposed as documented reference values.
 export { ACCESS_API_ERROR_LIMIT, ACCESS_API_PATH_PREFIX, ACCESS_API_RETRY_INTERVAL, ACCESS_API_RETRY_PROFILE, ACCESS_API_TIMEOUT, ACCESS_BOOTSTRAP_REFRESH_INTERVAL,

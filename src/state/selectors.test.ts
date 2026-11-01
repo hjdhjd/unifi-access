@@ -4,19 +4,22 @@
  * topology documents rather than counts re-derived from the same fixture, and the reference identity that makes the observer dedup work - stable across a change the
  * view does not depend on, fresh across one it does.
  */
-import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload } from "../types/index.ts";
+import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload, AccessDeviceEntryConfig } from "../types/index.ts";
 import type { AccessState, AccessStateDevice } from "../protocol/reducer.ts";
+import { CAMERA, cameraBootstrap } from "../devices/device.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { applyBootstrap, createInitialState, reduce } from "../protocol/reducer.ts";
-import { deviceDisplayName as barrelDeviceDisplayName, isEnterpriseHubRecord as barrelIsEnterpriseHubRecord, isHub as barrelIsHub, isReader as barrelIsReader,
-  isTamperCapable as barrelIsTamperCapable, portBindings as barrelPortBindings, selectAccessPoints as barrelSelectAccessPoints,
-  selectController as barrelSelectController, selectControllerName as barrelSelectControllerName, selectControllerUptime as barrelSelectControllerUptime,
-  selectDevicesByType as barrelSelectDevicesByType, selectDoorDevices as barrelSelectDoorDevices, selectDoorStates as barrelSelectDoorStates,
-  selectHubs as barrelSelectHubs, tamperState as barrelTamperState, terminalInput as barrelTerminalInput,
-  ACCESS_TERMINAL_INPUTS as barrelTerminalInputs } from "../index.ts";
+import { deviceAccessMethodStates as barrelDeviceAccessMethodStates, deviceDisplayName as barrelDeviceDisplayName, isCamera as barrelIsCamera,
+  isEnterpriseHubRecord as barrelIsEnterpriseHubRecord, isHub as barrelIsHub, isReader as barrelIsReader, isTamperCapable as barrelIsTamperCapable,
+  portBindings as barrelPortBindings, selectAccessPoints as barrelSelectAccessPoints, selectController as barrelSelectController,
+  selectControllerName as barrelSelectControllerName, selectControllerUptime as barrelSelectControllerUptime, selectDevicesByType as barrelSelectDevicesByType,
+  selectDoorDevices as barrelSelectDoorDevices, selectDoorStates as barrelSelectDoorStates, selectHubs as barrelSelectHubs, tamperState as barrelTamperState,
+  terminalInput as barrelTerminalInput, ACCESS_TERMINAL_INPUTS as barrelTerminalInputs } from "../index.ts";
+import { classify, findPacket } from "../protocol/capture.helpers.ts";
 import { describe, test } from "node:test";
-import { deviceDisplayName, isEnterpriseHubRecord, isHub, isReader, isTamperCapable, portBindings, selectAccessPoints, selectController, selectControllerName,
-  selectControllerUptime, selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState, terminalInput } from "./selectors.ts";
+import { deviceAccessMethodStates, deviceDisplayName, isCamera, isEnterpriseHubRecord, isHub, isReader, isTamperCapable, portBindings, selectAccessPoints,
+  selectController, selectControllerName, selectControllerUptime, selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState,
+  terminalInput } from "./selectors.ts";
 import { ACCESS_TERMINAL_INPUTS } from "../protocol/terminal-inputs.ts";
 import type { AccessPortBinding } from "../protocol/port-bindings.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
@@ -230,6 +233,43 @@ describe("isReader", () => {
   });
 });
 
+describe("isCamera", () => {
+
+  test("reads the controller's own camera flag on the captured camera-class record", () => {
+
+    assert.equal(isCamera(deviceRecord(stateFrom(cameraBootstrap()), CAMERA)), true);
+  });
+
+  test("answers false for every captured reader and hub", () => {
+
+    const devices = [ ...stateFrom(accessBootstrap2026Fixture).devices.values(), ...stateFrom(accessBootstrapEahFixture).devices.values() ];
+
+    // The captured documents together hold every reader and hub the captures carry, the 2026 document spelling the flag false and the EAH document leaving it out.
+    assert.ok(devices.some(isReader) && devices.some(isHub), "the documents carry readers and hubs to classify");
+
+    for(const device of devices) {
+
+      assert.equal(isCamera(device), false, device.device_type + " is not camera-class hardware");
+    }
+  });
+
+  test("answers false for the camera-class record without its flag, whatever else it carries", () => {
+
+    const { is_camera: _flag, ...unflagged } = deviceRecord(stateFrom(cameraBootstrap()), CAMERA);
+
+    // The record keeps everything a wrong reading could mistake for the flag, so the flag is what decides the answer.
+    assert.ok(unflagged.capabilities.includes("identity_is_camera"), "the record still carries the camera capability");
+    assert.equal(unflagged.device_type, "UVC G6 Pro Entry", "and its camera model");
+    assert.equal(isCamera(unflagged), false);
+  });
+
+  test("answers false over a record a token-only census produced", () => {
+
+    // The official inventory never projects the flag, so a token-only record cannot be camera-class here whatever its hardware is.
+    assert.equal(isCamera(TOKEN_CENSUS_RECORD), false);
+  });
+});
+
 describe("deviceDisplayName", () => {
 
   test("the alias wins where one is set, and the hardware name answers where it is empty", () => {
@@ -423,6 +463,96 @@ describe("portBindings", () => {
   });
 });
 
+describe("deviceAccessMethodStates", () => {
+
+  test("reads each captured reader's access methods from its own rows, by the library's name for each", () => {
+
+    const state = stateFrom(accessBootstrap2026Fixture);
+
+    // The UA Ultra reports mobile unlock and NFC on and TouchPass off, which is also what its official settings report.
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, ULTRA)), { mobile: true, nfc: true, touchPass: false });
+
+    /* The G2 Pro reports face unlock and QR codes beside those. It carries a pin row, and pin is absent from the answer because every capture scrubs that row's
+     * value to a placeholder outside the pair: the scrub, not the wire, is what leaves it unestablished here.
+     */
+    assert.match(rowValue(deviceRecord(state, READER_PRO), "pin_code"), /^REDACTED-/);
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, READER_PRO)), { face: true, mobile: true, nfc: true, qr: true, touchPass: false });
+
+    // The G2 Mini is the hardware that reports hand wave.
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, READER_MINI)), { mobile: true, nfc: true, touchPass: false, wave: true });
+  });
+
+  test("reads a hub carrying no access-method rows as no method at all, and an Enterprise hub by the rows it does carry", () => {
+
+    const state = stateFrom(accessBootstrap2026Fixture);
+
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, HUB)), {});
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, HUB_DOOR_MINI)), {});
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(stateFrom(accessBootstrapEahFixture), EAH_HUB)), { mobile: true, nfc: false },
+      "the Enterprise hub's own rows switch NFC off");
+  });
+
+  test("reads a method with no row as unestablished, which says nothing about whether the hardware can do it", () => {
+
+    // The EAH document's G2 Pro carries the face-unlock capability and no face row, so the absent answer is no row establishing a reading rather than hardware
+    // unable to do the method - the meaning absence takes in the official settings reading.
+    const reader = deviceRecord(stateFrom(accessBootstrapEahFixture), EAH_FRONT_READER);
+
+    assert.ok(reader.capabilities.includes("identity_face_unlock"), "the hardware offers face unlock");
+    assert.deepEqual(deviceAccessMethodStates(reader), { mobile: true, nfc: true });
+  });
+
+  test("reads a value outside the pair as unestablished rather than as switched off", () => {
+
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const odd = deviceRecord(reduce(state, fullRowDelivery(state, { "nfc": "maybe" })), ULTRA);
+
+    assert.equal(rowValue(odd, "nfc"), "maybe");
+    assert.deepEqual(deviceAccessMethodStates(odd), { mobile: true, touchPass: false }, "a guessed false would be a verdict the controller never gave");
+  });
+
+  test("reads a method only from the row filed under the access-method tag", () => {
+
+    // A row carrying a method's key under another tag is some other setting. It is not read when it stands alone, and it does not shadow the access-method row
+    // when it comes first.
+    const row = (key: string, tag: string, value: string): AccessDeviceEntryConfig => ({ "device_id": ULTRA, key, tag, value });
+    const holding = (...configs: AccessDeviceEntryConfig[]): AccessStateDevice => ({ ...TOKEN_CENSUS_RECORD, configs });
+
+    assert.deepEqual(deviceAccessMethodStates(holding(row("nfc", "test_only_tag", "yes"), row("qr_code", "open_door_mode", "no"))), { qr: false });
+    assert.deepEqual(deviceAccessMethodStates(holding(row("nfc", "test_only_tag", "no"), row("nfc", "open_door_mode", "yes"))), { nfc: true });
+  });
+
+  test("answers over a record a census with no configuration rows produced", () => {
+
+    assert.deepEqual(deviceAccessMethodStates(TOKEN_CENSUS_RECORD), {});
+  });
+
+  test("follows a full-row delivery on the original dialect", () => {
+
+    const state = stateFrom(accessBootstrap2026Fixture);
+
+    assert.equal(deviceAccessMethodStates(deviceRecord(reduce(state, fullRowDelivery(state, { "nfc": "no" })), ULTRA)).nfc, false);
+  });
+
+  test("follows the newer dialect's access-method map, which establishes nothing on a record holding no rows", () => {
+
+    // The map lands value only on the rows a record already holds, so it moves the G2 Pro's reading and establishes none on a token-only record, whose census
+    // carried no rows. The map is delivered before the token record is read, so the empty answer is the one a token client reads after its socket has spoken.
+    const specimen = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.data?.["access_method"] !== undefined),
+      "the v2 G2 Pro update carrying its access-method map");
+    const nfcOff = (id: string): AccessTypedEvent => classify({ ...specimen, data: { "access_method": { "nfc": "no" }, id },
+      meta: { ...present(specimen.meta, "the specimen's metadata"), id } });
+    const state = stateFrom(accessBootstrap2026Fixture);
+
+    assert.equal(deviceAccessMethodStates(deviceRecord(state, READER_PRO)).nfc, true);
+    assert.equal(deviceAccessMethodStates(deviceRecord(reduce(state, nfcOff(READER_PRO)), READER_PRO)).nfc, false);
+
+    const token = reduce(createInitialState(), { complete: false, devices: [TOKEN_CENSUS_RECORD], doorStates: [], doors: [], kind: "censusApplied" });
+
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(reduce(token, nfcOff(ULTRA)), ULTRA)), {});
+  });
+});
+
 describe("the barrel's per-record reads", () => {
 
   test("publishes the very functions this module defines", () => {
@@ -430,7 +560,9 @@ describe("the barrel's per-record reads", () => {
     /* Nothing else in the suite establishes that a selector reached the public surface, and typedoc reads the barrel alone - a symbol missing from it has no
      * page and no consumer. Identity rather than behavior is the assertion, because a re-export that resolved to something else would still answer correctly.
      */
+    assert.equal(Object.is(barrelDeviceAccessMethodStates, deviceAccessMethodStates), true);
     assert.equal(Object.is(barrelDeviceDisplayName, deviceDisplayName), true);
+    assert.equal(Object.is(barrelIsCamera, isCamera), true);
     assert.equal(Object.is(barrelIsEnterpriseHubRecord, isEnterpriseHubRecord), true);
     assert.equal(Object.is(barrelIsHub, isHub), true);
     assert.equal(Object.is(barrelIsReader, isReader), true);

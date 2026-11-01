@@ -310,13 +310,15 @@ describe("the controller address", () => {
 
     assert.equal(captured.url, "wss://[fe80::1]/proxy/access/api/v2/ws/notification");
 
-    // The URLs a connect never composes: the on-demand topology fetch, a device command built on the projection's context, and the recovery probe.
+    // The URLs a connect never composes: the on-demand topology fetch, the device commands built on the projection's context, and the recovery probe.
     pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());
     pool.intercept({ method: "PUT", path: "/proxy/access/api/v2/device/" + READER_PRO + "/restart" }).reply(200, COMMAND_SUCCESS);
+    pool.intercept({ method: "PUT", path: "/proxy/access/api/v2/device/" + READER_PRO + "/settings" }).reply(200, COMMAND_SUCCESS);
     pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());
 
     await client.fetchBootstrap();
     await present(client.device(READER_PRO), "the reader").restart();
+    await present(client.device(READER_PRO), "the reader").setAccessMethod("nfc", false);
     await client.connection.verify();
 
     agent.assertNoPendingInterceptors();

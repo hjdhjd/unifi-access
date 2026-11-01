@@ -1,14 +1,15 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * device.helpers.ts: The shared rig the device suites are driven through - the named entries of the two topology documents, the controller's success and refusal
- * envelopes, the registry-over-a-real-store fixture with the requests it captured, the interceptor that answers one path, and the two door-state builders.
+ * device.helpers.ts: The shared rig the device suites are driven through - the named entries of the topology documents, the captured camera-class record seated
+ * in one of them, the controller's success and refusal envelopes, the registry-over-a-real-store fixture with the requests it captured, the interceptor that
+ * answers one path, and the door-state builders.
  *
  * One copy exists because every device suite asks the same three things of its arrangement: a registry standing over a real store seeded from a real topology
  * document, a transport whose requests can be read back as the controller would have received them, and a way to put a door's live state into the store without a
  * wire round trip. Writing that once here is what keeps each suite down to the concern its name states.
  */
-import type { AccessBootstrapConfig, AccessEventPacket } from "../types/index.ts";
-import { TestClock, silentLog } from "homebridge-plugin-utils/testing";
+import type { AccessBootstrapConfig, AccessDeviceConfig, AccessEventPacket } from "../types/index.ts";
+import { TestClock, present, silentLog } from "homebridge-plugin-utils/testing";
 import type { AccessDeviceContext } from "./context.ts";
 import { AccessDeviceRegistry } from "./registry.ts";
 import type { AccessPortBinding } from "../protocol/port-bindings.ts";
@@ -16,6 +17,8 @@ import { AccessRoutingService } from "../client/routing.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
 import type { MockTransport } from "../transport/mock-controller.helpers.ts";
 import { StateStore } from "../state/store.ts";
+import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
+import { accessEventPacketsFixture } from "../protocol/events.fixtures.ts";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
 import { refuseRefresh } from "../testing.helpers.ts";
 
@@ -35,6 +38,24 @@ export const EAH_HUB = "aabbcc000005";
 export const EAH_PORT_2 = "00000000-0000-0000-0000-00000000002a";
 export const EAH_PORT_3 = "00000000-0000-0000-0000-00000000002b";
 export const EAH_DOOR_2 = "00000000-0000-0000-0000-000000000013";
+
+// The camera-class reader the event corpus caught, a UVC G6 Pro Entry, under the identity its device-update packets carry.
+export const CAMERA = "00000000000000000000000c";
+
+/* The 2026 document with the captured camera-class record added. No captured topology holds camera-class hardware - the record survives only in the device-update
+ * packets the corpus caught - and the store admits only devices a topology document gave it, so the packet's record is seated at root level, as hardware the
+ * building hosts directly, which keeps the document one key different from the real one. The record is the packet's own rather than a template re-spelled, so its
+ * camera flag, its capabilities and its model all arrive as the controller sent them. The downcast admits the packet's open record as a device record: the wire
+ * sends nulls where the type declares values, which is the capture's truth rather than a defect to correct here.
+ */
+export function cameraBootstrap(): AccessBootstrapConfig {
+
+  const packet = present(accessEventPacketsFixture.find((candidate) => (candidate.event === "access.data.device.update") && (candidate.data?.["unique_id"] === CAMERA)),
+    "the camera-class record's device-update packet");
+  const record = present(structuredClone(packet.data), "the camera-class record");
+
+  return { ...structuredClone(accessBootstrap2026Fixture), "device_groups": [[record as AccessDeviceConfig]] };
+}
 
 /* The controller's own envelopes, taken from the live capture of 2026-09-16: a success as its information endpoint answered one, with the document reduced to an
  * empty object because nothing here reads it, and the refusal a door hub answered a close command with. The refusal carries no `data` member at all, which is what

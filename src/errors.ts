@@ -3,6 +3,7 @@
  * errors.ts: The typed error hierarchy for the UniFi Access library.
  */
 import { ACCESS_API_RETRY_PROFILE } from "./settings.ts";
+import type { AccessMethod } from "./protocol/vocabulary.ts";
 
 /**
  * The error model in one sentence: every failure the library raises is a subclass of {@link AccessError}, and the *first* level of the hierarchy answers the only
@@ -254,11 +255,11 @@ export class AccessAuthError extends FatalError {
 export type AccessIdentityLeg = "credentials" | "token";
 
 /**
- * The identity authenticated but lacks the privilege the operation requires (typically a `403`; Access reserves many operations for administrator accounts).
- * Fatal because the same identity will keep being refused. {@link AccessAuthorizationError.identity} names which one fell short, so a caller reporting the failure
- * can point at the remedy that applies. At connect and on a routed command alike, a client whose direct path can serve folds a token refused a permission into
- * credentials-only operation with a warning, so a consumer meets this error for a token only from a token-only client, from a client held to the official API, or
- * from the official facade called directly.
+ * The identity authenticated but lacks the privilege the operation requires (typically a `403`; Access reserves many operations for administrator accounts). Fatal
+ * because the same identity will keep being refused. {@link AccessAuthorizationError.identity} names which one fell short, so a caller reporting the failure can point
+ * at the remedy that applies. At connect, a client whose direct path can serve folds a token refused a permission into credentials-only operation with a warning; on a
+ * routed door command the same client sends its door commands to that path with a warning, and a routed access-method write refused one takes its own direct path
+ * instead, so a consumer meets this error for a token only from a token-only client, from a client held to the official API, or from the official facade called directly.
  *
  * @category Errors
  */
@@ -331,6 +332,32 @@ export class AccessCapabilityError extends FatalError {
   constructor(message: string, options?: { cause?: unknown }) {
 
     super(message, { cause: options?.cause });
+  }
+}
+
+/**
+ * The controller declined an access-method change it accepted. The official settings write answers success for a method whose prerequisites the controller lacks
+ * and leaves the setting as it was, so the routed access-method write reads the setting back, and this is what it raises when the read-back shows the method in
+ * the other state. The controller answered and refused, so the change is not repeated on the other path.
+ *
+ * Fatal because the same change is declined the same way until the controller has what the method needs. The message names the method and the device.
+ *
+ * @category Errors
+ */
+export class AccessDeclinedError extends FatalError {
+
+  /** The access method the change was asked of. */
+  readonly method: AccessMethod;
+
+  /** The state the read-back reports the method in, `true` for enabled - the other state from the one the change asked for. */
+  readonly reported: boolean;
+
+  constructor(message: string, options: { cause?: unknown; method: AccessMethod; reported: boolean }) {
+
+    super(message, { cause: options.cause });
+
+    this.method = options.method;
+    this.reported = options.reported;
   }
 }
 

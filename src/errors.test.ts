@@ -5,7 +5,7 @@
  * its own class name and chains its cause, that the typed fields are carried, and that the errno resolution behaves across the shapes undici and Node produce.
  */
 import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
-  AccessCertificateError, AccessConfigurationError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError,
+  AccessCertificateError, AccessConfigurationError, AccessDeclinedError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError,
   AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError, assertNever, causeChain, controllerReadinessOf, formatErrorChain, isIdentityRefusal,
   isPrivilegeRefusal, isSignInRefusal, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
@@ -34,6 +34,7 @@ describe("AccessError hierarchy", () => {
     new AccessBootstrapError("bootstrap", { stage: "fetch" }),
     new AccessCapabilityError("capability"),
     new AccessConfigurationError("configuration"),
+    new AccessDeclinedError("declined", { method: "nfc", reported: false }),
     new AccessApiError("api", { code: "CODE_PARAMS_INVALID" }),
     new AccessProtocolError("protocol"),
     new AccessRequestError("request", { statusCode: 500 })
@@ -82,6 +83,16 @@ describe("typed error fields and cause chaining", () => {
     assert.ok(Object.is(new AccessRequestError("m", { cause: root, statusCode: 500 }).cause, root), "the request error chains its cause");
     assert.ok(Object.is(new AccessStallError("m", { cause: root, silentForMs: 1 }).cause, root), "the stall error chains its cause");
     assert.ok(Object.is(new AccessThrottledError("m", { cause: root, cooldownMs: 1 }).cause, root), "the throttled error chains its cause");
+  });
+
+  test("AccessDeclinedError carries the method and the state the read-back reports, and chains its cause", () => {
+
+    const root = new Error("root cause");
+    const error = new AccessDeclinedError("m", { cause: root, method: "touchPass", reported: true });
+
+    assert.equal(error.method, "touchPass");
+    assert.equal(error.reported, true);
+    assert.ok(Object.is(error.cause, root), "the decline chains its cause");
   });
 
   test("AccessThrottledError carries cooldownMs", () => {

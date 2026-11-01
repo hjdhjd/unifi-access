@@ -10,10 +10,13 @@ import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../off
 import { describe, test } from "node:test";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "./census.ts";
 import { AccessCapabilityError } from "../errors.ts";
+import type { AccessHttpRequestStartPayload } from "../diagnostics.ts";
 import type { AccessOfficialDevice } from "../official/devices.ts";
 import type { Interceptable } from "undici";
 import assert from "node:assert/strict";
+import { channels } from "../diagnostics.ts";
 import { selectHubs } from "../state/selectors.ts";
+import { subscribeTo } from "../testing.helpers.ts";
 
 describe("a token-only client", () => {
 
@@ -276,7 +279,7 @@ describe("a token-only client", () => {
 
   test("refuses every direct-only command in routing's own vocabulary, without a request leaving", async () => {
 
-    /* The commands the Access application's own endpoints alone express. No interceptor is registered for either of them, so the mock's unmatched-request
+    /* The commands the Access application's own endpoints alone express. No interceptor is registered for any of them, so the mock's unmatched-request
      * rejection is what proves nothing was sent - a refusal decided after a request went out would fail here with a network error rather than a capability one.
      */
     const { agent, official } = mockController();
@@ -299,6 +302,32 @@ describe("a token-only client", () => {
         return true;
       }, attempt.label + " should refuse as a capability verdict");
     }
+  });
+
+  test("switches an access method through the official settings write and its read-back, the only path this mode holds", async () => {
+
+    /* The access-method write has an official half, so this mode carries it where it refuses every direct-only command. The mock answers the settings write and
+     * a read-back reporting the method in the state asked for, and rejects anything else, so a write reaching the Access application's own endpoints, or one that
+     * skipped its read-back, fails here.
+     */
+    const { agent, official } = mockController();
+
+    interceptOfficialPass(official);
+    official.intercept({ method: "PUT", path: DEVICES_PATH + "/" + HUB + "/settings" }).reply(200, JSON.stringify({ code: "SUCCESS", data: {}, msg: "success" }));
+    official.intercept({ method: "GET", path: DEVICES_PATH + "/" + HUB + "/settings" })
+      .reply(200, JSON.stringify({ code: "SUCCESS", data: { "access_methods": { nfc: { enabled: "no" } }, "device_id": HUB }, msg: "success" }));
+
+    await using client = (await connectCapturing(agent, { token: "t0ken" })).client;
+    const device = present(client.device(HUB), "the hub");
+    const starts: AccessHttpRequestStartPayload[] = [];
+
+    // The capture opens once the connect's own reads are done, so anything it records is a request the write itself started.
+    using startSub = subscribeTo(channels.httpRequestStart, (message) => void starts.push(message));
+
+    await device.setAccessMethod("nfc", false);
+
+    assert.deepEqual(starts.map((start) => start.method), [ "PUT", "GET" ], "the write went out, and then its read-back");
+    agent.assertNoPendingInterceptors();
   });
 
   test("connects with an empty inventory when the token is refused the device listing, saying so once", async () => {

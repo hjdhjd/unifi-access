@@ -441,8 +441,10 @@ describe("EventStream", () => {
       const packets = collect(stream, "packet");
       const raw = collect(stream, "rawPacket");
 
-      // A newer-dialect device update whose payload carries fields the translation allowlist deliberately excludes. The raw rail is the only place a consumer can
-      // still see them, so it must deliver the payload verbatim rather than a re-serialization of what survived translation.
+      /* A newer-dialect device update whose payload carries fields the translation allowlist deliberately excludes, and the access-method map the translation
+       * reshapes. The raw rail is the only place a consumer can still see the excluded fields, and the one place the map arrives in its own wire shape, so it must
+       * deliver the payload verbatim rather than a re-serialization of what survived translation.
+       */
       const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === "aabbcc000002"),
         "the v2 reader update carrying the excluded payload fields");
 
@@ -453,10 +455,10 @@ describe("EventStream", () => {
       assert.equal(rawData["name"], "Test Name 68");
       assert.equal(rawData["cap"], null);
       assert.ok(Array.isArray(rawData["settings"]), "the reduced settings projection reaches consumers on the raw rail");
-      assert.notEqual(rawData["access_method"], undefined);
+      assert.deepEqual(rawData["access_method"], packet.data?.["access_method"], "the map arrives as the wire sent it, scrubbed pin entry and all");
       assert.notEqual(rawData["direction"], undefined);
 
-      // The same fields are absent from the classified payload, which is what makes the raw rail the one carrier for them.
+      // The excluded fields are absent from the classified payload, which is what makes the raw rail the one carrier for them.
       const [event] = first(packets);
 
       assert.equal(event.kind, "deviceChanged");

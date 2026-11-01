@@ -20,7 +20,7 @@ the controller's handle for it and the value every assignment endpoint takes.
 | <a id="display_id"></a> `display_id` | `readonly` | `string` |
 | <a id="nfc_id"></a> `nfc_id` | `readonly` | `string` |
 | <a id="note"></a> `note` | `readonly` | `string` |
-| <a id="status"></a> `status` | `readonly` | \| `string` & \{ \} \| `"assigned"` \| `"deleted"` \| `"disable"` \| `"loss"` \| `"pending"` |
+| <a id="status"></a> `status` | `readonly` | \| `string` & \{ \} \| `"disable"` \| `"assigned"` \| `"deleted"` \| `"loss"` \| `"pending"` |
 | <a id="token"></a> `token` | `readonly` | `string` |
 | <a id="user"></a> `user` | `readonly` | [`AccessOfficialNfcCardUser`](AccessOfficialNfcCardUser.md) |
 | <a id="user_id"></a> `user_id` | `readonly` | `string` |

@@ -1,13 +1,14 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * devices.test.ts: Unit tests for the official API's device domain. This domain's non-obvious wire shapes are asserted here: the grouped device payload the
- * reference's own schema table describes flat, and the access-method map that is sparse rather than complete.
+ * reference's own schema table describes flat, and the access-method map that is sparse rather than complete, together with the reading that turns that map into
+ * each access method's state by name.
  */
-import type { AccessOfficialAccessMethodFace, AccessOfficialAccessMethodFaceUpdate, AccessOfficialAccessMethodValue } from "./devices.ts";
+import type { AccessOfficialAccessMethodFace, AccessOfficialAccessMethodFaceUpdate, AccessOfficialAccessMethodValue, AccessOfficialDeviceSettings } from "./devices.ts";
+import { OfficialDevices, accessMethodStates } from "./devices.ts";
 import { PATH_ID, PATH_ID_ENCODED, VOID_OK, describeDomainTable, domainRig, officialPath } from "./domain.helpers.ts";
 import { describe, test } from "node:test";
 import type { DomainRow } from "./domain.helpers.ts";
-import { OfficialDevices } from "./devices.ts";
 import assert from "node:assert/strict";
 
 // Transcribed from the same live capture as devices.fixtures.ts, trimmed to one representative device per door group.
@@ -143,5 +144,54 @@ describe("OfficialDevices vocabularies", () => {
 
     assert.deepEqual([ undocumentedLevel, undocumentedDistance, outsideLevel, outsideDistance ], [ "maximum", "adjacent", "maximum", "adjacent" ]);
     assert.deepEqual(literals, [ "high", "medium", "no", "far", "medium", "near" ]);
+  });
+});
+
+describe("accessMethodStates", () => {
+
+  // A specimen as the domain's own settings read hands it over, which is what a consumer reading the settings passes to the reading.
+  const read = async (specimen: object): Promise<AccessOfficialDeviceSettings> => {
+
+    const rig = domainRig((options) => new OfficialDevices(options));
+
+    rig.pool.intercept({ method: "GET", path: officialPath("/devices/d-1/settings") })
+      .reply(200, { "code": "SUCCESS", "data": specimen, "msg": "success" });
+
+    return rig.domain.fetchSettings("d-1");
+  };
+
+  test("reads the hub, which lists nothing, as no method at all rather than as every method switched off", async () => {
+
+    assert.deepEqual(accessMethodStates(await read(HUB_SETTINGS)), {});
+  });
+
+  test("reads the Ultra's mobile unlock from bt_button and its TouchPass from touch_pass, and gives a method it does not report no entry", async () => {
+
+    assert.deepEqual(accessMethodStates(await read(ULTRA_SETTINGS)), { mobile: true, nfc: true, touchPass: false });
+  });
+
+  test("reads every method the G2 Pro reports, each by its own name", async () => {
+
+    assert.deepEqual(accessMethodStates(await read(G2PRO_SETTINGS)), { face: true, mobile: true, nfc: true, pin: false, qr: true, touchPass: false });
+  });
+
+  test("judges mobile unlock on its first official key alone", () => {
+
+    // The second key mobile unlock spans disagreeing with the first changes nothing, and reporting the second alone does not list the method.
+    const split: AccessOfficialDeviceSettings = { "access_methods": { "bt_button": { enabled: "no" }, "bt_tap": { enabled: "yes" } }, "device_id": "d-1" };
+    const secondOnly: AccessOfficialDeviceSettings = { "access_methods": { "bt_tap": { enabled: "yes" } }, "device_id": "d-1" };
+
+    assert.deepEqual(accessMethodStates(split), { mobile: false });
+    assert.deepEqual(accessMethodStates(secondOnly), {});
+  });
+
+  test("reads a value outside the pair as a method the settings do not list, rather than as one switched off", async () => {
+
+    /* The settings read hands the response over unvalidated, so a value the type does not admit can still arrive at runtime. It establishes no reading, on the
+     * rule the configuration-row reading applies too, and the method with an in-pair value beside it still reads as it reports.
+     */
+    const outside = { "access_methods": { "nfc": { "enabled": "true" }, "qr_code": { "enabled": "no" } }, "device_id": "d-1" };
+
+    assert.deepEqual(accessMethodStates(await read(outside)), { qr: false });
   });
 });

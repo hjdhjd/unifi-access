@@ -93,7 +93,9 @@ The discriminated union of every notification the library models, produced by th
 **State transitions** advance the modeled state:
 
 - `deviceChanged` - a device record changed. Both notification dialects produce this one kind, with the newer dialect's payload already translated into the
-  bootstrap vocabulary, so a consumer never sees the dialect split.
+  bootstrap vocabulary, so a consumer reads one set of field names whichever dialect arrived. The configuration rows are where the two still differ in shape:
+  the original dialect delivers each row whole, while the newer dialect's access-method map arrives as rows carrying only a key and a value, with no tag, no
+  device identity, and no timestamps.
 - `deviceRemoved` - a device was removed. Identity-only by design: the older dialect sends a record here and the newer one sends nothing, and the removal needs
   only the identity. The full payload the older dialect sends stays available on the raw packet rail.
 - `locationChanged` - a door, floor, or building record changed, again with the newer dialect translated.
