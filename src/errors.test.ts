@@ -6,10 +6,13 @@
  */
 import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
   AccessCertificateError, AccessConfigurationError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError,
-  AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError, assertNever, causeChain, formatErrorChain, isIdentityRefusal, isPrivilegeRefusal,
-  isSignInRefusal, resolveErrnoCause } from "./errors.ts";
+  AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError, assertNever, causeChain, controllerReadinessOf, formatErrorChain, isIdentityRefusal,
+  isPrivilegeRefusal, isSignInRefusal, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
+import { ACCESS_API_RETRY_PROFILE } from "./settings.ts";
+import type { AccessControllerReadiness } from "./index.ts";
 import assert from "node:assert/strict";
+import { controllerReadinessOf as barrelControllerReadinessOf } from "./index.ts";
 import { errnoError } from "homebridge-plugin-utils/testing";
 
 describe("AccessError hierarchy", () => {
@@ -458,6 +461,59 @@ describe("isSignInRefusal", () => {
 
     assert.equal(isSignInRefusal(new Error("refused")), false, "a plain error is not a refusal whatever its message says");
     assert.equal(isSignInRefusal(null), false);
+  });
+});
+
+describe("controllerReadinessOf", () => {
+
+  // A status error as the transport classifies one, and the bootstrap wrapper the direct document fetch puts around it.
+  const statusError = (statusCode: number): AccessRequestError => new AccessRequestError("The UniFi Access controller answered the request with HTTP status " +
+    String(statusCode) + ".", { statusCode });
+  const wrapped = (cause: unknown): AccessBootstrapError => new AccessBootstrapError("Unable to fetch the controller configuration.", { cause, stage: "fetch" });
+
+  test("reads a 429 as a controller limiting requests and each status the transport retries as one not ready yet, bare or wrapped", () => {
+
+    assert.equal(controllerReadinessOf(statusError(429)), "limiting");
+    assert.equal(controllerReadinessOf(wrapped(statusError(429))), "limiting", "a 429 is read through the bootstrap wrapper");
+
+    for(const statusCode of ACCESS_API_RETRY_PROFILE.statusCodes) {
+
+      assert.equal(controllerReadinessOf(statusError(statusCode)), "not-ready", "a " + String(statusCode) + " is a controller not ready yet");
+      assert.equal(controllerReadinessOf(wrapped(statusError(statusCode))), "not-ready", "and so is a wrapped " + String(statusCode));
+    }
+  });
+
+  test("names nothing for a refused sign-in, a status the transport does not retry, or a controller that could not be reached, bare or wrapped", () => {
+
+    const others: readonly { error: Error; name: string }[] = [
+
+      { error: new AccessAuthError("auth", { identity: "credentials", statusCode: 401 }), name: "a refused identity" },
+      { error: new AccessAuthorizationError("authz", { identity: "credentials", statusCode: 403 }), name: "a refused privilege" },
+      { error: statusError(501), name: "a 501, which the transport does not retry" },
+      { error: new AccessNetworkError("net", { code: "ECONNREFUSED" }), name: "an unreachable controller" }
+    ];
+
+    for(const { error, name } of others) {
+
+      assert.equal(controllerReadinessOf(error), null, name + " names no readiness");
+      assert.equal(controllerReadinessOf(wrapped(error)), null, "and neither does " + name + " in a bootstrap wrapper");
+    }
+  });
+
+  test("opens a bootstrap error alone, and only the one handed in", () => {
+
+    assert.equal(controllerReadinessOf(new AccessNetworkError("net", { cause: statusError(503) })), null, "a wrapper of any other class is read as itself");
+    assert.equal(controllerReadinessOf(wrapped(wrapped(statusError(503)))), null, "and a status two bootstrap errors down is past the one wrapper opened");
+    assert.equal(controllerReadinessOf(null), null);
+  });
+
+  test("the barrel publishes the very function and the readiness it answers in", () => {
+
+    // Typedoc reads the barrel alone, so a symbol missing from it has no page and no consumer. The binding's type is the published one, which the typecheck holds.
+    const reading: AccessControllerReadiness | null = barrelControllerReadinessOf(statusError(429));
+
+    assert.equal(Object.is(barrelControllerReadinessOf, controllerReadinessOf), true);
+    assert.equal(reading, "limiting");
   });
 });
 

@@ -4,15 +4,15 @@
  */
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_RETRY_PROFILE, ACCESS_API_TIMEOUT } from "../settings.ts";
 import { AccessAbortedError, AccessAuthError, AccessAuthorizationError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessRequestError,
-  AccessThrottledError, AccessTimeoutError, assertNever } from "../errors.ts";
+  AccessThrottledError, AccessTimeoutError, assertNever, readinessOfStatus } from "../errors.ts";
 import type { AccessHttpRequestCommon, AccessHttpRequestEndOutcome, AccessHttpRequestEndPayload, AccessHttpRequestStartPayload } from "../diagnostics.ts";
 import type { AccessIdentityLeg, FatalError } from "../errors.ts";
+import type { Dispatcher, RetryHandler } from "undici";
 import { Pool, errors, interceptors, request } from "undici";
 import { armDeadline, wallClock } from "../clock.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { Clock } from "../clock.ts";
-import type { Dispatcher } from "undici";
 import { EventBus } from "../event-bus.ts";
 import type { IncomingHttpHeaders } from "node:http";
 import type { OwnedDispatcher } from "./connector.ts";
@@ -133,18 +133,77 @@ export function responseOk(statusCode: number | undefined): boolean {
 }
 
 /**
- * Determine whether a response proves the controller reachable, which is the only question the throttle breaker asks. A transport-level fault or a 5xx means the
- * controller could not serve the request; any other answer came from a controller that was there to send it, so it counts as reachable whatever it said. That is
- * what keeps session validity and permission scope out of the breaker: a run of refusals aimed at one bad credential says nothing about whether the controller is
- * up.
+ * Determine whether a request's outcome shows the controller serving, which is the only question the throttle breaker asks. No answer, a 5xx and a 429 are
+ * failures: the controller could not be reached, could not serve the request, or is limiting requests and asked to be asked less often. Any other answer came from
+ * a controller that was there and served it, a 401, a 403 or a 404 among them, so it counts as serving whatever it said. That is what keeps session validity,
+ * permission scope and a missing resource out of the breaker: a run of refusals aimed at one bad credential or one wrong path says nothing about whether the
+ * controller is up.
  *
  * @param statusCode - The status code to test, or `undefined` when no response was received.
  *
- * @returns `true` for any defined status below 500, `false` for `undefined` and for 5xx.
+ * @returns `true` for any defined status below 500 that is not a controller limiting requests, `false` for `undefined`, for 429 and for 5xx.
  */
-export function controllerReachable(statusCode: number | undefined): boolean {
+export function controllerServing(statusCode: number | undefined): boolean {
 
-  return (statusCode !== undefined) && (statusCode < 500);
+  return (statusCode !== undefined) && (statusCode < 500) && (readinessOfStatus(statusCode) !== "limiting");
+}
+
+/**
+ * The owned pool's retry policy: undici's own decision, except that an answer whose headers carry a Retry-After key is never retried. A key that is present is
+ * the controller's hint whatever its value, an empty one included, so the policy calls back at once and the answer returns to its caller with the hint among its
+ * headers: a hinted wait of a second or more cannot fit inside the request deadline, and a caller on a reconnect schedule is the one placed to wait it out.
+ *
+ * Every other failure takes undici's default decision, made from the options the handler hands the policy: a code undici does not retry, a method or a status
+ * outside the retried sets, or an attempt past `maxRetries` gives up, and anything else waits `minTimeout` grown by `timeoutFactor` per attempt, up to
+ * `maxTimeout`. The decision is restated here because undici publishes no handle on its own, and the suite holds the two equal over the answers that carry no hint.
+ *
+ * The wait is armed on the platform's `setTimeout` rather than on the injected clock, the one timer the library arms outside it. Undici's own default waits on the
+ * platform timer, and the owned-pool suites drive a transport on a test clock while its retries run in real time, so a wait on the injected clock would run those
+ * rows on virtual time instead. The handle is returned because it is what lets undici release the wait when the request is aborted during it.
+ *
+ * @param error    - The failure the handler asks about: an answer it read as a failure, or a connection fault.
+ * @param context  - The handler's attempt counter and the request's options, the merged retry options among them.
+ * @param callback - The handler's continuation, which retries on `null` and gives up, returning the answer, on the failure itself.
+ *
+ * @returns The timer the wait is armed on, or `undefined` when the policy decided at once.
+ */
+export function retryUnlessHinted(error: Error, context: RetryHandler.RetryContext, callback: RetryHandler.OnRetryCallback): NodeJS.Timeout | undefined {
+
+  if((error instanceof errors.RequestRetryError) && Object.hasOwn(error.headers, "retry-after")) {
+
+    callback(error);
+
+    return undefined;
+  }
+
+  const { opts, state } = context;
+  const { errorCodes, maxRetries, maxTimeout, methods, minTimeout, statusCodes, timeoutFactor } = opts.retryOptions ?? {};
+
+  // Undici's handler fills every one of these before it asks a policy, so a decision missing one is reached by no runtime, and it gives the request up rather than
+  // restating a default of undici's own.
+  if((errorCodes === undefined) || (maxRetries === undefined) || (maxTimeout === undefined) || (minTimeout === undefined) || (timeoutFactor === undefined)) {
+
+    callback(error);
+
+    return undefined;
+  }
+
+  // The default's own tests, in its own order: a code undici does not retry, a method or a status outside the retried sets, and an attempt past the ceiling each
+  // give up. Either member is read off the failure as whatever it carries, because a connection fault carries a code and no status.
+  const code: unknown = ("code" in error) ? error.code : undefined;
+  const statusCode: unknown = ("statusCode" in error) ? error.statusCode : undefined;
+
+  if((Boolean(code) && (code !== "UND_ERR_REQ_RETRY") && !errorCodes.some((retried) => (retried === code))) ||
+    (Array.isArray(methods) && !methods.includes(opts.method)) ||
+    ((statusCode !== undefined) && (statusCode !== null) && Array.isArray(statusCodes) && !statusCodes.some((retried) => (retried === statusCode))) ||
+    (state.counter > maxRetries)) {
+
+    callback(error);
+
+    return undefined;
+  }
+
+  return setTimeout(() => callback(null), Math.min(minTimeout * (timeoutFactor ** (state.counter - 1)), maxTimeout));
 }
 
 /**
@@ -208,7 +267,7 @@ function classifyStatus(statusCode: number, headers: IncomingHttpHeaders, body: 
 
     default:
 
-      return new AccessRequestError("The UniFi Access controller returned an error response.",
+      return new AccessRequestError("The UniFi Access controller answered the request with HTTP status " + String(statusCode) + ".",
         { body: body.length ? body.toString("utf8") : undefined, headers: flattenHeaders(headers), statusCode });
   }
 }
@@ -302,7 +361,8 @@ export class AccessResponse {
    *
    * @returns `this`, for chaining.
    *
-   * @throws {@link AccessAuthError} on 401, {@link AccessAuthorizationError} on 403, {@link AccessRequestError} on any other non-2xx.
+   * @throws {@link AccessAuthError} on 401, {@link AccessAuthorizationError} on 403, {@link AccessRequestError} on any other non-2xx, carrying the status, body
+   *   and headers the controller answered with: a retried status's last answer, a 429 and an answer carrying a Retry-After hint among them.
    */
   ensureOk(): this {
 
@@ -323,15 +383,17 @@ export class AccessResponse {
  *
  * The breaker is the canonical three-state model - `closed -> open -> half-open -> closed`:
  *
- * - **closed:** normal operation. Each completed request books an outcome, and {@link controllerReachable} is the whole test: any answer the controller sent
- *   resets the consecutive-failure count, while a transport exception or a 5xx increments it - a controller that refuses a request is still a controller that
- *   answered. Crossing {@link ACCESS_API_ERROR_LIMIT} consecutive failures trips the breaker open.
+ * - **closed:** normal operation. Each completed request books an outcome, and {@link controllerServing} is the whole test: an answer from a controller that
+ *   served it, a 4xx other than a 429 among them, resets the consecutive-failure count, while a transport exception, a 5xx or a 429 increments it - a controller
+ *   that refuses a request is still a controller that answered, while one limiting requests has asked to be asked less often. Crossing
+ *   {@link ACCESS_API_ERROR_LIMIT} consecutive failures trips the breaker open.
  * - **open:** for {@link ACCESS_API_RETRY_INTERVAL} seconds, `send` throws {@link AccessThrottledError} before dispatching - no traffic reaches the controller.
  * - **half-open:** once the cooldown elapses, requests are allowed through again as recovery probes. The first success closes the breaker (and emits
  *   `throttleExited` only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
  *
- * Reachability lives here; session validity lives in {@link AuthSession}. The breaker never calls login to probe recovery - the next real request is the probe, and
- * the independent 401-relogin concern is the injected `onUnauthorized` hook. The clock is injected so every transition is deterministically testable.
+ * Whether the controller is serving lives here; session validity lives in {@link AuthSession} and a missing resource with its caller. The breaker never calls login
+ * to probe recovery - the next real request is the probe, and the independent 401-relogin concern is the injected `onUnauthorized` hook. The clock is injected so
+ * every transition is deterministically testable.
  *
  * @category Transport
  */
@@ -416,7 +478,8 @@ export class Transport implements AsyncDisposable {
    * @returns The response.
    *
    * @throws {@link AccessThrottledError} while the breaker is open and cooling; {@link AccessTimeoutError}, {@link AccessAbortedError}, or
-   *   {@link AccessNetworkError} on transport-level failures.
+   *   {@link AccessNetworkError} on transport-level failures. A status the controller answered is never thrown here: on the owned pool it returns as the response,
+   *   a retried status after its last attempt and a 429 or an answer carrying a Retry-After hint at once, for {@link AccessResponse.ensureOk} to classify.
    */
   async send(url: string, opts: SendOptions = {}): Promise<AccessResponse> {
 
@@ -463,7 +526,7 @@ export class Transport implements AsyncDisposable {
         continue;
       }
 
-      this.#book(controllerReachable(result.statusCode));
+      this.#book(controllerServing(result.statusCode));
 
       return new AccessResponse(result.statusCode, result.headers, result.body, this.#identity);
     }
@@ -752,10 +815,16 @@ export class Transport implements AsyncDisposable {
 
         return new AccessNetworkError("The request was interrupted because the connection pool was reset.", { cause: error, code: failure.code });
 
-      // The retry interceptor exhausted its attempts without a usable response.
+      /* The retry interceptor raises RequestRetryError for a response it could not hand over whole. On the owned pool, which runs it with `throwOnError` off, that
+       * is a response whose bytes it cannot reconcile with the request: a resumed retry the controller answered without the matching range, or a body whose length
+       * disagrees with the length its headers declared. On an injected dispatcher whose own retry interceptor keeps undici's default, it is also a status that
+       * interceptor retries, once it makes no further attempt. Either way no usable response arrived, so the failure is classified with the connection faults a
+       * later attempt can clear, in a sentence that holds for both.
+       */
       case "retries-exhausted":
 
-        return new AccessNetworkError("The UniFi Access controller could not be reached after exhausting retries.", { cause: error, code: failure.code });
+        return new AccessNetworkError("The request to the UniFi Access controller ended in its retry handling without a usable response.",
+          { cause: error, code: failure.code });
 
       /* The peer's certificate failed the platform's verification, so the failure names the listener it came from and the address that was dialed rather than
        * reporting an unreachable host. Which listener that is comes from the identity this transport was built with, because each identity addresses exactly one of
@@ -803,6 +872,17 @@ export class Transport implements AsyncDisposable {
    * linger before it is retired), a fixed user-agent, the signal gate, and the exponential-backoff retry interceptor composed from ACCESS_API_RETRY_PROFILE, where
    * the retried verbs and statuses are documented beside their values. The profile's lists are copied into the interceptor's options because undici types them as
    * mutable arrays and the profile holds them readonly.
+   *
+   * The interceptor runs with `throwOnError` off and with retryUnlessHinted as its policy, both set here rather than in the profile because they say how the pool
+   * delivers an answer rather than which answers it retries. Off, the interceptor never discards an answer: once the retries run out, and at once for a status
+   * outside the set, a method outside the retried verbs or an answer carrying a Retry-After hint, the controller's last response returns to `send` with its body
+   * and headers, and `ensureOk` is where it becomes the classified error. Every attempt and its backoff run inside the one request deadline `#dispatch` arms, so a
+   * controller too slow to answer every attempt inside it ends the request as a timeout rather than as a response.
+   *
+   * The trade is a held connection. While a retry waits out its backoff, the interceptor keeps the answer's connection paused until the policy decides, so on
+   * HTTP/1.1 a retrying request holds one of the pool's connections through every wait and a burst of retrying requests can leave a later request queued past its
+   * deadline, while on HTTP/2 a paused stream leaves the session's other streams free. Whether a controller's listener negotiates HTTP/2 is measured against a live
+   * controller rather than here.
    */
   #buildPool(): OwnedDispatcher {
 
@@ -840,8 +920,8 @@ export class Transport implements AsyncDisposable {
     const allowH2 = true;
     const connector = createOwnedConnector({ allowH2, verifyTls: this.#verifyTls });
     const dispatcher = new Pool(this.#origin, { allowH2, clientTtl: 60000, connect: connector.connect, connections: 5 })
-      .compose(userAgent, signalGate, interceptors.retry({ ...ACCESS_API_RETRY_PROFILE, methods: [...ACCESS_API_RETRY_PROFILE.methods],
-        statusCodes: [...ACCESS_API_RETRY_PROFILE.statusCodes] }));
+      .compose(userAgent, signalGate, interceptors.retry({ ...ACCESS_API_RETRY_PROFILE, methods: [...ACCESS_API_RETRY_PROFILE.methods], retry: retryUnlessHinted,
+        statusCodes: [...ACCESS_API_RETRY_PROFILE.statusCodes], throwOnError: false }));
 
     return { connector, dispatcher };
   }

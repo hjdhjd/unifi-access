@@ -3,12 +3,13 @@
  * http.test.ts: Unit tests for the HTTP transport - the send/request surface, AccessResponse decoding and ensureOk classification, the status predicates, the base
  * and auth headers, the 401-relogin retry, transport-error classification (timeout vs caller-abort vs network), the connection dial, a request in flight at a
  * teardown, the full throttle circuit-breaker state machine (closed -> open -> half-open -> closed), the diagnostics channels, dispatcher ownership, certificate
- * verification, and the event rails.
+ * verification, the owned pool's retry policy and its handling of the statuses it retries, and the event rails.
  *
  * Most groups are driven deterministically: an undici MockAgent injects responses and failures without a live controller, and a fake Clock advances breaker time
  * without real-time waits. The injected dispatcher and clock let these tests assert the controller's throttle and retry behavior - the established behavioral
  * contract - exactly and without flakiness. What a MockAgent cannot reach runs over real sockets instead, against loopback peers and through a transport that
- * builds its own pool: the connection dial, a request in flight on an established connection at a reset or a disposal, and certificate verification.
+ * builds its own pool: the connection dial, a request in flight on an established connection at a reset or a disposal, certificate verification, and what the
+ * retry interceptor does with a status the peer answers.
  */
 import { ACCESS_API_ERROR_LIMIT, ACCESS_API_RETRY_INTERVAL, ACCESS_API_RETRY_PROFILE, ACCESS_API_TIMEOUT } from "../settings.ts";
 import { AccessAbortedError, AccessAuthError, AccessCertificateError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessThrottledError,
@@ -17,13 +18,16 @@ import type { AccessHttpRequestEndPayload, AccessHttpRequestStartPayload, Access
   AccessHttpThrottleExitedPayload } from "../diagnostics.ts";
 import { DIAL_SETTLE_BOUND_MS, createHttpsLoopback, createResettingLoopback, createSilentLoopback, createUnansweringHttpsLoopback, elapsedSince,
   pendingThroughRedialWait } from "./loopback.helpers.ts";
+import { RetryHandler, errors } from "undici";
 import { TestClock, capturingLog, errnoError, expectAt, loggedAt, settle, silentLog, waitUntil } from "homebridge-plugin-utils/testing";
-import { Transport, controllerReachable, responseOk } from "./http.ts";
+import { Transport, controllerServing, responseOk, retryUnlessHinted } from "./http.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
+import type { Dispatcher } from "undici";
+import type { IncomingHttpHeaders } from "node:http";
+import type { MockTimers } from "node:test";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
-import { errors } from "undici";
 import { setTimeout as setTimeoutAsync } from "node:timers/promises";
 import { subscribeTo } from "../testing.helpers.ts";
 import { wallClock } from "../clock.ts";
@@ -43,6 +47,57 @@ async function sendFailures(transport: Transport, target: string, count: number)
     // eslint-disable-next-line no-await-in-loop
     await transport.send(target);
   }
+}
+
+/* The deadline an owned-pool row gives a request whose attempts and backoff run in real time. Every retry the profile allows comes to most of the default deadline,
+ * which leaves little margin on a loaded machine, so such a row measures the count of attempts on a deadline of its own, and the fit inside the default deadline is
+ * the live controller's to show.
+ */
+const RAISED_DEADLINE_MS = 10000;
+
+// The retry options a policy is handed: the pool's own profile with the members undici's handler fills before it asks, so either decision a row compares reads
+// every one of them.
+const RETRY_OPTIONS: RetryHandler.RetryOptions = { ...ACCESS_API_RETRY_PROFILE, errorCodes: [ "ECONNRESET", "UND_ERR_SOCKET" ],
+  methods: [...ACCESS_API_RETRY_PROFILE.methods], retryAfter: true, statusCodes: [...ACCESS_API_RETRY_PROFILE.statusCodes] };
+
+// The context a policy is asked in: the attempt it is deciding and the request's options, the merged retry options among them.
+function retryContext(counter: number, options: { method?: Dispatcher.HttpMethod; retryOptions?: RetryHandler.RetryOptions } = {}): RetryHandler.RetryContext {
+
+  return { opts: { method: options.method ?? "GET", path: "/x", retryOptions: options.retryOptions ?? RETRY_OPTIONS }, state: { counter } };
+}
+
+/* A RequestRetryError as the retry handler builds one for an answer it read as a failure. At runtime the constructor's third argument is a record of the answer's
+ * headers and the attempt count, which undici's declarations type as the headers alone, so the record is handed through the one widening that names the mismatch.
+ */
+function retryError(statusCode: number, headers: Record<string, string> = {}): errors.RequestRetryError {
+
+  return new errors.RequestRetryError("Request failed", statusCode, { data: { count: 1 }, headers } as unknown as IncomingHttpHeaders);
+}
+
+/* One retry decision under mocked timers, read as what it did: gave up or retried at once, or armed a retry that ran once the delay this measures had elapsed. The
+ * delay is measured by stepping the timers a millisecond at a time, bounded by the profile's longest wait, past which a decision that never settled reads as one.
+ */
+function decide(timers: MockTimers, policy: RetryHandler.RetryCallback, error: Error,
+  context: RetryHandler.RetryContext): { delayMs: number; outcome: "gave up" | "retried" | "unsettled" } {
+
+  const outcomes: (Error | null | undefined)[] = [];
+
+  policy(error, context, (result) => void outcomes.push(result));
+
+  let delayMs = 0;
+
+  while((outcomes.length === 0) && (delayMs <= ACCESS_API_RETRY_PROFILE.maxTimeout)) {
+
+    timers.tick(1);
+    delayMs++;
+  }
+
+  if(outcomes.length === 0) {
+
+    return { delayMs, outcome: "unsettled" };
+  }
+
+  return { delayMs, outcome: ((outcomes[0] === null) || (outcomes[0] === undefined)) ? "retried" : "gave up" };
 }
 
 describe("Transport", () => {
@@ -252,11 +307,12 @@ describe("Transport", () => {
       assert.deepEqual([ undefined, 199, 200, 299, 300 ].map(responseOk), [ false, false, true, true, false ]);
     });
 
-    test("controllerReachable answers true for any defined status below 500", () => {
+    test("controllerServing answers true for any defined status below 500 but a 429", () => {
 
-      // A refusal came from a controller that was there to refuse, so the breaker counts it as reachable; only a 5xx or no answer at all says the controller
-      // could not serve the request.
-      assert.deepEqual([ undefined, 499, 500, 501, 200 ].map(controllerReachable), [ false, true, false, false, true ]);
+      // A refusal came from a controller that was there to refuse, so the breaker counts it as serving; a 5xx or no answer at all says the controller could not
+      // serve the request, and a 429 says it is limiting requests. The rate limit's neighbors are listed beside it, so a boundary that widens past it shows.
+      assert.deepEqual([ undefined, 200, 401, 404, 428, 429, 430, 499, 500, 501 ].map(controllerServing),
+        [ false, true, true, true, true, false, true, true, false, false ]);
     });
   });
 
@@ -483,15 +539,15 @@ describe("Transport", () => {
       const { host, pool, transport } = makeMockTransport();
       const exhausted = new errors.RequestRetryError("retry limit reached", 503, {});
 
-      // The retry interceptor gave up without ever producing a usable response, so the controller was unreachable for the whole attempt window rather than for one
-      // request.
+      // An injected dispatcher whose own retry interceptor keeps undici's default gave up without handing over a usable response, which is the shape the arm is
+      // worded for beside the owned pool's range and length mismatches.
       pool.intercept({ method: "GET", path: "/x" }).replyWithError(exhausted);
 
       await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => {
 
         assert.ok(error instanceof AccessNetworkError);
         assert.equal(error.cause, exhausted);
-        assert.match(error.message, /exhausting retries/);
+        assert.match(error.message, /ended in its retry handling without a usable response/);
 
         return true;
       });
@@ -935,9 +991,9 @@ describe("Transport", () => {
 
       const { host, pool, transport } = makeMockTransport();
 
-      /* The breaker measures reachability, so an identity the controller keeps rejecting must not read as a controller that is down. This drives the trip threshold
-       * twice over on the two statuses a wrong credential or an under-scoped token produces, and the consecutive count never accumulates because every one of those
-       * answers came from a controller that was there to answer.
+      /* The breaker measures whether the controller is serving, so an identity the controller keeps rejecting must not read as a controller that is down. This
+       * drives the trip threshold twice over on the two statuses a wrong credential or an under-scoped token produces, and the consecutive count never accumulates
+       * because every one of those answers came from a controller that was there to answer.
        */
       pool.intercept({ method: "GET", path: "/no" }).reply(401, "denied").times(ACCESS_API_ERROR_LIMIT);
       pool.intercept({ method: "GET", path: "/no" }).reply(403, "forbidden").times(ACCESS_API_ERROR_LIMIT);
@@ -966,6 +1022,31 @@ describe("Transport", () => {
 
       assert.equal(transport.isThrottled, true, "consecutive 503s are unreachability and must trip the breaker");
       assert.equal(entered, 1, "throttleEntered fires exactly once, on the trip");
+    });
+
+    test("consecutive 429s open the breaker, a controller limiting requests counting as one not serving", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+
+      // A rate limit is the controller asking to be asked less often, which is the shape the cooldown exists for, so a run of them backs the client off as a run
+      // of server errors does rather than resetting the count on each answer.
+      pool.intercept({ method: "GET", path: "/limited" }).reply(429, "slow down").times(ACCESS_API_ERROR_LIMIT);
+
+      await sendFailures(transport, url(host, "/limited"), ACCESS_API_ERROR_LIMIT);
+
+      assert.equal(transport.isThrottled, true, "consecutive 429s are a controller limiting requests and must trip the breaker");
+    });
+
+    test("consecutive 404s leave the breaker closed, a missing resource being an answer from a controller that served it", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+
+      // A 404 the controller kept returning reaches the breaker as the answer it was, and a run of them aimed at one wrong path says nothing about the controller.
+      pool.intercept({ method: "GET", path: "/missing" }).reply(404, "not found").times(ACCESS_API_ERROR_LIMIT);
+
+      await sendFailures(transport, url(host, "/missing"), ACCESS_API_ERROR_LIMIT);
+
+      assert.equal(transport.isThrottled, false, "consecutive 404s are answers from a controller that served them");
     });
 
     test("a success resets the consecutive-failure count", async () => {
@@ -1066,7 +1147,7 @@ describe("Transport", () => {
       const trial = await transport.send(url(host, "/f"));
 
       assert.equal(trial.statusCode, 403);
-      assert.equal(transport.isThrottled, false, "an answered request closes the breaker whatever the answer said");
+      assert.equal(transport.isThrottled, false, "a request the controller served closes the breaker, whatever the refusal said");
       assert.equal(exited, 1, "throttleExited fires exactly once, on the closing edge");
 
       // Closed for real, not just by the flag: the next ordinary request dispatches instead of being refused locally.
@@ -1415,6 +1496,174 @@ describe("Transport", () => {
 
         return true;
       });
+    });
+  });
+
+  describe("the owned pool and the statuses it retries", () => {
+
+    test("a GET answered 503 on every attempt returns the last 503 with its body after every attempt the profile allows", async () => {
+
+      // The interceptor retries the profile's ceiling of times after the first attempt and then hands the controller's last answer back, for ensureOk to classify.
+      await using peer = await createHttpsLoopback(() => ({ body: "{\"error\":\"starting\"}", contentType: "application/json", status: 503 }));
+      await using transport = new Transport({ host: peer.host, origin: peer.origin });
+
+      const response = await transport.send(url(peer.host, "/busy"), { timeout: RAISED_DEADLINE_MS });
+
+      assert.equal(response.statusCode, 503);
+      assert.equal(response.text(), "{\"error\":\"starting\"}");
+      assert.equal(peer.hits.length, ACCESS_API_RETRY_PROFILE.maxRetries + 1, "the first attempt and every retry the profile allows");
+      assert.throws(() => response.ensureOk(), { body: "{\"error\":\"starting\"}", name: "AccessRequestError", statusCode: 503 });
+    });
+
+    test("a GET answered 503 twice and then 200 returns the 200 after three requests", async () => {
+
+      await using peer = await createHttpsLoopback((hit) => ((hit <= 2) ? { body: "{}", contentType: "application/json", status: 503 } :
+        { body: "{\"ok\":true}", contentType: "application/json", status: 200 }));
+      await using transport = new Transport({ host: peer.host, origin: peer.origin });
+
+      const response = await transport.send(url(peer.host, "/recovering"));
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(response.json<{ ok: boolean }>(), { ok: true });
+      assert.equal(peer.hits.length, 3);
+    });
+
+    // A rate limit is not retried, hinted or not, so the interceptor hands the first answer straight back with its headers, and the caller reads any hint off them.
+    for(const hint of [ undefined, "30" ]) {
+
+      test("a GET answered 429 " + ((hint === undefined) ? "with no hint" : "hinting " + hint + " seconds") + " returns its AccessRequestError after one request",
+        async () => {
+
+          await using peer = await createHttpsLoopback(() => ({ body: "{\"error\":\"slow down\"}", contentType: "application/json",
+            ...((hint !== undefined) && { headers: { "retry-after": hint } }), status: 429 }));
+          await using transport = new Transport({ host: peer.host, origin: peer.origin });
+
+          await assert.rejects(transport.request(url(peer.host, "/limited"), { timeout: RAISED_DEADLINE_MS }), (error: unknown) => {
+
+            assert.ok(error instanceof AccessRequestError);
+            assert.equal(error.statusCode, 429);
+            assert.equal(error.headers?.["retry-after"], hint, "the controller's hint, or its absence, reaches the caller as it was sent");
+
+            return true;
+          });
+
+          assert.equal(peer.hits.length, 1);
+        });
+    }
+
+    // A status the set retries comes back at once when its answer carries a Retry-After key, because the key's presence is the hint whatever its value says.
+    for(const hint of [ "0", "" ]) {
+
+      test("a GET answered 503 with a Retry-After of " + JSON.stringify(hint) + " returns the 503 after one request", async () => {
+
+        await using peer = await createHttpsLoopback(() => ({ body: "{}", contentType: "application/json", headers: { "retry-after": hint }, status: 503 }));
+        await using transport = new Transport({ host: peer.host, origin: peer.origin });
+
+        const response = await transport.send(url(peer.host, "/hinted"), { timeout: RAISED_DEADLINE_MS });
+
+        assert.equal(response.statusCode, 503);
+        assert.equal(response.header("retry-after") ?? "", hint);
+        assert.equal(peer.hits.length, 1, "a hinted answer is never retried");
+      });
+    }
+
+    test("a PATCH answered 404 returns the 404 with its body after one request", async () => {
+
+      // PATCH is held out of the retried verbs, so the interceptor hands the first answer straight back and send returns it for ensureOk to classify.
+      await using peer = await createHttpsLoopback(() => ({ body: "{\"error\":\"missing\"}", contentType: "application/json", status: 404 }));
+      await using transport = new Transport({ host: peer.host, origin: peer.origin });
+
+      const response = await transport.send(url(peer.host, "/missing"), { method: "PATCH" });
+
+      assert.equal(response.statusCode, 404);
+      assert.equal(response.text(), "{\"error\":\"missing\"}");
+      assert.equal(peer.hits.length, 1);
+    });
+  });
+
+  describe("the owned pool's retry policy", () => {
+
+    test("waits the profile's curve before each retry, and gives up with no timer once the attempts run out", (t) => {
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      const error = retryError(503);
+
+      for(const [ index, delayMs ] of [ 100, 200, 400, 800, 1500 ].entries()) {
+
+        const outcomes: (Error | null | undefined)[] = [];
+        const timer = retryUnlessHinted(error, retryContext(index + 1), (result) => void outcomes.push(result));
+
+        assert.notEqual(timer, undefined, "attempt " + String(index + 1) + " arms its wait on a timer");
+
+        t.mock.timers.tick(delayMs - 1);
+
+        assert.deepEqual(outcomes, [], "attempt " + String(index + 1) + " does not retry before its wait of " + String(delayMs) + " ms has elapsed");
+
+        t.mock.timers.tick(1);
+
+        assert.deepEqual(outcomes, [null], "attempt " + String(index + 1) + " retries once its wait of " + String(delayMs) + " ms has elapsed");
+      }
+
+      const pastCeiling: (Error | null | undefined)[] = [];
+
+      assert.equal(retryUnlessHinted(error, retryContext(6), (result) => void pastCeiling.push(result)), undefined, "the attempt past the ceiling arms no timer");
+      assert.deepEqual(pastCeiling, [error], "and gives up at once with the failure, which returns the answer");
+    });
+
+    test("gives up at once on an answer carrying a Retry-After key, whatever its value", (t) => {
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      for(const hint of [ "30", "0", "", "soon" ]) {
+
+        const error = retryError(503, { "retry-after": hint });
+        const outcomes: (Error | null | undefined)[] = [];
+
+        assert.equal(retryUnlessHinted(error, retryContext(1), (result) => void outcomes.push(result)), undefined, JSON.stringify(hint) + " arms no timer");
+        assert.deepEqual(outcomes, [error], "a Retry-After of " + JSON.stringify(hint) + " gives the answer up at once");
+      }
+    });
+
+    test("decides every answer that carries no hint exactly as undici's own default decision does", (t) => {
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      // Undici publishes no handle on its default decision, so it is reached by the description of the symbol it is keyed by on the handler class.
+      const symbol = Object.getOwnPropertySymbols(RetryHandler).find((candidate) => (candidate.description === "retry agent default retry"));
+
+      assert.ok(symbol !== undefined, "undici keys its default decision on the handler class by a symbol of this description");
+
+      const undiciDefault = Reflect.get(RetryHandler, symbol) as RetryHandler.RetryCallback;
+
+      assert.equal(typeof undiciDefault, "function");
+
+      const cases: { context: RetryHandler.RetryContext; error: Error; name: string }[] = [
+
+        ...[ 1, 2, 3, 4, 5, 6, 7 ].map((counter) => ({ context: retryContext(counter), error: retryError(503), name: "a 503 at attempt " + String(counter) })),
+        { context: retryContext(1), error: retryError(404), name: "a 404" },
+        { context: retryContext(1), error: retryError(429), name: "a 429, which the set leaves out" },
+        { context: retryContext(1), error: retryError(501), name: "a 501, which the set leaves out" },
+        { context: retryContext(1, { method: "PATCH" }), error: retryError(503), name: "a 503 to a PATCH, which the verbs leave out" },
+        { context: retryContext(1, { retryOptions: { ...RETRY_OPTIONS, maxRetries: 0 } }), error: retryError(503), name: "a 503 to a request opted out of retries" },
+        { context: retryContext(1), error: errnoError("read ECONNRESET", "ECONNRESET"), name: "a connection reset" },
+        { context: retryContext(3), error: errnoError("read ECONNRESET", "ECONNRESET"), name: "a connection reset at the third attempt" },
+        { context: retryContext(1), error: errnoError("connect timeout", "UND_ERR_CONNECT_TIMEOUT"), name: "a connect timeout, which the codes leave out" },
+        { context: retryContext(1), error: new errors.RequestAbortedError(), name: "an aborted request" },
+        { context: retryContext(1), error: new Error("no code"), name: "a failure carrying no code" }
+      ];
+
+      const verdicts = new Set<string>();
+
+      for(const { context, error, name } of cases) {
+
+        const expected = decide(t.mock.timers, undiciDefault, error, context);
+
+        verdicts.add(expected.outcome);
+        assert.deepEqual(decide(t.mock.timers, retryUnlessHinted, error, context), expected, name);
+      }
+
+      assert.deepEqual([...verdicts].sort(), [ "gave up", "retried" ], "the cases reach both of the default's verdicts, and every one of them settles");
     });
   });
 

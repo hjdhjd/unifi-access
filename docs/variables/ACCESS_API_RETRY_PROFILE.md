@@ -12,7 +12,7 @@ const ACCESS_API_RETRY_PROFILE: {
   maxTimeout: 1500;
   methods: readonly ["DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"];
   minTimeout: 100;
-  statusCodes: readonly [400, 404, 429, 500, 502, 503, 504];
+  statusCodes: readonly [400, 404, 500, 502, 503, 504];
   timeoutFactor: 2;
 };
 ```
@@ -25,5 +25,5 @@ const ACCESS_API_RETRY_PROFILE: {
 | <a id="property-maxtimeout"></a> `maxTimeout` | `1500` | `1500` |
 | <a id="property-methods"></a> `methods` | readonly \[`"DELETE"`, `"GET"`, `"HEAD"`, `"OPTIONS"`, `"POST"`, `"PUT"`\] | - |
 | <a id="property-mintimeout"></a> `minTimeout` | `100` | `100` |
-| <a id="property-statuscodes"></a> `statusCodes` | readonly \[`400`, `404`, `429`, `500`, `502`, `503`, `504`\] | - |
+| <a id="property-statuscodes"></a> `statusCodes` | readonly \[`400`, `404`, `500`, `502`, `503`, `504`\] | - |
 | <a id="property-timeoutfactor"></a> `timeoutFactor` | `2` | `2` |

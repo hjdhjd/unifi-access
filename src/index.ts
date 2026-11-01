@@ -23,14 +23,15 @@
 export { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
   AccessCertificateError, AccessConfigurationError, AccessError, AccessNetworkError, AccessProtocolError, AccessRequestError, AccessStallError,
   AccessThrottledError, AccessTimeoutError, FatalError, RecoverableError } from "./errors.ts";
-export type { AccessApiCode, AccessBootstrapStage, AccessIdentityLeg } from "./errors.ts";
+export type { AccessApiCode, AccessBootstrapStage, AccessControllerReadiness, AccessIdentityLeg } from "./errors.ts";
 
 // The rendering a consumer logs a failure through, so the diagnosis a wrapped error carries below the sentence that was caught reaches an operator.
 export { formatErrorChain } from "./errors.ts";
 
 // The readings a consumer branches on to recognize a refused identity, a refused permission, or a sign-in refused on either ground, whichever spelling the controller
-// answered the refusal in and, for the sign-in reading, through the bootstrap wrapper it opens.
-export { isIdentityRefusal, isPrivilegeRefusal, isSignInRefusal } from "./errors.ts";
+// answered the refusal in and, for the sign-in reading, through the bootstrap wrapper it opens, and to recognize a controller limiting requests or not ready yet,
+// read through that same wrapper and answered as the readiness type above.
+export { controllerReadinessOf, isIdentityRefusal, isPrivilegeRefusal, isSignInRefusal } from "./errors.ts";
 
 // Logging - the consumer-injectable logger interface and the silent default the library falls back to when a consumer injects none.
 export { noopLog } from "./logging.ts";

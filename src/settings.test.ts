@@ -34,7 +34,7 @@ describe("settings", () => {
       maxTimeout: 1500,
       methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ],
       minTimeout: 100,
-      statusCodes: [ 400, 404, 429, 500, 502, 503, 504 ],
+      statusCodes: [ 400, 404, 500, 502, 503, 504 ],
       timeoutFactor: 2
     }, "the retry profile must match the documented verbs, transient statuses, and backoff");
   });

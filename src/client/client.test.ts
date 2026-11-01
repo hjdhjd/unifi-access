@@ -11,6 +11,7 @@ import type { Interceptable, MockAgent } from "undici";
 import { TestClock, capturingLog, expectAt, present, settle, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
+import { ACCESS_API_ERROR_LIMIT } from "../settings.ts";
 import { AccessClient } from "./client.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
@@ -270,8 +271,9 @@ describe("AccessClient.connect", () => {
 
       const { agent, pool } = mockController();
 
+      // The login is refused and the CSRF fetch yields no token, so the handshake cannot complete.
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad");
-      pool.intercept({ method: "GET", path: "/" }).reply(500, "unavailable");
+      pool.intercept({ method: "GET", path: "/" }).reply(200, "");
 
       // A credential-only connect can only have been refused its credentials.
       await assert.rejects(connect(agent), { identity: "credentials", name: "AccessAuthError" });
@@ -1073,6 +1075,48 @@ describe("AccessClient.connect", () => {
 
       assert.equal(fetched.data[0]?.floors[0]?.doors.length, 0, "the fetch returned what the controller sent");
       assert.equal(client.state.snapshot().doors.size, 3, "and the state model is untouched by it");
+    });
+  });
+
+  describe("recovery through an open breaker", () => {
+
+    test("a recovery probe answered 404 ends the pause, logs its resumption, and then announces a controller not ready yet", async () => {
+
+      const { agent, pool } = mockController();
+      const log = capturingLog();
+
+      interceptLogin(pool);
+      interceptPass(pool);
+
+      const captured = await connectCapturing(agent, { log });
+
+      await using client = captured.client;
+
+      // Server errors on the probe's own endpoint trip the breaker, each reachability check booking one failure.
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(503, "starting").times(ACCESS_API_ERROR_LIMIT);
+
+      for(let attempt = 0; attempt < ACCESS_API_ERROR_LIMIT; attempt++) {
+
+        // eslint-disable-next-line no-await-in-loop
+        await client.connection.verify().catch(() => undefined);
+      }
+
+      assert.equal(client.connection.isThrottled, true, "consecutive server errors must have opened the breaker");
+
+      /* The controller then answers the recovery probe 404. That is an answer from a controller that served the probe, so the breaker closes and says so, and the
+       * probe's own status is what the monitor announces the loss by: a status the pool retries is a controller not ready yet rather than an unreachable one.
+       */
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(404, "not found");
+      captured.ws.emitError(new Error("socket dropped"));
+
+      await settleUntil(() => client.connection.state === "lost", { description: "the probe's 404 to conclude the connection lost" });
+
+      const resumed = log.entries.findIndex((entry) => (entry.level === "info") && entry.message.startsWith("Resumed communication"));
+      const notReady = log.entries.findIndex((entry) => (entry.level === "warn") && entry.message.includes("is not ready yet"));
+
+      assert.equal(client.connection.isThrottled, false, "the controller served the probe, so the pause ends");
+      assert.notEqual(resumed, -1, "the breaker's closing edge logs its resumption");
+      assert.ok(notReady > resumed, "and the not-ready line follows it");
     });
   });
 

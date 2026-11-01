@@ -407,8 +407,9 @@ export class AccessClient implements AsyncDisposable {
    * @throws {@link AccessConfigurationError} when no URL can carry the controller address, naming it. Raised before anything is sent.
    * @throws {@link AccessAuthError} when an identity is refused and the client cannot carry on without it - the credentials on any client, the token on a client
    *   with no direct path to fall back to - its `identity` field naming which one was refused, {@link AccessNetworkError} when the controller cannot be reached,
-   *   {@link AccessBootstrapError} when its configuration cannot be fetched, parsed, or applied, or any other typed `FatalError` those stages surface. No partial
-   *   client escapes a failure.
+   *   {@link AccessRequestError} when the sign-in or the token's first read is answered with any other status, which {@link controllerReadinessOf} reads as a
+   *   controller limiting requests or not ready yet where it is one, {@link AccessBootstrapError} when its configuration cannot be fetched, parsed, or applied, a
+   *   status the fetch was answered with carried as its `cause`, or any other typed `FatalError` those stages surface. No partial client escapes a failure.
    */
   static async connect(opts: ConnectOptions): Promise<AccessClient> {
 
@@ -530,7 +531,10 @@ export class AccessClient implements AsyncDisposable {
 
     try {
 
-      // Stage 1: authenticate. A credential failure and an unreachable controller are both already typed fatals, so they propagate as they are.
+      /* Stage 1: authenticate. A refused sign-in throws the fatal AccessAuthError, a sign-in answered with a status that is no verdict on the credentials (a
+       * controller limiting requests or not ready yet among them) the AccessRequestError carrying that status, and an unreachable controller the recoverable
+       * AccessNetworkError - each already typed, propagated as it is rather than wrapped, so the caller sees the precise cause.
+       */
       if((direct !== null) && (opts.username !== undefined)) {
 
         await direct.auth.login({ host: opts.host, password: opts.password, username: opts.username }, (opts.signal !== undefined) ? { signal: opts.signal } : {});

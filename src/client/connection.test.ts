@@ -7,10 +7,10 @@
 import { ACCESS_EVENTS_HEARTBEAT_TIMEOUT, ACCESS_REBOOT_UPTIME_DROP_MINIMUM, ACCESS_RECOVERY_BACKOFF_MS, ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS,
   ACCESS_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
 import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCertificateError, AccessError,
-  AccessNetworkError, AccessStallError } from "../errors.ts";
+  AccessNetworkError, AccessRequestError, AccessStallError } from "../errors.ts";
 import type { AccessControllerConfig, AccessEventPacket, Nullable } from "../types/index.ts";
 import type { ConnectionState, ConnectionTransition, ThrottleSource } from "./connection.ts";
-import { TestClock, advanceThroughSchedule, assertNoUnhandledRejections, capturingLog, errnoError, logCount, loggedAt, settle, settleUntil,
+import { TestClock, advanceThroughSchedule, assertNoUnhandledRejections, capturingLog, errnoError, expectAt, logCount, loggedAt, settle, settleUntil,
   silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
@@ -30,9 +30,10 @@ const HOST = "10.0.0.1";
 // The uptime the seeded controller document reports, in seconds. Every restart case moves from this value.
 const BASE_UPTIME = 990090;
 
-// A phrase unique to each of the lost line's sentences, so a count by sentence tells a refused sign-in, a fault a person must fix and an unreachable controller
-// apart.
+// A phrase unique to each of the lost line's sentences, so a count by sentence tells each class a loss is announced as apart from the others.
+const LIMITING_SENTENCE = "is limiting requests";
 const MUST_FIX_SENTENCE = "cannot be reached until its certificate or its address is fixed";
+const NOT_READY_SENTENCE = "is not ready yet";
 const REFUSAL_SENTENCE = "is refusing the sign-in";
 const UNREACHABLE_SENTENCE = "appears to be unreachable";
 
@@ -113,6 +114,12 @@ class HookedWebSocket extends FakeWebSocket {
 function levelsOf(entries: readonly TestLogEntry[], phrase: string): TestLogEntry["level"][] {
 
   return entries.filter((entry) => entry.message.includes(phrase)).map((entry) => entry.level);
+}
+
+// The context of every debug line that names a wait a hint lengthened, in the order logged, so a row reads how many were logged and what each carried.
+function hintLines(entries: readonly TestLogEntry[]): unknown[][] {
+
+  return entries.filter((entry) => (entry.level === "debug") && entry.message.includes("asked for more time")).map((entry) => entry.params);
 }
 
 // A device-update frame, as the controller frames one, with the wire's own key names preserved.
@@ -1377,11 +1384,146 @@ describe("ConnectionMonitor", () => {
     });
   });
 
+  describe("a controller's Retry-After hint", () => {
+
+    // The seconds a row's controller hints, beside the wait a hint given as an HTTP date names ahead of the test clock's time of day.
+    const HINT_SECONDS = 120;
+    const DATE_AHEAD_MS = 90000;
+
+    // A controller limiting requests, its answer carrying the hint a row names, as the transport classifies that answer.
+    const limited = (hint: string): AccessRequestError => new AccessRequestError("The UniFi Access controller answered the request with HTTP status 429.",
+      { headers: { "retry-after": hint }, statusCode: 429 });
+
+    // The wait the network schedule's second rung asks for, which is the wait after an episode's first attempt when no hint lengthens it.
+    const SECOND_RUNG_MS = expectAt(ACCESS_RECOVERY_BACKOFF_MS, 1, "the network schedule's second rung");
+
+    /* Each row opens the episode on the stream's own fault, whose first wait is the network schedule's first rung and carries no hint. The attempt it releases is
+     * answered with the hint, and the wait after it is what the row reads: the hint where it asks for longer than the rung, capped at the refusal schedule's steady
+     * interval, and the rung where the value is not a hint at all.
+     */
+    const rows: readonly { delayMs: number; hint: string; name: string }[] = [
+
+      { delayMs: HINT_SECONDS * 1000, hint: String(HINT_SECONDS), name: "hinting seconds longer than its rung waits them out" },
+      { delayMs: ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady, hint: "3600", name: "hinting an hour waits no longer than the refusal schedule's steady interval" },
+      { delayMs: SECOND_RUNG_MS, hint: "soon", name: "hinting what is neither seconds nor a date waits its rung" },
+      { delayMs: SECOND_RUNG_MS, hint: "1e3", name: "hinting seconds in exponent form waits its rung, the form being no count of seconds" }
+    ];
+
+    for(const { delayMs, hint, name } of rows) {
+
+      test("a 429 " + name, async () => {
+
+        const rig = await harness();
+
+        await using monitor = rig.monitor;
+        const { control, streams } = rig;
+
+        await monitor.opened;
+        await settle();
+
+        control.setVerifyError(limited(hint));
+        streams[0]?.emitError(new Error("socket dropped"));
+        await settle();
+        await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), delayMs ], label: "a 429 hinting " + JSON.stringify(hint), rig });
+      });
+    }
+
+    test("a 429 hinting an HTTP date waits until that time of day", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { clock, control, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      // The date is built on the test clock's own timeline, whose time of day the wait is measured from, at the one-second resolution an HTTP date carries.
+      control.setVerifyError(limited(new Date(clock.now() + DATE_AHEAD_MS).toUTCString()));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), DATE_AHEAD_MS ], label: "a 429 hinting an HTTP date", rig });
+    });
+
+    test("a 429 hinting longer than its rung names the lengthened wait in one debug line carrying the hint", async () => {
+
+      const log = capturingLog();
+      const rig = await harness({ log });
+
+      await using monitor = rig.monitor;
+      const { control, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      control.setVerifyError(limited(String(HINT_SECONDS)));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), label: "the episode's first attempt", rig });
+
+      assert.deepEqual(hintLines(log.entries), [[{ hintMs: HINT_SECONDS * 1000 }]], "the wait the hint lengthens is named in one debug line carrying the hint");
+
+      await assertRecoveryDelays({ delays: [HINT_SECONDS * 1000], label: "a 429 hinting longer than its rung", rig });
+    });
+
+    test("a 429 hinting shorter than its rung waits the rung, and no line names a hint", async () => {
+
+      const log = capturingLog();
+      const rig = await harness({ log });
+
+      await using monitor = rig.monitor;
+      const { control, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      // Every attempt is answered with a hint shorter than each rung that follows it, so the schedule's own delays hold.
+      control.setVerifyError(limited("2"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: ACCESS_RECOVERY_BACKOFF_MS.slice(0, 3), label: "a 429 hinting shorter than its rung", rig });
+
+      assert.deepEqual(hintLines(log.entries), [], "a hint that lengthens no wait is named in no line");
+    });
+
+    test("a restart detected during a hinted wait ends the wait, the hint no longer describing the controller that came back", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { clock, control, store, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      control.setVerifyError(limited("3600"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: ACCESS_RECOVERY_BACKOFF_MS.slice(0, 1), label: "the episode's first attempt", rig });
+
+      // That attempt is answered with the hint, so recovery is parked past the rung it would otherwise have waited.
+      clock.advance(SECOND_RUNG_MS);
+      await settle();
+
+      assert.equal(control.verifyCalls(), 1, "the hinted wait outlasts the rung");
+
+      // The controller restarts and the refresh observes it, which wakes the parked wait so the attempt runs now rather than once the hint has elapsed.
+      control.setVerifyError(null);
+      control.setNextUptime(20);
+      store.applyRefreshDocuments({ controller: controllerAt(20), topology: structuredClone(accessBootstrap2026Fixture) });
+
+      await settleUntil(() => monitor.state === "healthy", { description: "the detected restart to end the hinted wait and recover at once" });
+
+      assert.equal(control.verifyCalls(), 2, "the woken attempt is the one that recovered");
+    });
+  });
+
   describe("the lost line's class and level", () => {
 
     /* The lost line's level by its cause, a row per cause: a fault a person must fix at error in its own sentence, and every fault that heals itself at warning. A
      * pool reset is among the last, the level table reading its kind as quiet while dialing, because a lost connection always matters to a user and the line is
-     * never quieter than a warning. A refused sign-in, the third class, is read by the refusal rows above.
+     * never quieter than a warning. A controller limiting requests and one not ready yet each log at warning in a sentence of their own, read ahead of the level
+     * table, and a refused sign-in is read by the refusal rows above.
      */
     const lossLevels: readonly { level: TestLogEntry["level"]; name: string; reason: AccessError; sentence: string }[] = [
 
@@ -1391,7 +1533,11 @@ describe("ConnectionMonitor", () => {
         { cause: errnoError("getaddrinfo ENOTFOUND controller", "ENOTFOUND") }), sentence: MUST_FIX_SENTENCE },
       { level: "warn", name: "a reason carrying no code", reason: new AccessNetworkError("down"), sentence: UNREACHABLE_SENTENCE },
       { level: "warn", name: "a pool reset", reason: new AccessNetworkError("The request was interrupted because the connection pool was reset.",
-        { cause: new errors.ClientDestroyedError() }), sentence: UNREACHABLE_SENTENCE }
+        { cause: new errors.ClientDestroyedError() }), sentence: UNREACHABLE_SENTENCE },
+      { level: "warn", name: "a probe answered 429", reason: new AccessRequestError("The UniFi Access controller answered the request with HTTP status 429.",
+        { statusCode: 429 }), sentence: LIMITING_SENTENCE },
+      { level: "warn", name: "a probe answered 503", reason: new AccessRequestError("The UniFi Access controller answered the request with HTTP status 503.",
+        { statusCode: 503 }), sentence: NOT_READY_SENTENCE }
     ];
 
     for(const { level, name, reason, sentence } of lossLevels) {
@@ -1417,6 +1563,30 @@ describe("ConnectionMonitor", () => {
         assert.deepEqual(events.lost, [reason], "and controllerLost carries the fault that concluded it");
       });
     }
+
+    test("a re-bootstrap answered 503 is announced as a controller not ready yet, read through its bootstrap wrapper", async () => {
+
+      const log = capturingLog();
+      const rig = await harness({ log });
+
+      await using monitor = rig.monitor;
+      const { clock, control, events, streams } = rig;
+      const reason = new AccessBootstrapError("Unable to fetch the controller configuration.",
+        { cause: new AccessRequestError("The UniFi Access controller answered the request with HTTP status 503.", { statusCode: 503 }), stage: "fetch" });
+
+      await monitor.opened;
+      await settle();
+
+      // The probe answers, so the attempt passes through reconnecting and fails at the re-bootstrap, whose document fetch wraps the status the controller answered.
+      control.setReBootstrapError(reason);
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => monitor.state === "lost", { description: "the failed re-bootstrap to conclude the connection lost" });
+
+      assert.deepEqual(levelsOf(log.entries, "the connection is lost"), ["warn"], "the loss is announced once, at warning");
+      assert.deepEqual(levelsOf(log.entries, NOT_READY_SENTENCE), ["warn"], "as a controller not ready yet rather than an unreachable one");
+      assert.deepEqual(events.lost, [reason], "and controllerLost carries the wrapper the re-bootstrap threw");
+    });
 
     test("an episode that turns between an unreachable controller and a certificate verdict announces each turn at its level, while the network schedule runs on",
       async () => {

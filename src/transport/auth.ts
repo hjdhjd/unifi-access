@@ -3,7 +3,7 @@
  * auth.ts: The authentication session for the UniFi Access library - the UniFi OS credential handshake, CSRF rotation, the 401-triggered relogin, and the
  * administrative-privilege check.
  */
-import { AccessAbortedError, AccessAuthError } from "../errors.ts";
+import { AccessAbortedError, AccessAuthError, readinessOfStatus } from "../errors.ts";
 import type { AccessResponse, Transport } from "./http.ts";
 import type { AccessAuthReloginPayload } from "../diagnostics.ts";
 import type { AccessLogging } from "../logging.ts";
@@ -16,6 +16,15 @@ import { singleFlight } from "../single-flight.ts";
 // The grant string that marks an account as able to manage Access devices. The identity layer issues fine-grained, colon-delimited grants rather than a role flag,
 // so the ability to edit device settings is what stands in for administrative privilege.
 const ADMIN_SCOPE = "edit:access.device";
+
+/* Read a sign-in answer as a verdict on the credentials. A 4xx is the controller judging the request it was sent, except a status that names the controller's
+ * readiness instead - a 429 limiting requests, or a status the transport retries as the answer a controller rebooting or starting a service gives - which judged
+ * nothing. A 3xx or a 5xx says nothing about the credentials at all.
+ */
+function refusedSignIn(statusCode: number): boolean {
+
+  return (statusCode >= 400) && (statusCode <= 499) && (readinessOfStatus(statusCode) === null);
+}
 
 /**
  * The credentials for an Access controller. `host` is the controller address exactly as configured, without a scheme (for example `"192.168.1.1"`), and it is what
@@ -149,7 +158,9 @@ export class AuthSession {
    * @param credentials - The controller address and account credentials.
    * @param opts        - Optional abort signal threaded through the handshake requests.
    *
-   * @throws {@link AccessAuthError} if the handshake does not yield a cookie and CSRF token.
+   * @throws {@link AccessAuthError} if the controller refuses the sign-in or the handshake does not yield a cookie and CSRF token.
+   * @throws {@link AccessRequestError} if the controller answers with a status that is no verdict on the credentials - a controller limiting requests, one not
+   *   ready yet, a 3xx or a 5xx - which a reconnecting caller retries again later.
    */
   async login(credentials: AccessCredentials, opts: { signal?: AbortSignal } = {}): Promise<void> {
 
@@ -222,8 +233,9 @@ export class AuthSession {
 
   // One relogin run, shared by every caller that arrived while it was in flight. It resolves rather than rejects on every path: the transport's hook contract is a
   // boolean, and the request that tripped the 401 belongs to some unrelated caller which must receive its own 401-derived result rather than an error raised by a
-  // recovery it never asked for. A handshake can genuinely throw here - the breaker may be open, or the network may be failing, which is often exactly the weather
-  // that produced the 401 - so that throw settles this false and is reported on the channel like any other unsuccessful relogin.
+  // recovery it never asked for. A handshake can genuinely throw here - the breaker may be open, a network failure surfaces as AccessNetworkError and an answer that
+  // is no verdict on the credentials as AccessRequestError, and a failing or rebooting controller is often exactly the weather that produced the 401 - so that throw
+  // settles this false and is reported on the channel like any other unsuccessful relogin.
   async #reauthenticateOnce(): Promise<boolean> {
 
     // Read the credentials once, before any await, so the outcome is attributed to the session that was live when the relogin began rather than to whatever a
@@ -304,7 +316,8 @@ export class AuthSession {
       return this.#commitAdmin(null, credentials);
     }
 
-    // Any other refusal is the controller declining to answer this one request. It says nothing about the account, so the previous verdict stands.
+    // Any other status is not a verdict on the account: a refusal of this one request, or a controller limiting requests or not ready yet, whose answer the
+    // transport hands back as the response it was. Neither says anything about the account's privilege, so the previous verdict stands.
     if(!responseOk(response.statusCode)) {
 
       return this.#isAdmin;
@@ -386,10 +399,17 @@ export class AuthSession {
     this.#cookie = null;
   }
 
-  // Run the UniFi OS handshake. Attempt a direct login first; if it fails and we hold no CSRF token, fetch one from the controller root and retry the login once.
-  // On success, capture the rotated CSRF token (the controller returns it as X-Updated-CSRF-Token, falling back to X-CSRF-Token) and the bare session cookie.
-  // Returns whether a complete session was established. Self-sufficient in its auth headers - it stamps the CSRF token explicitly rather than relying on the
-  // transport's getAuthHeaders hook being wired back to this same session.
+  /* Run the UniFi OS handshake. Attempt a direct login first; if the controller refuses it and we hold no CSRF token, fetch one from the controller root and retry
+   * the login once. On success, capture the rotated CSRF token (the controller returns it as X-Updated-CSRF-Token, falling back to X-CSRF-Token) and the bare
+   * session cookie. Returns whether a complete session was established. Self-sufficient in its auth headers - it stamps the CSRF token explicitly rather than
+   * relying on the transport's getAuthHeaders hook being wired back to this same session.
+   *
+   * A false return is a refused sign-in, which login() reports as bad credentials and which a reconnecting consumer reads as a wrong password, so only an answer
+   * that judges the credentials earns it: a 4xx that names no readiness of the controller's. A controller limiting requests or not ready yet, a 3xx, or any other
+   * 5xx says nothing about the credentials, so each throws the error the transport classifies it as, and a controller answering mid-reboot is never reported as a
+   * wrong password. The controller root's answer is read by the same rule, so a root that answers anything but a 2xx or such a refusal throws as well: a
+   * controller not ready to serve its root was not ready to judge the login it refused.
+   */
   async #handshake(credentials: AccessCredentials, signal?: AbortSignal): Promise<boolean> {
 
     const loginUrl = this.#transport.origin + "/api/auth/login";
@@ -397,11 +417,18 @@ export class AuthSession {
 
     let response = await this.#postLogin(loginUrl, loginBody, signal);
 
-    // The controller rejected the login and we have no CSRF token to offer. UniFi OS gates login behind a CSRF check, so fetch a token from the root document
+    // The controller refused the login and we have no CSRF token to offer. UniFi OS gates login behind a CSRF check, so fetch a token from the root document
     // and retry the login once with it in hand.
-    if(!responseOk(response.statusCode) && (this.#csrfToken === null)) {
+    if(refusedSignIn(response.statusCode) && (this.#csrfToken === null)) {
 
       const csrfResponse = await this.#transport.send(this.#transport.origin, { authRetry: false, method: "GET", ...((signal !== undefined) && { signal }) });
+
+      // A root answering with anything but a 2xx or a refusal means the controller is not placed to judge a sign-in, so its classified error surfaces rather than
+      // the login's refusal standing as a verdict. A refusal, or a 2xx that yields no token, leaves the login's own answer to the read below.
+      if(!responseOk(csrfResponse.statusCode) && !refusedSignIn(csrfResponse.statusCode)) {
+
+        csrfResponse.ensureOk();
+      }
 
       if(responseOk(csrfResponse.statusCode)) {
 
@@ -415,11 +442,18 @@ export class AuthSession {
       }
     }
 
+    // Any answer that is not a 2xx ends the handshake, so the session is cleared first and a session that held a cookie never keeps it past a handshake that did not
+    // complete. A refused sign-in then returns false; every other answer throws its classified error from ensureOk, which throws for every non-2xx.
     if(!responseOk(response.statusCode)) {
 
       this.#clearFailedSession(credentials);
 
-      return false;
+      if(refusedSignIn(response.statusCode)) {
+
+        return false;
+      }
+
+      response.ensureOk();
     }
 
     const csrfToken = response.header("x-updated-csrf-token") ?? response.header("x-csrf-token");

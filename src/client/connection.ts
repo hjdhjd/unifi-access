@@ -5,10 +5,10 @@
  */
 
 /**
- * {@link ConnectionMonitor} is the single coordinator that responds to the signals the layers below it detect: the transport's throttle rails, which are its
- * circuit breaker's verdict on reachability, and the events stream's error rail, which is its watchdog's verdict on whether the notification channel is still
- * alive. Detection stays with the resource that owns the signal; the response - verify, re-bootstrap, relaunch, and the state machine that narrates it - lives
- * here. That is the same split the throttle and the stall already use, and this is the responding half of it.
+ * {@link ConnectionMonitor} is the single coordinator that responds to the signals the layers below it detect: the transport's throttle rails, which are its circuit
+ * breaker's verdict on whether the controller is serving (no answer, a 5xx or a 429 counting against it), and the events stream's error rail, which is its watchdog's
+ * verdict on whether the notification channel is still alive. Detection stays with the resource that owns the signal; the response - verify, re-bootstrap, relaunch, and
+ * the state machine that narrates it - lives here. That is the same split the throttle and the stall already use, and this is the responding half of it.
  *
  * **The monitor is state machine and policy; it does not own a raw event stream.** The notification socket has to be replaced on recovery, because the stream
  * never reconnects itself - it tears down on a stall and stops. Fusing that lifecycle into the monitor would pile two responsibilities into one class and force
@@ -29,8 +29,9 @@
  * @module AccessConnectionMonitor
  */
 import { ACCESS_REBOOT_UPTIME_DROP_MINIMUM, ACCESS_RECOVERY_BACKOFF_MS, ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
-import { AccessAbortedError, AccessError, AccessNetworkError, formatErrorChain, isSignInRefusal } from "../errors.ts";
+import { AccessAbortedError, AccessError, AccessNetworkError, controllerReadinessOf, formatErrorChain, isSignInRefusal, statusErrorOf } from "../errors.ts";
 import type { AccessEventPacket, Nullable } from "../types/index.ts";
+import type { AccessControllerReadiness } from "../errors.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
 import type { Clock } from "../clock.ts";
@@ -56,30 +57,55 @@ interface RecoverySchedule {
 
 const NETWORK_RECOVERY_SCHEDULE_MS: RecoverySchedule = { backoff: ACCESS_RECOVERY_BACKOFF_MS, steady: ACCESS_RECOVERY_STEADY_INTERVAL_MS };
 
+/* The wait, in milliseconds, a controller asked for through the Retry-After header of the status error a fault carries, or zero when it asked for none. A value of
+ * digits alone is a count of seconds and is read first, because only what is not such a count is tried as an HTTP date: a bare count such as "120" also parses as
+ * a date, in the year 120. An HTTP date is read as the wait from the time of day until it. Anything else, a zero, or a date already past is no hint.
+ */
+function hintedWaitMs(fault: Nullable<AccessError>, now: number): number {
+
+  const hint = statusErrorOf(fault)?.headers?.["retry-after"];
+
+  if(hint === undefined) {
+
+    return 0;
+  }
+
+  const waitMs = /^[0-9]+$/.test(hint) ? (Number(hint) * 1000) : (Date.parse(hint) - now);
+
+  // A date that does not parse leaves the difference not a number, which compares false here as a zero or a past date does.
+  return (waitMs > 0) ? waitMs : 0;
+}
+
 // The recovery sub-state the monitor keeps. The observable state widens this with the derived throttle verdict, so the breaker's answer never has to be mirrored
 // into a field of our own - it is read live from the transport.
 /** @internal */
 type RecoveryPhase = "degraded" | "healthy" | "lost" | "reconnecting";
 
-// The class a lost connection is announced as, chosen by what clears the loss: the controller stops refusing the sign-in, a person fixes the certificate or the
-// address, or the fault heals itself. Each class carries its own sentence and level, and an episode announces its loss again whenever the class changes.
+// The class a lost connection is announced as, chosen by what clears the loss: the controller stops refusing the sign-in, stops limiting requests or becomes
+// ready, a person fixes the certificate or the address, or the fault heals itself. Each class carries its own sentence and level, and an episode announces its
+// loss again whenever the class changes.
 /** @internal */
-type LossClass = "mustFix" | "refused" | "selfHealing";
+type LossClass = AccessControllerReadiness | "mustFix" | "refused" | "selfHealing";
 
-/* The lost line for each class. A refused sign-in and a fault a person must fix log at error, because nothing changes until someone acts; a fault that heals itself
- * logs at warning, which is the floor, because a lost connection always matters to a user even when recovery will clear it.
+/* The lost line for each class. A refused sign-in and a fault a person must fix log at error, because nothing changes until someone acts; a controller limiting
+ * requests or not ready yet, and a fault that heals itself, log at warning, which is the floor, because a lost connection always matters to a user even when
+ * recovery will clear it.
  */
 const LOSS_ANNOUNCEMENTS: Readonly<Record<LossClass, { readonly level: "error" | "warn"; readonly sentence: string }>> = {
 
+  limiting: { level: "warn",
+    sentence: "The UniFi Access controller is limiting requests; the connection is lost and recovery is polling until it accepts requests again." },
   mustFix: { level: "error", sentence: "The UniFi Access controller cannot be reached until its certificate or its address is fixed; the connection is lost and " +
     "recovery is polling for its return." },
+  "not-ready": { level: "warn", sentence: "The UniFi Access controller is not ready yet; the connection is lost and recovery is polling until it is ready." },
   refused: { level: "error",
     sentence: "The UniFi Access controller is refusing the sign-in; the connection is lost and recovery is retrying on the slower refusal schedule." },
   selfHealing: { level: "warn", sentence: "The UniFi Access controller appears to be unreachable; the connection is lost and recovery is polling for its return." }
 };
 
-/* The class a loss is announced as. A refused sign-in is read first, above the level table, which reads a refusal as a codeless failure like any other error type
- * of this library's own. Every other reason asks the table with `open` false, and that is the rule's own answer rather than a choice: every reason a loss is
+/* The class a loss is announced as. A refused sign-in is read first, and the controller's own readiness answer after it, both above the level table, which reads
+ * a refusal and a status alike as a codeless failure like any other error type of this library's own: a controller that answered is neither a fault a person must
+ * fix nor an unreachable one. Every other reason asks the table with `open` false, and that is the rule's own answer rather than a choice: every reason a loss is
  * concluded on is a one-shot request (the reachability probe, the re-bootstrap) or a relaunch whose stream never opened, because a relaunch whose stream opens is a
  * recovery. The table's error, a certificate nothing trusts or a host name that does not resolve, is a fault a person must fix, and every other answer, quiet among
  * them, is a fault that heals itself, which is what holds the lost line at warning or above.
@@ -91,14 +117,21 @@ function lossClassOf(reason: AccessError): LossClass {
     return "refused";
   }
 
+  const readiness = controllerReadinessOf(reason);
+
+  if(readiness !== null) {
+
+    return readiness;
+  }
+
   return (connectionFaultLevel(classifyTransportError(reason), { open: false }) === "error") ? "mustFix" : "selfHealing";
 }
 
 /**
  * The connection's observable state. `healthy` is steady operation; `degraded` means a fault was seen and reachability is being probed; `reconnecting` means the
- * controller answered and the monitor is re-bootstrapping and relaunching the notification stream; `lost` means the controller is unreachable or is refusing the
- * sign-in, and recovery is retrying on the schedule that cause calls for; `throttled` means the transport's breaker is open and holding requests back. The throttle
- * verdict is read live from the transport and takes precedence only while nothing else is wrong.
+ * controller answered and the monitor is re-bootstrapping and relaunching the notification stream; `lost` means a recovery attempt failed, and recovery is
+ * retrying on the schedule its cause calls for, the lost line and `controllerLost` naming the class that cause is announced as; `throttled` means the transport's
+ * breaker is open and holding requests back. The throttle verdict is read live from the transport and takes precedence only while nothing else is wrong.
  *
  * @category Client
  */
@@ -123,8 +156,8 @@ export interface ConnectionTransition {
  * The events {@link ConnectionMonitor} publishes on its three-rail surface.
  *
  * - `stateChanged` fires on every edge of the state machine.
- * - `controllerLost` fires when the controller is concluded lost, and again whenever the cause of the loss changes class among a refused sign-in, a fault a person
- *   must fix and a fault that heals itself, carrying the fault that settled it.
+ * - `controllerLost` fires when the controller is concluded lost, and again whenever the class the loss is announced as changes, carrying the fault that settled
+ *   it.
  * - `controllerRebooted` fires when the controller's reported uptime falls far enough to read as a restart, carrying both readings.
  * - `controllerRecovered` fires when the connection returns to healthy after having been lost.
  * - `throttleEntered` and `throttleExited` forward the transport breaker's own transitions.
@@ -396,7 +429,10 @@ export class ConnectionMonitor {
     return this.#derive() === "healthy";
   }
 
-  /** Whether the transport's breaker is open. Delegated verbatim to the transport, which is the single source of truth for reachability backoff. */
+  /**
+   * Whether the transport's breaker is open. Delegated verbatim to the transport, whose circuit breaker is the single source of truth for whether the controller is
+   * serving (no answer, a 5xx or a 429 counting against it).
+   */
   get isThrottled(): boolean {
 
     return this.#transport.isThrottled;
@@ -565,9 +601,9 @@ export class ConnectionMonitor {
   }
 
   /* Conclude the connection is lost, recording the fault and the class it is announced as, which also marks the episode so a later return to healthy is announced
-   * as a recovery. One rule announces the loss, in the lost line and on `controllerLost` alike: the episode's first loss, and each turn of its class among a
-   * refused sign-in, a fault a person must fix and a fault that heals itself, never a failed attempt that leaves its class unchanged. The one derivation of the
-   * class chooses the line's sentence and its level, while the recovery schedule keeps its own refusal-or-not reading of the same fault.
+   * as a recovery. One rule announces the loss, in the lost line and on `controllerLost` alike: the episode's first loss, and each turn of its announced class,
+   * never a failed attempt that leaves its class unchanged. The one derivation of the class chooses the line's sentence and its level, while the recovery schedule
+   * keeps its own refusal-or-not reading of the same fault.
    */
   #enterLost(reason: AccessError): void {
 
@@ -616,6 +652,11 @@ export class ConnectionMonitor {
    * delays are measured from when its cause began...a refusal that follows a stretch of unreachability backs off from its own first refusal, and a controller that
    * stops refusing and becomes unreachable is probed at once. The unbounded tail is what makes recovery poll indefinitely - the loop ends on success or disposal,
    * never by running out of schedule.
+   *
+   * The same fault can carry a controller's own wait. A status error whose answer named a Retry-After asks recovery to wait at least that long, so each wait is
+   * the larger of its rung and the hint, the hint capped at the refusal schedule's steady interval, which is the longest wait any schedule settles onto, so a
+   * controller asking for an hour cannot hold recovery past it. A detected restart wakes a hinted wait as it wakes any other, because a hint the controller gave
+   * before it restarted says nothing about the controller that came back.
    */
   *#recoveryDelays(): Generator<number> {
 
@@ -632,7 +673,15 @@ export class ConnectionMonitor {
         rung = 0;
       }
 
-      yield schedule.backoff[rung] ?? schedule.steady;
+      const rungMs = schedule.backoff[rung] ?? schedule.steady;
+      const hintMs = Math.min(hintedWaitMs(this.#lastFault, this.#clock.now()), ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady);
+
+      if(hintMs > rungMs) {
+
+        this.#log.debug("The UniFi Access controller asked for more time, so recovery waits longer than its schedule before the next attempt.", { hintMs });
+      }
+
+      yield Math.max(rungMs, hintMs);
       rung++;
     }
   }
@@ -775,10 +824,11 @@ export class ConnectionMonitor {
     }
   }
 
-  /* The privilege re-check, run detached so a slow or hanging check cannot hold recovery open. The only cancellation it can be handed is the monitor's own, so a
-   * disposal landing mid-check is this task ending on schedule rather than a failure to report. The injected check absorbs every other refusal itself - a
-   * controller it could not reach leaves the previous verdict standing - so anything arriving here that is not a cancellation means that contract broke, which
-   * earns a debug line and nothing more, because the answer gates nothing. Either way the task settles here rather than surfacing as an unhandled rejection.
+  /* The privilege re-check, run detached so a slow or hanging check cannot hold recovery open. The only cancellation it can be handed is the monitor's own, so a disposal
+   * landing mid-check is this task ending on schedule rather than a failure to report. The injected check absorbs every other refusal itself - a controller it could not
+   * reach keeps the recorded verdict, which the check returns as the session reports it, `null` while no session is held - so anything arriving here that is not a
+   * cancellation means that contract broke, which earns a debug line and nothing more, because the answer gates nothing. Either way the task settles here rather than
+   * surfacing as an unhandled rejection.
    */
   async #refreshAdminStatusInBackground(signal: AbortSignal): Promise<void> {
 

@@ -24,10 +24,16 @@ export const ACCESS_API_RETRY_INTERVAL = 300;
  * its retry interceptor from this one definition, so every request the pool carries is retried on the same terms, and anything that reasons about the pool's retry
  * timing reads it here rather than restating it.
  *
- * The status codes are the transient failures the retry interceptor retries before the transport's `send` ever observes a response. Each one is a condition in
- * which a UniFi OS controller was not in a state to answer rather than a considered refusal: 429 and the 5xx family are the controller shedding load or proxying to
- * a service that has not come up, and 400 and 404 are what its API gateway returns for a route that exists but whose backing service is still starting - the shape
- * a controller presents for a window after a reboot. They must not be trimmed on the reasoning that a 4xx is a client error.
+ * The status codes are the transient failures the retry interceptor retries before the transport's `send` observes the controller's last answer. Each one is a
+ * condition in which a UniFi OS controller was not in a state to answer rather than a considered refusal: the 5xx family is the controller shedding load or
+ * proxying to a service that has not come up, and 400 and 404 are what its API gateway returns for a route that exists but whose backing service is still
+ * starting - the shape a controller presents for a window after a reboot. They must not be trimmed on the reasoning that a 4xx is a client error. A retried
+ * status that persists through every attempt is not discarded: the controller's last answer reaches the caller as the response it was, and `ensureOk` turns it
+ * into an `AccessRequestError` carrying its status, body and headers.
+ *
+ * A 429 is not among them, and no answer whose headers carry a Retry-After key is retried, whatever the key's value. Retrying a rate limit multiplies the load the
+ * controller asked to shed, and a hinted wait of a second or more cannot fit inside the request deadline, so such an answer returns to its caller at once with
+ * the controller's hint among its headers, for a caller on a reconnect schedule to wait out.
  *
  * The retried verbs are the conventionally retry-safe ones plus POST: the interceptor only fires on those transient statuses and on the transient connection faults
  * undici treats as retryable - conditions that ordinarily mean the controller was not in a state to accept and act on the request - so re-sending a write absorbs a
@@ -35,10 +41,11 @@ export const ACCESS_API_RETRY_INTERVAL = 300;
  * applied twice opts out through the transport's per-request `retry` option. PATCH is held out of the set outright, because the config writes it carries are where
  * a double-apply would be consequential and the API offers no guarantee that repeating one is safe.
  *
- * The pool retries a request at most `maxRetries` times. The wait before each retry starts at `minTimeout` and grows by `timeoutFactor` up to `maxTimeout`, which
- * also caps any wait a controller asks for through Retry-After, so a momentary blip is retried almost at once and a controller still coming up is given
- * progressively more room. This is the HTTP-layer retry surface and is distinct from the throttle circuit breaker that ACCESS_API_ERROR_LIMIT and
- * ACCESS_API_RETRY_INTERVAL govern, which counts the failures that survive these retries.
+ * The pool retries a request at most `maxRetries` times. The wait before each retry starts at `minTimeout` and grows by `timeoutFactor` up to `maxTimeout`, so a
+ * momentary blip is retried almost at once and a controller still coming up is given progressively more room. This is the HTTP-layer retry surface and is
+ * distinct from the throttle circuit breaker that ACCESS_API_ERROR_LIMIT and ACCESS_API_RETRY_INTERVAL govern, which counts what survives these retries: an
+ * unanswered request, a 5xx or a 429 books a failure, and every other answer, a 4xx the controller kept returning through every attempt among them, came from a
+ * controller that was serving.
  */
 export const ACCESS_API_RETRY_PROFILE = {
 
@@ -46,7 +53,7 @@ export const ACCESS_API_RETRY_PROFILE = {
   maxTimeout: 1500,
   methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ],
   minTimeout: 100,
-  statusCodes: [ 400, 404, 429, 500, 502, 503, 504 ],
+  statusCodes: [ 400, 404, 500, 502, 503, 504 ],
   timeoutFactor: 2
 } as const;
 
@@ -109,6 +116,9 @@ export const ACCESS_RECOVERY_STEADY_INTERVAL_MS = 60000;
  * owner out of the controller's own interface, and this cadence stays under that threshold. It is not slower still, because a credential or permission corrected
  * on the controller is picked up within one interval of the correction - minutes rather than hours. A consumer's own startup retry waits by this same statement,
  * which is why it is published rather than held inside the recovery loop.
+ *
+ * The steady interval is also the ceiling on the wait a controller asks for. Recovery waits at least as long as a controller's Retry-After hint asks, whichever
+ * schedule it walks, and never past this interval, so a controller asking to be left for an hour is asked again within one interval rather than held to its word.
  */
 export const ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS = {
 

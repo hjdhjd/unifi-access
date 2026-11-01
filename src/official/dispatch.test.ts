@@ -6,11 +6,12 @@
  *
  * Everything runs against an undici MockAgent through the real transport, so the request travels the same path a live official call would, without a controller.
  */
-import { AccessApiError, AccessAuthorizationError, AccessNetworkError, AccessProtocolError, AccessRequestError } from "../errors.ts";
+import { AccessApiError, AccessAuthorizationError, AccessProtocolError, AccessRequestError } from "../errors.ts";
 import { HOST, RecordingTransport, captureRequest, officialPath, parseMultipart } from "./domain.helpers.ts";
 import { TestClock, expectAt } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { officialEndpoint, officialHost } from "./endpoints.ts";
+import { ACCESS_API_RETRY_PROFILE } from "../settings.ts";
 import type { AccessKnownJsonValue } from "../types/index.ts";
 import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
@@ -924,14 +925,31 @@ describe("OfficialDispatch: over a real socket", () => {
      * caller as a failure instead of being silently recovered from. No mocked interception can establish this - the mock replaces dispatch below the interceptor
      * that would do the re-sending.
      *
-     * The class is the network error rather than the request error, and that is the interceptor's doing rather than this layer's: a retryable status with no
-     * attempts left is reported by undici as its own exhausted-retries failure rather than as the response, which the transport has always classified as a
-     * reachability fault. The same class arrives on a permanently-unavailable controller under the pool's default; opting out only changes how many sends it
-     * takes to get there.
+     * The failure is the controller's own answer, classified as the request error carrying its status: the interceptor hands the last answer back whenever it
+     * makes no further attempt, so the same error arrives from a controller that stays unavailable under the pool's default, and opting out changes only how many
+     * sends it takes to get there.
      */
-    await assert.rejects(dispatch.command(loopback.origin + "/doors/abc/unlock", { method: "PUT", retry: false }), AccessNetworkError);
+    await assert.rejects(dispatch.command(loopback.origin + "/doors/abc/unlock", { method: "PUT", retry: false }), { name: "AccessRequestError", statusCode: 503 });
 
     assert.equal(loopback.hits.length, 1, "the one thing the opt-out buys: the door relay was fired at most once");
+  });
+
+  test("a request answered 404 on every attempt reaches the caller as the 404 the controller answered", async () => {
+
+    await using loopback = await createHttpsLoopback(() => ({ body: "not found", contentType: "text/plain", status: 404 }));
+    await using transport = new Transport({ host: loopback.host, origin: loopback.origin });
+
+    const dispatch = new OfficialDispatch({ transport });
+
+    /* A 404 is among the statuses the pool retries, so a read answered one on every attempt is retried to the profile's ceiling, and what the caller receives is the
+     * controller's last answer rather than an unreachable controller. The backoff runs in real time, so the request carries a deadline of its own and the row
+     * measures the count of attempts.
+     */
+    const deadlineMs = 10000;
+
+    await assert.rejects(dispatch.request(loopback.origin + "/doors/abc", { timeout: deadlineMs }), { body: "not found", name: "AccessRequestError", statusCode: 404 });
+
+    assert.equal(loopback.hits.length, ACCESS_API_RETRY_PROFILE.maxRetries + 1, "the first attempt and every retry the profile allows");
   });
 });
 

@@ -34,7 +34,8 @@ Whether the connection is in steady operation.
 get isThrottled(): boolean;
 ```
 
-Whether the transport's breaker is open. Delegated verbatim to the transport, which is the single source of truth for reachability backoff.
+Whether the transport's breaker is open. Delegated verbatim to the transport, whose circuit breaker is the single source of truth for whether the controller is
+serving (no answer, a 5xx or a 429 counting against it).
 
 ##### Returns
 

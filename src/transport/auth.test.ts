@@ -213,8 +213,9 @@ describe("AuthSession", () => {
 
       const { auth, host, pool } = makeAuth();
 
+      // The login is refused and the controller root answers without a CSRF token, so the retry has nothing to offer and the refusal stands.
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
-      pool.intercept({ method: "GET", path: ROOT_PATH }).reply(500, "unavailable");
+      pool.intercept({ method: "GET", path: ROOT_PATH }).reply(200, "");
 
       await assert.rejects(auth.login({ ...CREDENTIALS, host }), {
 
@@ -226,6 +227,60 @@ describe("AuthSession", () => {
         name: "AccessAuthError"
       });
 
+      assert.equal(auth.isAuthenticated, false);
+    });
+
+    /* A status that is no verdict on the credentials - a controller not ready yet, one limiting requests, a 3xx, or a 5xx the transport does not retry - surfaces as
+     * the classified request error rather than as a refused sign-in, fetches no CSRF token from the root, and leaves no session behind. The root interceptor counts
+     * what reaches it, so a fetch the rule should not make shows as a count rather than as a missing interceptor.
+     */
+    for(const status of [ 503, 404, 400, 429, 501, 302, 505 ]) {
+
+      test("a login answered " + String(status) + " throws AccessRequestError with that status and fetches no CSRF token", async () => {
+
+        const { auth, host, pool } = makeAuth();
+        let rootFetches = 0;
+
+        pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(status, "not ready");
+        pool.intercept({ method: "GET", path: ROOT_PATH }).reply(200, () => {
+
+          rootFetches++;
+
+          return "";
+        }, { headers: { "x-csrf-token": "fetched" } });
+
+        await assert.rejects(auth.login({ ...CREDENTIALS, host }), { name: "AccessRequestError", statusCode: status });
+        assert.equal(rootFetches, 0, "an answer that is no refusal asks the root for nothing");
+        assert.equal(auth.isAuthenticated, false);
+      });
+    }
+
+    // The root's own answer is read by the same rule: a controller not ready to serve its root, or limiting requests there, was not placed to judge the login it
+    // refused, so the root's classified error surfaces rather than the login's refusal standing as a verdict on the password.
+    for(const status of [ 503, 429 ]) {
+
+      test("a login answered 401 whose controller root answers " + String(status) + " throws AccessRequestError rather than a refused sign-in", async () => {
+
+        const { auth, host, pool } = makeAuth();
+
+        pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
+        pool.intercept({ method: "GET", path: ROOT_PATH }).reply(status, "not ready");
+
+        await assert.rejects(auth.login({ ...CREDENTIALS, host }), { name: "AccessRequestError", statusCode: status });
+        assert.equal(auth.isAuthenticated, false);
+      });
+    }
+
+    test("a login answered 401 whose root hands over a token and whose retry is answered 401 again is a refused sign-in", async () => {
+
+      const { auth, host, pool } = makeAuth();
+
+      // The root answers as a working controller does, so the retried login is judged with the token in hand, and its second 401 is the verdict it reads as.
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
+      pool.intercept({ method: "GET", path: ROOT_PATH }).reply(200, "", { headers: { "x-csrf-token": "fetched" } });
+      pool.intercept({ headers: { "x-csrf-token": "fetched" }, method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
+
+      await assert.rejects(auth.login({ ...CREDENTIALS, host }), { identity: "credentials", name: "AccessAuthError" });
       assert.equal(auth.isAuthenticated, false);
     });
 
@@ -425,7 +480,7 @@ describe("AuthSession", () => {
       // The login POST itself is refused. Were the handshake to travel the ordinary authenticated path, that 401 would invoke the relogin hook, which would post
       // another login, and so on. Exactly one login POST is registered, so a recursion would fail to find an interceptor.
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
-      pool.intercept({ method: "GET", path: ROOT_PATH }).reply(500, "unavailable");
+      pool.intercept({ method: "GET", path: ROOT_PATH }).reply(200, "");
 
       const payloads = await captureRelogin(async () => {
 
@@ -591,6 +646,24 @@ describe("AuthSession", () => {
 
       assert.equal(await auth.refreshAdminStatus(), true, "a controller declining one request says nothing about the account");
     });
+
+    // A controller not ready yet or limiting requests hands its answer back as the status it was, and neither is a verdict on the account's privilege.
+    for(const status of [ 503, 429, 404 ]) {
+
+      test("keeps the previous verdict when the controller answers the check " + String(status), async () => {
+
+        const fixture = makeAuth();
+        const { auth, pool } = fixture;
+
+        await login(fixture);
+        await driveAdminTrue(fixture);
+
+        pool.intercept({ method: "GET", path: SELF_PATH }).reply(status, "not ready");
+
+        assert.equal(await auth.refreshAdminStatus(), true, "a " + String(status) + " says nothing about the account");
+        assert.equal(auth.isAdmin, true);
+      });
+    }
 
     test("keeps the previous verdict when the account record cannot be parsed", async () => {
 

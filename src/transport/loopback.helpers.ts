@@ -494,11 +494,13 @@ export interface HttpsLoopback extends AsyncDisposable {
  * peer, dialed by a transport that built its own pool.
  *
  * @param respond - What to answer a request with, given which request it is. The count is one-based, so a responder that varies its answer reads the first
- *                  request as hit one.
+ *                  request as hit one. Any `headers` an answer names go out beside its content type, which is how a test hands the client a header such as a
+ *                  controller's Retry-After.
  *
  * @returns The recording peer. Dispose it to stop listening.
  */
-export async function createHttpsLoopback(respond: (hit: number) => { body: string; contentType: string; status: number }): Promise<HttpsLoopback> {
+export async function createHttpsLoopback(respond: (hit: number) => { body: string; contentType: string; headers?: Record<string, string>;
+  status: number; }): Promise<HttpsLoopback> {
 
   const hits: { body: Buffer; contentType: string }[] = [];
   const ledger = createConnectionLedger<AcceptedConnection>();
@@ -513,7 +515,7 @@ export async function createHttpsLoopback(respond: (hit: number) => { body: stri
 
       const answer = respond(hits.length);
 
-      response.writeHead(answer.status, { "content-type": answer.contentType });
+      response.writeHead(answer.status, { "content-type": answer.contentType, ...answer.headers });
       response.end(answer.body);
     });
   });

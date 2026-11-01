@@ -2,6 +2,7 @@
  *
  * errors.ts: The typed error hierarchy for the UniFi Access library.
  */
+import { ACCESS_API_RETRY_PROFILE } from "./settings.ts";
 
 /**
  * The error model in one sentence: every failure the library raises is a subclass of {@link AccessError}, and the *first* level of the hierarchy answers the only
@@ -10,7 +11,10 @@
  * - {@link RecoverableError} means the operation could plausibly succeed if retried or deferred (a throttle window, a timeout, a transient network blip, a caller
  *   abort, a stalled realtime channel). The caller decides the retry policy; the library does not retry user operations on the caller's behalf.
  * - {@link FatalError} means retrying the same call will fail the same way (bad credentials, insufficient privileges, a 4xx/5xx the controller will keep returning,
- *   a protocol violation, a structural bootstrap failure). The caller should surface or propagate it.
+ *   a protocol violation, a structural bootstrap failure), except that an {@link AccessRequestError} that {@link controllerReadinessOf} reads as limiting or not
+ *   ready is the controller's readiness answer rather than a verdict on the request: a status the transport retries is one the transport has already retried, and
+ *   a 429 is the controller asking to be asked later, its `Retry-After` among the error's headers, so a caller on a reconnect schedule retries such a request again
+ *   later. The caller should surface or propagate it.
  *
  * Consumers branch on the abstract base for policy (`if(err instanceof RecoverableError) { defer(); }`) and on the concrete class for specific handling
  * (`if(err instanceof AccessThrottledError) { waitFor(err.cooldownMs); }`). This is the Node idiom - a class hierarchy with `instanceof` - chosen deliberately over
@@ -361,10 +365,12 @@ export class AccessConfigurationError extends FatalError {
 }
 
 /**
- * The bootstrap sequence failed while fetching, parsing, or applying the controller bootstrap documents. `stage` marks which - `"fetch"` when the bootstrap endpoint
- * returns a non-2xx status or the transport fails reaching it, `"parse"` when the body cannot be decoded, `"apply"` when a decoded document cannot be folded into the
- * state model - so the caller can report the precise point of failure rather than a generic "connect failed." A login or reachability failure is not wrapped here; it
- * propagates as its own typed fatal.
+ * The bootstrap sequence failed while fetching, parsing, or applying the controller bootstrap documents. `stage` marks which - `"fetch"` when the controller
+ * declines to hand a document over, by a non-2xx status (an {@link AccessRequestError} for any status other than a refused identity or privilege) or inside the
+ * envelope it answered a 2xx with, `"parse"` when the body cannot be decoded, `"apply"` when a decoded document cannot be folded into the state model - so the
+ * caller can report the precise point of failure rather than a generic "connect failed." A login or reachability failure is not wrapped here: a transport-level
+ * failure reaching the endpoint propagates as its own typed error, and a login failure as {@link AccessAuthError} when the controller refused the sign-in or as
+ * {@link AccessRequestError} when it answered with a status that is no verdict on the credentials.
  *
  * @category Errors
  */
@@ -384,9 +390,10 @@ export class AccessBootstrapError extends FatalError {
 /**
  * The stages of the `connect()` sequence that carry a {@link AccessBootstrapError} tag. The sequence authenticates, fetches the bootstrap documents, parses them,
  * applies them to the state model, then subscribes to the realtime stream; only the fetch, parse, and apply stages are wrapped as a bootstrap error, because a login
- * or reachability failure already propagates as its own typed fatal (`AccessAuthError` / `AccessNetworkError`), and a subscribe failure surfaces as the fault the
- * realtime channel itself raised. The apply stage is distinct from parse because it points at a different fix: a body that will not decode is a controller or
- * transport fault, while a decoded document the state model cannot fold is a wire shape the library does not model or a fault in the reducer itself.
+ * or reachability failure already propagates as its own typed error (`AccessAuthError` for a refused sign-in, `AccessRequestError` for a sign-in answered with a
+ * status that is no verdict on the credentials, `AccessNetworkError` for an unreachable controller), and a subscribe failure surfaces as the fault the realtime
+ * channel itself raised. The apply stage is distinct from parse because it points at a different fix: a body that will not decode is a controller or transport
+ * fault, while a decoded document the state model cannot fold is a wire shape the library does not model or a fault in the reducer itself.
  *
  * @category Errors
  */
@@ -704,6 +711,77 @@ export function isSignInRefusal(error: unknown): boolean {
   const refusal = (error instanceof AccessBootstrapError) ? error.cause : error;
 
   return isIdentityRefusal(refusal) || isPrivilegeRefusal(refusal);
+}
+
+/**
+ * What a controller's answer says about its readiness to serve, when it says something about that rather than about the request it answered: `"limiting"` is a
+ * controller limiting requests, the 429 that asks to be asked less often, and `"not-ready"` is a controller not ready yet, answering with a status the transport
+ * retries as the readiness answer a controller rebooting or starting a service gives. {@link controllerReadinessOf} is the reading that names one.
+ *
+ * @category Errors
+ */
+export type AccessControllerReadiness = "limiting" | "not-ready";
+
+/**
+ * Read the readiness a bare status names. A 429 is a controller limiting requests, a status in {@link ACCESS_API_RETRY_PROFILE}'s retried set is one not ready
+ * yet, and every other status names nothing. Every reading of readiness the library makes, of a failure or of a status, asks this one, so a 429 and the retried set
+ * are spelled once. It is not published from the library's public surface, because its readers are the library's own.
+ *
+ * @param statusCode - The status the controller answered with.
+ *
+ * @returns `"limiting"` for a 429, `"not-ready"` for a status the transport retries, and `null` for every other status.
+ *
+ * @category Utilities
+ */
+export function readinessOfStatus(statusCode: number): AccessControllerReadiness | null {
+
+  if(statusCode === 429) {
+
+    return "limiting";
+  }
+
+  // The set is a tuple of literals, whose `includes` accepts only those literals, so a status of any value is tested by comparison instead.
+  return ACCESS_API_RETRY_PROFILE.statusCodes.some((code) => (code === statusCode)) ? "not-ready" : null;
+}
+
+/**
+ * Read the status error a failure carries: an {@link AccessRequestError} handed in, or one carried as the `cause` of an {@link AccessBootstrapError} handed in, and
+ * no further, on the terms {@link isSignInRefusal} opens that one wrapper. Every reader of the status a failure carries goes through here, so which wrapper is
+ * opened is stated once. It is not published from the library's public surface, because its readers are the library's own.
+ *
+ * @param error - The error value to read. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
+ *
+ * @returns The status error the failure carries, or `null` when it carries none.
+ *
+ * @category Utilities
+ */
+export function statusErrorOf(error: unknown): AccessRequestError | null {
+
+  const carried = (error instanceof AccessBootstrapError) ? error.cause : error;
+
+  return (carried instanceof AccessRequestError) ? carried : null;
+}
+
+/**
+ * Whether a failure is the controller answering that it is limiting requests or is not ready yet, rather than judging the request or failing to answer at all: an
+ * {@link AccessRequestError} carrying a 429 reads `"limiting"`, and one carrying a status the transport retries reads `"not-ready"`, handed in bare or as the
+ * `cause` of an {@link AccessBootstrapError}, the one wrapper this opens, on the terms {@link isSignInRefusal} opens it.
+ *
+ * Saying this once is what keeps a consumer's reading from drifting from the library's own. The connection monitor announces a lost connection by this reading,
+ * and a consumer reporting a failed connect reads a startup answered this way by the same rule rather than as an unreachable controller. A sign-in refused on either
+ * ground answers `null`, because {@link isSignInRefusal} is its reading, and so does every failure that is not a status the controller answered.
+ *
+ * @param error - The error value to classify. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
+ *
+ * @returns `"limiting"` or `"not-ready"` when the failure is such an answer, and `null` for anything else.
+ *
+ * @category Utilities
+ */
+export function controllerReadinessOf(error: unknown): AccessControllerReadiness | null {
+
+  const statusError = statusErrorOf(error);
+
+  return (statusError === null) ? null : readinessOfStatus(statusError.statusCode);
 }
 
 /**
