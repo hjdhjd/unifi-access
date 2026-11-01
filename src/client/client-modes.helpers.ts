@@ -87,6 +87,7 @@ export function mockController(host = HOST): { agent: MockAgent; official: Inter
 
 export function interceptCredentialPass(pool: Interceptable): void {
 
+  pool.intercept({ method: "GET", path: "/" }).reply(200, "", { headers: { "x-csrf-token": "csrf0" } });
   pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(200, "", { headers: { "set-cookie": "TOKEN=abc", "x-csrf-token": "csrf1" } });
   pool.intercept({ method: "GET", path: CONTROLLER_PATH }).reply(200, controllerBody());
   pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());

@@ -470,7 +470,7 @@ export class AccessClient implements AsyncDisposable {
         host: opts.host,
         identity: "credentials",
         log,
-        onUnauthorized: (): Promise<boolean> => session.reauthenticate(),
+        onUnauthorized: (relogin): Promise<boolean> => session.reauthenticate(relogin),
         origin: "https://" + authority,
         ...((opts.dispatcher !== undefined) && { dispatcher: opts.dispatcher }),
         ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls })
@@ -531,9 +531,10 @@ export class AccessClient implements AsyncDisposable {
 
     try {
 
-      /* Stage 1: authenticate. A refused sign-in throws the fatal AccessAuthError, a sign-in answered with a status that is no verdict on the credentials (a
-       * controller limiting requests or not ready yet among them) the AccessRequestError carrying that status, and an unreachable controller the recoverable
-       * AccessNetworkError - each already typed, propagated as it is rather than wrapped, so the caller sees the precise cause.
+      /* Stage 1: authenticate. A refused sign-in throws the fatal AccessAuthError, a readiness answer at the controller root, read before the login, or a sign-in
+       * answered with a status that is no verdict on the credentials (a controller limiting requests or not ready yet among them) the AccessRequestError carrying
+       * that status, and an unreachable controller the recoverable AccessNetworkError - each already typed, propagated as it is rather than wrapped, so the caller
+       * sees the precise cause.
        */
       if((direct !== null) && (opts.username !== undefined)) {
 
@@ -888,8 +889,8 @@ export class AccessClient implements AsyncDisposable {
   }
 
   /**
-   * Whether the authenticated account holds administrative privilege, or `null` when that has never been established. This is the session's own verdict rather
-   * than anything derived from state: privilege belongs to the credentials, not to the controller's configuration.
+   * Whether the authenticated account holds administrative privilege, or `null` when that is undetermined or no session is held, as while a relogin is in flight.
+   * This is the session's own verdict rather than anything derived from state: privilege belongs to the credentials, not to the controller's configuration.
    */
   get isAdmin(): Nullable<boolean> {
 

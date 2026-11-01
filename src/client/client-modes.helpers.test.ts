@@ -48,17 +48,19 @@ describe("mockController", () => {
 
 describe("the interception passes", () => {
 
-  test("the credential pass arms the four reads a credential connect makes", async () => {
+  test("the credential pass arms every request a credential connect makes, the controller root first", async () => {
 
     const { agent, pool } = mockController();
 
     interceptCredentialPass(pool);
 
+    const root = await request(DIRECT + "/", { dispatcher: agent });
     const login = await request(DIRECT + LOGIN_PATH, { dispatcher: agent, method: "POST" });
     const controller = await request(DIRECT + CONTROLLER_PATH, { dispatcher: agent });
     const topology = await request(DIRECT + TOPOLOGY_PATH, { dispatcher: agent });
     const scopes = await request(DIRECT + SELF_PATH, { dispatcher: agent });
 
+    assert.equal(root.headers["x-csrf-token"], "csrf0", "the controller root answers with the CSRF token the login carries");
     assert.deepEqual([login.headers["set-cookie"]].flat(), ["TOKEN=abc"], "the login leg answers with the cookie the credential session reads");
     assert.deepEqual([ controller.statusCode, topology.statusCode, scopes.statusCode ], [ 200, 200, 200 ],
       "and the three reads that follow it are armed in the order the connect makes them");

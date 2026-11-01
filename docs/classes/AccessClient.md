@@ -153,8 +153,8 @@ readonly [`AccessHub`](../interfaces/AccessHub.md)[]
 get isAdmin(): Nullable<boolean>;
 ```
 
-Whether the authenticated account holds administrative privilege, or `null` when that has never been established. This is the session's own verdict rather
-than anything derived from state: privilege belongs to the credentials, not to the controller's configuration.
+Whether the authenticated account holds administrative privilege, or `null` when that is undetermined or no session is held, as while a relogin is in flight.
+This is the session's own verdict rather than anything derived from state: privilege belongs to the credentials, not to the controller's configuration.
 
 ##### Returns
 

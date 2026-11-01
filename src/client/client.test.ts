@@ -50,8 +50,10 @@ const DOCUMENTLESS_BODY = JSON.stringify({ "code": 1, "codeS": "SUCCESS", "msg":
 // The account record the privilege check reads, with the grant that marks an administrator.
 const selfBody = (admin: boolean): string => JSON.stringify({ scopes: admin ? [ "edit:access.device", "view:access.device" ] : ["view:access.device"] });
 
+// Stub a successful UniFi OS sign-in on the pool: the controller root answering with a CSRF token, then the login that carries it.
 function interceptLogin(pool: Interceptable): void {
 
+  pool.intercept({ method: "GET", path: "/" }).reply(200, "", { headers: { "x-csrf-token": "csrf0" } });
   pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(200, "", { headers: { "set-cookie": "TOKEN=abc", "x-csrf-token": "csrf1" } });
 }
 
@@ -271,12 +273,13 @@ describe("AccessClient.connect", () => {
 
       const { agent, pool } = mockController();
 
-      // The login is refused and the CSRF fetch yields no token, so the handshake cannot complete.
-      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad");
+      // The controller root answers without a CSRF token and the one login is refused, so the sign-in fails as bad credentials.
       pool.intercept({ method: "GET", path: "/" }).reply(200, "");
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad");
 
       // A credential-only connect can only have been refused its credentials.
       await assert.rejects(connect(agent), { identity: "credentials", name: "AccessAuthError" });
+      agent.assertNoPendingInterceptors();
     });
 
     test("a refused document fetch rejects at the fetch stage", async () => {
@@ -1117,6 +1120,39 @@ describe("AccessClient.connect", () => {
       assert.equal(client.connection.isThrottled, false, "the controller served the probe, so the pause ends");
       assert.notEqual(resumed, -1, "the breaker's closing edge logs its resumption");
       assert.ok(notReady > resumed, "and the not-ready line follows it");
+    });
+
+    test("a reachability probe answered 401 while the breaker is open relogs in through it, and the relogin's first serving answer closes the breaker", async () => {
+
+      const { agent, pool } = mockController();
+
+      interceptLogin(pool);
+      interceptPass(pool);
+
+      await using client = await connect(agent);
+
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(503, "starting").times(ACCESS_API_ERROR_LIMIT);
+
+      for(let attempt = 0; attempt < ACCESS_API_ERROR_LIMIT; attempt++) {
+
+        // eslint-disable-next-line no-await-in-loop
+        await client.connection.verify().catch(() => undefined);
+      }
+
+      assert.equal(client.connection.isThrottled, true, "consecutive server errors must have opened the breaker");
+
+      /* The session expired during the outage, so the probe meets a 401. The composition root hands the relogin the probe's mark, so its root read reaches the
+       * controller through the open breaker rather than being refused locally, and that first served answer ends the pause before the login and the retried probe
+       * are sent.
+       */
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(401, "stale");
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());
+
+      await client.connection.verify();
+
+      assert.equal(client.connection.isThrottled, false, "the controller served the relogin and the retried probe");
+      agent.assertNoPendingInterceptors();
     });
   });
 

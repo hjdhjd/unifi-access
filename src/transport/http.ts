@@ -76,8 +76,9 @@ export interface RequestOptions {
  *   handshake passes `false` so its own 401 cannot recurse back into relogin.
  * - `probe` marks a request as the connection-recovery reachability trial. It skips the open breaker's cooldown gate so the trial can dispatch at the recovering
  *   coordinator's cadence rather than waiting out the full cooldown, while still booking its outcome through the normal path - so a successful probe closes the
- *   breaker exactly as the autonomous half-open trial would. Only recovery passes `true`; ordinary requests leave it `false` and stay gated, so the breaker still
- *   guards against operational hammering.
+ *   breaker exactly as the autonomous half-open trial would. A 401 the trial meets hands the mark to the relogin it triggers, so that relogin reaches the
+ *   controller as the trial did. Only recovery passes `true`; ordinary requests leave it `false` and stay gated, so the breaker still guards against operational
+ *   hammering.
  *
  * @category Transport
  */
@@ -96,8 +97,10 @@ export interface SendOptions extends RequestOptions {
  *   rebuilds it - lifecycle stays with the injector, so `reset()` and disposal are no-ops on the dispatcher. It also brings its own connector and its own retry
  *   policy, so a connection attempt a settled request leaves behind runs on that dispatcher's terms rather than the owned pool's; the request itself settles at
  *   once either way.
- * - `getAuthHeaders` supplies the cookie and CSRF headers stamped onto every request. `onUnauthorized` is the relogin hook invoked on a 401 before a single retry.
- *   Both point upward at {@link AuthSession}, so they are passed as plain functions (dependency inversion) rather than as an `AuthSession` import.
+ * - `getAuthHeaders` supplies the cookie and CSRF headers stamped onto every request. `onUnauthorized` is the relogin hook invoked on a 401, told whether the
+ *   request that met it was a recovery probe so the relogin can carry the probe's mark: it resolves `true` to have the request retried once, resolves `false` to
+ *   have the 401 handed back, and rejects with the relogin's own failure, which the request then throws. Both point upward at {@link AuthSession}, so they are
+ *   passed as plain functions (dependency inversion) rather than as an `AuthSession` import.
  * - `identity` names which identity leg authenticates these requests, and is what words a 401 refusal - the credential session's sentence or the API token's. It
  *   defaults to `"credentials"`. The composition root builds one transport per identity it holds, so which one a transport carries is a fact settled where it is
  *   constructed rather than one re-derived from each URL at the moment a request is refused.
@@ -115,7 +118,7 @@ export interface TransportOptions {
   host: string;
   identity?: AccessIdentityLeg;
   log?: AccessLogging;
-  onUnauthorized?: () => Promise<boolean>;
+  onUnauthorized?: (opts: { probe: boolean }) => Promise<boolean>;
   origin: string;
   verifyTls?: boolean;
 }
@@ -409,7 +412,7 @@ export class Transport implements AsyncDisposable {
   readonly #host: string;
   readonly #identity: AccessIdentityLeg;
   readonly #log: AccessLogging;
-  readonly #onUnauthorized: (() => Promise<boolean>) | undefined;
+  readonly #onUnauthorized: ((opts: { probe: boolean }) => Promise<boolean>) | undefined;
   readonly #origin: string;
   readonly #verifyTls: boolean;
 
@@ -478,8 +481,10 @@ export class Transport implements AsyncDisposable {
    * @returns The response.
    *
    * @throws {@link AccessThrottledError} while the breaker is open and cooling; {@link AccessTimeoutError}, {@link AccessAbortedError}, or
-   *   {@link AccessNetworkError} on transport-level failures. A status the controller answered is never thrown here: on the owned pool it returns as the response,
-   *   a retried status after its last attempt and a 429 or an answer carrying a Retry-After hint at once, for {@link AccessResponse.ensureOk} to classify.
+   *   {@link AccessNetworkError} on transport-level failures; and whatever the relogin hook rejects with, when a 401's relogin fails on anything but a refused
+   *   sign-in, the status error its handshake was answered with among them. A status the controller answered this request with is never thrown here: on the owned
+   *   pool it returns as the response, a retried status after its last attempt and a 429 or an answer carrying a Retry-After hint at once, for
+   *   {@link AccessResponse.ensureOk} to classify.
    */
   async send(url: string, opts: SendOptions = {}): Promise<AccessResponse> {
 
@@ -497,8 +502,11 @@ export class Transport implements AsyncDisposable {
       }
     }
 
-    // Relogin retry loop. The body of the loop runs at most twice: the original attempt, and - if it returns 401 and a relogin hook is wired and succeeds - one
-    // retry with relogin disabled so a persistent 401 cannot spin. Booking happens exactly once, on the attempt whose outcome we return.
+    /* Relogin retry loop. The body of the loop runs at most twice: the original attempt, and - if it returns 401 and a relogin hook is wired and succeeds - one
+     * retry with relogin disabled so a persistent 401 cannot spin. Booking happens exactly once, on the attempt whose outcome we return, and not at all for an
+     * attempt whose relogin throws: the handshake's own sends booked what the controller answered them, so booking the 401 beside them would count a controller
+     * that failed its relogin as one that served. The hook is told whether this request is the recovery probe, so a relogin the probe triggers carries its mark.
+     */
     let allowAuthRetry = opts.authRetry ?? true;
 
     for(;;) {
@@ -519,7 +527,7 @@ export class Transport implements AsyncDisposable {
       }
 
       // eslint-disable-next-line no-await-in-loop
-      if((result.statusCode === 401) && allowAuthRetry && (this.#onUnauthorized !== undefined) && (await this.#onUnauthorized())) {
+      if((result.statusCode === 401) && allowAuthRetry && (this.#onUnauthorized !== undefined) && (await this.#onUnauthorized({ probe: opts.probe === true }))) {
 
         allowAuthRetry = false;
 
