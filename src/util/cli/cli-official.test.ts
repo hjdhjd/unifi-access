@@ -4,10 +4,13 @@
  * offline against the structural fake.
  */
 import { CREDENTIALS_PAIR, assertNothingPlantedSurvives, makeCommandContext, makeFakeClient, rendered, withStderr } from "./cli.helpers.ts";
+import { HOST, officialPath } from "../../official/domain.helpers.ts";
 import { describe, test } from "node:test";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { officialEndpoint, officialHost } from "../../official/endpoints.ts";
 import { CliError } from "./shared.ts";
 import type { CommandSpec } from "./shared.ts";
+import { OfficialDispatch } from "../../official/dispatch.ts";
 import { Readable } from "node:stream";
 import { accessEventPacketsInteractiveFixture } from "../../protocol/events.fixtures.ts";
 import { api } from "./commands/api.ts";
@@ -15,8 +18,10 @@ import assert from "node:assert/strict";
 import { classify } from "./commands/classify.ts";
 import { findPacket } from "../../protocol/capture.helpers.ts";
 import { logs } from "./commands/logs.ts";
+import { makeMockTransport } from "../../transport/mock-controller.helpers.ts";
 import { openOfficialClient } from "./client.ts";
 import path from "node:path";
+import { resolveOfficialRecord } from "./lookup.ts";
 import { tmpdir } from "node:os";
 import { user } from "./commands/user.ts";
 import { visitor } from "./commands/visitor.ts";
@@ -997,5 +1002,42 @@ describe("the capture scrub across the official groups", () => {
 
     assert.equal(rendered(printed)[0]?.includes("482913"), false, "the minted credential does not survive");
     assert.match(rendered(printed)[0] ?? "", /^"REDACTED-[0-9a-f]{8}-"$/, "the envelope shape - a bare scalar - is what a capture of that endpoint is for");
+  });
+});
+
+describe("the by-id lookup over the official dispatch", () => {
+
+  test("falls through to the walk when the controller refuses an unknown id with a refusal envelope at a 4xx", async () => {
+
+    /* The by-id read goes through the official dispatch over a mocked controller, which refuses the name the operator typed the way an official refusal at a 4xx
+     * arrives. The lookup falls through on the controller's refusal whatever status it came at, so the walk finds the record by its name and the read by its id
+     * answers it.
+     */
+    const { pool, transport } = makeMockTransport({ host: officialHost(HOST) });
+    const dispatch = new OfficialDispatch({ transport });
+    const record = { "full_name": "Ada", "id": "user-3" };
+
+    pool.intercept({ method: "GET", path: officialPath("/users/ada") }).reply(404, { "code": "CODE_NOT_EXISTS", "msg": "The user does not exist." });
+    pool.intercept({ method: "GET", path: officialPath("/users/user-3") }).reply(200, { "code": "SUCCESS", "data": record, "msg": "success" });
+
+    const fetched: string[] = [];
+    const found = await resolveOfficialRecord("ada", {
+
+      fetch: async (id: string): Promise<typeof record> => {
+
+        fetched.push(id);
+
+        return (await dispatch.request<typeof record>(officialEndpoint(HOST, "/users/" + id))).data;
+      },
+      kind: "user",
+      name: (candidate): string => candidate.full_name,
+      walk: async function *(): AsyncIterable<typeof record> {
+
+        yield record;
+      }
+    });
+
+    assert.deepEqual(found, record);
+    assert.deepEqual(fetched, [ "ada", "user-3" ], "the refused id falls through to the walk, and the record it finds is read by its id");
   });
 });

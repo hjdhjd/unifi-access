@@ -2,8 +2,8 @@
  *
  * dispatch.ts: The official API's single request path - the result envelope read through the protocol tier, the outbound encoding, and the page report carried through.
  */
-import type { RequestOptions, Transport } from "../transport/http.ts";
-import { AccessProtocolError } from "../errors.ts";
+import { AccessApiError, AccessProtocolError, AccessRequestError, controllerReadinessOf } from "../errors.ts";
+import type { AccessResponse, RequestOptions, Transport } from "../transport/http.ts";
 import { isRecord } from "../json.ts";
 import { readResultEnvelope } from "../protocol/envelope.ts";
 
@@ -121,15 +121,17 @@ export interface OfficialDomainOptions {
  * The one path every official request takes.
  *
  * The official API answers in a uniform envelope - a result code, the payload, a message, and pagination on the endpoints that page - and it reports its refusals
- * *inside* that envelope with a 2xx status. So a caller that read the status alone would treat a refused request as a successful one carrying a payload it never
- * got. The protocol tier's envelope reader is what makes that impossible, and it is the reader the Access application's own endpoints go through as well: every
- * official request resolves to a payload the endpoint really returned, or throws. What this module owns is the three arms, the outbound encoding, and the page
- * report an arm reads beside its results.
+ * *inside* that envelope, under a 2xx status or a 4xx. So a caller that read the status alone would treat a refusal under a 2xx as a successful request carrying a
+ * payload it never got. The protocol tier's envelope reader is what makes that impossible, and it is the reader the Access application's own endpoints go through as
+ * well: every official request resolves to a payload the endpoint really returned, or throws. What this module owns is one arm per response shape, the outbound encoding,
+ * and the page report an arm reads beside its results.
  *
  * The outcomes, and where each is decided:
  *
- * - A non-2xx never reaches the envelope at all. It classifies through the transport's own status mapping, so an official 401 or 403 raises the same typed error
- *   an Access-application request would, and there is one HTTP-status vocabulary in the library rather than two.
+ * - A non-2xx classifies through the transport's own status mapping, so an official 401 or 403 raises the same typed error an Access-application request would,
+ *   and there is one HTTP-status vocabulary in the library rather than two. The one reading beside it is a refusal the controller answered at a 4xx in its own
+ *   vocabulary as well: a 4xx other than 401, 403 and 429 whose body is a refusal envelope throws {@link AccessApiError}, the status error its cause, because its
+ *   code is what a caller branches on.
  * - A 2xx whose code is not success throws {@link AccessApiError}, carrying the controller's own code as a typed field and its message as the error's.
  * - A 2xx whose code is success returns the payload, with pagination beside it when the endpoint sent some.
  *
@@ -162,14 +164,15 @@ export class OfficialDispatch {
    *
    * @returns The endpoint's payload, and its pagination when it paginates.
    *
-   * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, {@link AccessProtocolError} when the response is not the
-   *   envelope every official endpoint answers in, or the transport's own typed errors for a non-2xx and for every transport-level failure.
+   * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, at a 2xx or at a 4xx other than 401, 403 and 429,
+   *   {@link AccessProtocolError} when a 2xx response is not the envelope every official endpoint answers in, or the transport's own typed errors for every other
+   *   non-2xx and for every transport-level failure.
    */
   async request<T>(url: string, opts: AccessOfficialRequestOptions = {}, call: AccessOfficialCallOptions = {}): Promise<AccessOfficialResult<T>> {
 
-    // A non-2xx throws here, through the transport's existing status classification, so this method only ever goes on to read an envelope the controller meant as
-    // an answer. The JSON decode throws its own protocol error, which is why nothing below re-wraps a parse failure.
-    const body = readResultEnvelope((await this.#transport.send(url, await this.#encode(opts, call))).ensureOk().json<unknown>(), OFFICIAL_REFUSAL_FALLBACK);
+    // A non-2xx throws here, through the one reading of an official status, so this method only ever goes on to read an envelope the controller meant as an
+    // answer. The JSON decode throws its own protocol error, which is why nothing below re-wraps a parse failure.
+    const body = readResultEnvelope(ensureAnswered(await this.#transport.send(url, await this.#encode(opts, call))).json<unknown>(), OFFICIAL_REFUSAL_FALLBACK);
 
     /* This arm's contract is a payload of type `T`, so an envelope carrying no `data` member cannot satisfy it: resolving would hand the caller `undefined` under
      * whatever type it asked for, which is the assertion-into-a-lie the typed return exists to prevent. A mutation whose success genuinely carries nothing goes
@@ -197,12 +200,13 @@ export class OfficialDispatch {
    * @param opts - Per-request options, encoded here and threaded to the transport.
    * @param call - The per-call options every domain method forwards, merged into the request options here.
    *
-   * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, {@link AccessProtocolError} when the response is not the
-   *   envelope every official endpoint answers in, or the transport's own typed errors for a non-2xx and for every transport-level failure.
+   * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, at a 2xx or at a 4xx other than 401, 403 and 429,
+   *   {@link AccessProtocolError} when a 2xx response is not the envelope every official endpoint answers in, or the transport's own typed errors for every other
+   *   non-2xx and for every transport-level failure.
    */
   async command(url: string, opts: AccessOfficialRequestOptions = {}, call: AccessOfficialCallOptions = {}): Promise<void> {
 
-    readResultEnvelope((await this.#transport.send(url, await this.#encode(opts, call))).ensureOk().json<unknown>(), OFFICIAL_REFUSAL_FALLBACK);
+    readResultEnvelope(ensureAnswered(await this.#transport.send(url, await this.#encode(opts, call))).json<unknown>(), OFFICIAL_REFUSAL_FALLBACK);
   }
 
   /**
@@ -221,12 +225,13 @@ export class OfficialDispatch {
    *
    * @returns The response body as raw bytes.
    *
-   * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, {@link AccessProtocolError} when a JSON answer arrives
-   *   where bytes were expected, or the transport's own typed errors for a non-2xx and for every transport-level failure.
+   * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, at a 2xx or at a 4xx other than 401, 403 and 429,
+   *   {@link AccessProtocolError} when a JSON answer arrives where bytes were expected, or the transport's own typed errors for every other non-2xx and for every
+   *   transport-level failure.
    */
   async download(url: string, opts: AccessOfficialRequestOptions = {}, call: AccessOfficialCallOptions = {}): Promise<Buffer> {
 
-    const response = (await this.#transport.send(url, await this.#encode(opts, call))).ensureOk();
+    const response = ensureAnswered(await this.#transport.send(url, await this.#encode(opts, call)));
     const contentType = response.header("content-type");
 
     if(contentType?.includes(JSON_CONTENT_TYPE)) {
@@ -348,6 +353,42 @@ async function encodeMultipart(parts: readonly AccessOfficialFormPart[]): Promis
   }
 
   return { body: await response.bytes(), contentType };
+}
+
+/* The official surface's one reading of a response's status, which every arm makes in place of a bare ensureOk. A 2xx comes back for the arm to read. A 4xx the
+ * transport classifies as a request error, which is any but the identity leg's 401 and 403, is read for a refusal envelope first unless it is a controller
+ * limiting requests: a refusal the controller answered at such a status in its own vocabulary as well is that refusal, so a caller branching on its code - the
+ * routing tier's floor fallback and the CLI's by-id lookup among them - meets it whatever status it came at, with the status error as its cause.
+ *
+ * Every other non-2xx throws the status error the transport classifies it as. A 401 and a 403 keep their identity-leg errors, which name the leg and its remedy and
+ * which the token-only connect folds a refused listing by, and a 429 and every 5xx keep the status error, which is what the readers of a controller limiting
+ * requests or not ready yet read, Retry-After included. A 4xx whose body is not a refusal envelope throws its status error as well.
+ */
+function ensureAnswered(response: AccessResponse): AccessResponse {
+
+  try {
+
+    return response.ensureOk();
+  } catch(statusError) {
+
+    if((statusError instanceof AccessRequestError) && (statusError.statusCode >= 400) && (statusError.statusCode <= 499) &&
+      (controllerReadinessOf(statusError) !== "limiting")) {
+
+      // A body that does not decode, that is no envelope, or that reports success raises no refusal here, so each falls through to the status error below.
+      try {
+
+        readResultEnvelope(response.json<unknown>(), OFFICIAL_REFUSAL_FALLBACK, statusError);
+      } catch(error) {
+
+        if(error instanceof AccessApiError) {
+
+          throw error;
+        }
+      }
+    }
+
+    throw statusError;
+  }
 }
 
 // Read the pagination member, or undefined when the response carried none - or carried something that is not a page report. Every member is required because a

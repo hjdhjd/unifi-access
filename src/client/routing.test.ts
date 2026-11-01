@@ -7,15 +7,19 @@
 import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessCapabilityError } from "../errors.ts";
 import type { AccessCapabilities, AccessOfficialDoorSurface } from "./routing.ts";
 import type { CapturingLog, TestLogEntry } from "homebridge-plugin-utils/testing";
+import { HOST, officialPath } from "../official/domain.helpers.ts";
 import { TestClock, capturingLog, loggedAt, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
+import { officialEndpoint, officialHost } from "../official/endpoints.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { AccessOfficialCallOptions } from "../official/dispatch.ts";
 import type { AccessOfficialDoorUnlockOptions } from "../official/spaces.ts";
 import { AccessRoutingService } from "./routing.ts";
+import { OfficialDispatch } from "../official/dispatch.ts";
 import { StateStore } from "../state/store.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
+import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
 import { refuseRefresh } from "../testing.helpers.ts";
 
 const HUB = "aabbcc000001";
@@ -387,6 +391,30 @@ describe("the per-device firmware floor", () => {
     // The official attempt happened and was refused - the recording surface throws before recording - and the direct body is what the door actually received.
     assert.deepEqual(calls.unlocks, []);
     assert.deepEqual(calls.direct, ["unlock"]);
+  });
+
+  test("falls back after a floor refusal the controller answers at a 400, as the official dispatch reads one", async () => {
+
+    /* The official surface reads a refusal the controller answers at a 4xx in its own vocabulary as that refusal, so the error routing meets here is the one the
+     * dispatch itself produces over a mocked controller rather than one built by hand. The routing decision is then the same one a 2xx refusal reaches.
+     */
+    const { pool, transport } = makeMockTransport({ host: officialHost(HOST) });
+    const dispatch = new OfficialDispatch({ transport });
+
+    pool.intercept({ method: "PUT", path: officialPath("/doors/" + DOOR_HUB + "/unlock") })
+      .reply(400, { "code": "CODE_DEVICE_API_NOT_SUPPORTED", "msg": "The device does not support this API." });
+
+    const refusal: unknown = await dispatch.command(officialEndpoint(HOST, "/doors/" + DOOR_HUB + "/unlock"), { method: "PUT" }).catch((error: unknown) => error);
+
+    assert.ok(refusal instanceof AccessApiError, "the dispatch reads the 400's envelope as the controller's refusal");
+
+    const calls = newCalls();
+    const { service } = makeService({ calls, refuse: () => refusal });
+
+    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+
+    assert.deepEqual(calls.unlocks, [], "the official attempt was refused");
+    assert.deepEqual(calls.direct, ["unlock"], "and the door was unlocked over the direct path instead");
   });
 
   test("consults the memo rather than re-attempting, which is what tells a working memo from no memo at all", async () => {

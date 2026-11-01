@@ -14,8 +14,9 @@ envelope handling, error classification, and encoding the typed methods get. So 
 without a second way of talking to the controller growing up beside this one.
 
 One transport serves every domain, which is deliberate: the throttle breaker it carries then models the controller's health as a whole, rather than any single
-domain's. An official refusal arrives under a success status inside the envelope and never books a breaker failure - only genuine reachability faults do - so a
-breaker that opens is saying the controller is unreachable, and throttling every domain at that point is the breaker doing its job.
+domain's. An official refusal, whether it arrives inside the envelope under a success status or as a refusal envelope under a 4xx, is the controller serving, so it
+books no breaker failure, and a breaker that opens is saying the controller is unreachable, failing, or limiting requests. Throttling every domain at that point is the
+breaker doing its job.
 
 ## Properties
 

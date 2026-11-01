@@ -393,7 +393,8 @@ describe("OfficialDispatch", () => {
 
       /* This is the regression net for the boundary between the two error vocabularies. The official API's codes describe requests the controller understood and
        * refused; an HTTP status describes one it did not get to answer, and the library already has one place that turns a status into a typed error. A dispatch
-       * that classified statuses itself would be a second such place, disagreeing with the first the day either changed.
+       * that classified statuses itself would be a second such place, disagreeing with the first the day either changed. The 403 carries a refusal envelope, and
+       * still keeps the identity leg's own error, because the dispatch reads an envelope only beside a request error and never in place of a refused identity.
        */
       const { dispatch, pool } = officialRig();
 
@@ -402,6 +403,84 @@ describe("OfficialDispatch", () => {
 
       await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), AccessAuthorizationError);
       await assert.rejects(dispatch.request(officialEndpoint(HOST, "/users")), AccessRequestError);
+    });
+
+    test("a 4xx carrying a refusal envelope throws the controller's own refusal on every arm, the status error its cause", async () => {
+
+      const { dispatch, pool } = officialRig();
+      const refusal = { "code": "CODE_PARAMS_INVALID", "msg": "The parameters are invalid." };
+
+      // Each arm reads its status through the one helper, so a refusal answered at a 400 in the controller's vocabulary as well reaches each as that refusal.
+      pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(400, refusal);
+      pool.intercept({ method: "PUT", path: officialPath("/doors/abc/unlock") }).reply(400, refusal);
+      pool.intercept({ method: "GET", path: officialPath("/system/logs/resource/abc") }).reply(400, refusal);
+
+      const arms = [
+
+        { call: async (): Promise<unknown> => dispatch.request(officialEndpoint(HOST, "/doors")), name: "request" },
+        { call: async (): Promise<unknown> => dispatch.command(officialEndpoint(HOST, "/doors/abc/unlock"), { method: "PUT" }), name: "command" },
+        { call: async (): Promise<unknown> => dispatch.download(officialEndpoint(HOST, "/system/logs/resource/abc")), name: "download" }
+      ];
+
+      for(const { call, name } of arms) {
+
+        // eslint-disable-next-line no-await-in-loop
+        await assert.rejects(call(), (error: unknown) => {
+
+          assert.ok(error instanceof AccessApiError, "the " + name + " arm throws the controller's refusal");
+          assert.equal(error.code, "CODE_PARAMS_INVALID");
+          assert.equal(error.message, "The parameters are invalid.");
+          assert.ok(error.cause instanceof AccessRequestError, "and carries the status error as its cause");
+          assert.equal(error.cause.statusCode, 400);
+
+          return true;
+        });
+      }
+    });
+
+    test("a 404 refusal in the native dialect is read as the refusal it is", async () => {
+
+      const { dispatch, pool } = officialRig();
+
+      pool.intercept({ method: "GET", path: officialPath("/users/nobody") }).reply(404, { "code": -1, "codeS": "CODE_NOT_EXISTS", "msg": "The user does not exist." });
+
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/users/nobody")), { code: "CODE_NOT_EXISTS", name: "AccessApiError" });
+    });
+
+    test("a 4xx whose body is no refusal envelope throws the status error", async () => {
+
+      const { dispatch, pool } = officialRig();
+
+      // A body that is not JSON, JSON that is not an envelope, and an envelope that reports success each say nothing in the controller's vocabulary.
+      pool.intercept({ method: "GET", path: officialPath("/a") }).reply(404, "not found");
+      pool.intercept({ method: "GET", path: officialPath("/b") }).reply(400, { "error": "bad request" });
+      pool.intercept({ method: "GET", path: officialPath("/c") }).reply(400, { "code": "SUCCESS", "data": [], "msg": "success" });
+
+      for(const [ path, statusCode ] of [ [ "/a", 404 ], [ "/b", 400 ], [ "/c", 400 ] ] as const) {
+
+        // eslint-disable-next-line no-await-in-loop
+        await assert.rejects(dispatch.request(officialEndpoint(HOST, path)), { name: "AccessRequestError", statusCode }, path + " throws its status error");
+      }
+    });
+
+    test("a 429 and a 5xx carrying refusal envelopes keep their status errors, which the readiness readers read", async () => {
+
+      const { dispatch, pool } = officialRig();
+      const refusal = { "code": "CODE_SYSTEM_ERROR", "msg": "Server system error." };
+
+      // A controller limiting requests or not ready yet is read off the status error, its Retry-After among the headers, so neither is replaced by its envelope.
+      pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(429, refusal, { headers: { "retry-after": "30" } });
+      pool.intercept({ method: "GET", path: officialPath("/users") }).reply(503, refusal);
+
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), (error: unknown) => {
+
+        assert.ok(error instanceof AccessRequestError);
+        assert.equal(error.statusCode, 429);
+        assert.equal(error.headers?.["retry-after"], "30");
+
+        return true;
+      });
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/users")), { name: "AccessRequestError", statusCode: 503 });
     });
 
     test("threads request options through to the transport", async () => {

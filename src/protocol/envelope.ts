@@ -7,13 +7,14 @@ import type { AccessApiResponse } from "../types/index.ts";
 import { isRecord } from "../json.ts";
 
 /**
- * The single home of what a decoded 2xx body means: whether it is the result envelope the controller answers in, which dialect it is written in, and what verdict
+ * The single home of what a decoded body means: whether it is the result envelope the controller answers in, which dialect it is written in, and what verdict
  * it reports.
  *
  * The controller's application writes one envelope on both of its surfaces - the Access application's own endpoints and the published developer API alike - and it
  * reports its refusals *inside* that envelope under a 2xx status. A caller that read the status alone would therefore treat a refused operation as a successful
  * one. Reading the envelope in exactly one place is what makes that impossible: every consumer either receives what the endpoint really answered, or meets a typed
- * error carrying the controller's own code, its message, and its diagnostic.
+ * error carrying the controller's own code, its message, and its diagnostic. The official surface also reads the body of a 4xx through here, because a refusal
+ * answered at such a status in its own vocabulary as well is still the controller's refusal, which the error then carries with the status error as its cause.
  *
  * This is protocol-tier material for the same reason the port-binding reads are. The knowledge is about what the wire's values mean, it performs no I/O, and every
  * consumer sits above it: the official API's three request arms, the device tier's command reads, and the client's bootstrap document reads all ask this module the
@@ -76,18 +77,21 @@ function controllerText(value: unknown): string | undefined {
 }
 
 /**
- * Read a decoded 2xx body as a result envelope, establishing that the controller answered in one and that it did not refuse the request.
+ * Read a decoded body as a result envelope, establishing that the controller answered in one and that it did not refuse the request.
  *
- * @param body    - The decoded 2xx response body.
+ * @param body    - The decoded response body: a 2xx body, or the body of a 4xx the official surface reads for a refusal the controller answered in its own
+ *   vocabulary as well as with the status.
  * @param refusal - The sentence the thrown refusal carries when the controller sent no message of its own, naming the operation so that an unhandled refusal still
  *   says what was refused.
+ * @param cause   - The status error a 4xx body's refusal carries as its cause, so a caller reading the refusal can still reach the status it was answered at.
+ *   Absent for a 2xx body, whose status says nothing beside the envelope.
  *
  * @returns The envelope the controller answered with, for the caller to take its payload - or nothing at all - out of.
  *
- * @throws {@link AccessApiError} when the envelope reports a code other than success, carrying the controller's own code, message and diagnostic.
- *   {@link AccessProtocolError} when the body is not a result envelope at all.
+ * @throws {@link AccessApiError} when the envelope reports a code other than success, carrying the controller's own code, message and diagnostic, and the cause
+ *   when one was handed in. {@link AccessProtocolError} when the body is not a result envelope at all.
  */
-export function readResultEnvelope(body: unknown, refusal: string): ResultEnvelope {
+export function readResultEnvelope(body: unknown, refusal: string, cause?: unknown): ResultEnvelope {
 
   if(!isResultEnvelope(body)) {
 
@@ -111,7 +115,7 @@ export function readResultEnvelope(body: unknown, refusal: string): ResultEnvelo
      */
     const message = controllerText(body.msg) ?? refusal;
 
-    throw new AccessApiError(message, { code, detail });
+    throw new AccessApiError(message, { cause, code, detail });
   }
 
   return body;

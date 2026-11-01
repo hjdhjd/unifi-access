@@ -402,8 +402,9 @@ export type AccessBootstrapStage = "apply" | "fetch" | "parse";
 /**
  * The controller refused a request inside its result envelope - on the official developer API and on the Access application's own endpoints alike, which write one
  * envelope between them. The envelope carries a `code` on every response, and a code other than success is the controller declining in its own vocabulary rather
- * than through an HTTP status: the status on such a response is a 2xx, so nothing below this layer can classify it. Fatal because the refusal describes the request
- * rather than the moment: the same call will be refused the same way.
+ * than through an HTTP status: the status on such a response is a 2xx, so nothing below this layer can classify it. Where the official API answers a refusal at a
+ * 4xx other than 401, 403 and 429 with an envelope as well, this error carries that refusal's code too, and the {@link AccessRequestError} the status classifies
+ * as is its `cause`. Fatal because the refusal describes the request rather than the moment: the same call will be refused the same way.
  *
  * The controller's own `msg` is the error's message, carried through the message channel rather than duplicated into a second field, and `code` is the typed vocabulary a
  * caller branches on. Some of those codes are capability signals rather than faults, worth naming here because a consumer will want to route them rather than report
