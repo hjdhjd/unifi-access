@@ -331,19 +331,23 @@ describe("FakeWebSocket", () => {
     assert.deepEqual(seen, ["still here"]);
   });
 
-  test("failsOnClose reports the close from inside close() itself", () => {
+  test("failsOnClose reports an error and then the close from inside close() itself", () => {
 
     const socket = new FakeWebSocket({ autoOpen: false, failsOnClose: true });
     const closes: { code: number; reason: string }[] = [];
+    const order: string[] = [];
 
     socket.addEventListener("close", (event) => closes.push(event));
+    socket.addEventListener("close", () => void order.push("close"));
+    socket.addEventListener("error", () => void order.push("error"));
 
     // undici fails a connection that never finished its upgrade rather than sending it a close frame, and reports that failure before close() returns...which is
-    // what lands a close event inside the caller's own teardown.
+    // what lands an error and a close inside the caller's own teardown, the error first.
     socket.close();
 
     assert.equal(socket.closeRequested, true);
     assert.deepEqual(closes, [{ code: 1006, reason: "connection failed" }]);
+    assert.deepEqual(order, [ "error", "close" ], "the error is reported ahead of the close, as undici reports them");
   });
 
   test("a listener that detaches a sibling mid-dispatch does not perturb the delivery", () => {

@@ -26,9 +26,13 @@ import { channels } from "../diagnostics.ts";
 import { errors } from "undici";
 import { setTimeout as setTimeoutAsync } from "node:timers/promises";
 import { subscribeTo } from "../testing.helpers.ts";
+import { wallClock } from "../clock.ts";
 
 // The breaker cooldown in milliseconds, mirroring the transport's own derivation, so the fake-clock advances line up with the gate math.
 const COOLDOWN_MS = ACCESS_API_RETRY_INTERVAL * 1000;
+
+// The wall-clock time a row seeds mocked `Date` with before stepping it.
+const MOCKED_WALL_CLOCK_MS = 1000000;
 
 // Drive `count` sequential failing requests through the transport against a path the caller has set up to fail. Sequential awaits are intentional - the breaker
 // counts consecutive failures in order.
@@ -991,6 +995,32 @@ describe("Transport", () => {
       clock.advance(1000);
 
       await assert.rejects(transport.send(url(host, "/f")), { cooldownMs: COOLDOWN_MS - 1000, name: "AccessThrottledError" });
+    });
+
+    test("a wall clock stepped forward past the cooldown does not end it early", async (t) => {
+
+      const { agent, host, pool } = makeMockTransport();
+
+      /* The production clock over a mocked `Date` alone, so the time of day is the row's to set while the monotonic reading stays the platform's own. A test clock
+       * cannot stand in here, because its time of day never runs ahead of its monotonic reading.
+       */
+      t.mock.timers.enable({ apis: ["Date"], now: MOCKED_WALL_CLOCK_MS });
+
+      const transport = new Transport({ clock: wallClock, dispatcher: agent, host, log: silentLog(), origin: "https://" + host });
+
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT);
+      pool.intercept({ method: "GET", path: "/f" }).reply(200, {});
+
+      await sendFailures(transport, url(host, "/f"), ACCESS_API_ERROR_LIMIT);
+
+      assert.equal(transport.isThrottled, true);
+
+      // The time of day jumps past the whole cooldown while next to no time passes. Measured on the wall clock the cooldown would read as spent and admit the next
+      // request as its half-open trial; measured on the monotonic reading it has barely begun, so the request is refused locally.
+      t.mock.timers.setTime(MOCKED_WALL_CLOCK_MS + COOLDOWN_MS + 1);
+
+      await assert.rejects(transport.send(url(host, "/f")), AccessThrottledError);
+      assert.equal(transport.isThrottled, true, "the breaker stays open through the wall clock's step");
     });
 
     test("a successful half-open probe after cooldown closes the breaker and emits throttleExited", async () => {

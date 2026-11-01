@@ -13,7 +13,7 @@ import type { AccessEventsClosedPayload, AccessEventsPacketPayload } from "../di
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
 import { EventStream, HEARTBEAT_FRAME, directNotificationUrl } from "./events-stream.ts";
-import { FakeWebSocket, createLoopbackServer, createProxiedLoopbackServer } from "./events-stream.helpers.ts";
+import { FakeWebSocket, announcedSockets, createLoopbackServer, createProxiedLoopbackServer } from "./events-stream.helpers.ts";
 import { TestClock, assertNoUnhandledRejections, capturingLog, errnoError, expectAt, freePort, loggedAt, settle, settleUntil, silentLog,
   waitUntil } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
@@ -23,11 +23,10 @@ import type { AccessLogging } from "../logging.ts";
 import type { AccessWebSocket } from "./ws.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
 import type { EventStreamEvents } from "./events-stream.ts";
-import type { Socket } from "node:net";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
-import diagnosticsChannel from "node:diagnostics_channel";
 import { findPacket } from "../protocol/capture.helpers.ts";
+import { getEventListeners } from "node:events";
 import { subscribeTo } from "../testing.helpers.ts";
 import tls from "node:tls";
 
@@ -74,6 +73,24 @@ function railOrder(stream: EventStream): ("closed" | "error")[] {
   stream.on("closed", () => order.push("closed"));
 
   return order;
+}
+
+/* A logger that discards every line except a warning, which it refuses by throwing once it has run the row's own reading of that moment. A teardown writes its
+ * fault's line after the release and the rail, so a row reads through this what the stream had already done when the line came, and what a logger's throw
+ * there leaves behind.
+ */
+function throwingOnWarn(onWarn: () => void = (): void => undefined): AccessLogging {
+
+  return {
+
+    ...silentLog(),
+    warn: (): void => {
+
+      onWarn();
+
+      throw new Error("the logger refused the warning line");
+    }
+  };
 }
 
 // The loopback peer's address in the host:port form the stream builds its notification URL from. The port is whatever the operating system handed the server, so
@@ -799,8 +816,9 @@ describe("EventStream", () => {
       // The fake dispatches to its listeners the way the platform's socket does, so a throw the bus let out would come back out of the emit that raised it.
       assert.doesNotThrow(() => ws.emitError(new Error("socket reset")), "the bus contains the listener's throw");
 
-      // The teardown has run to completion before the fault is announced, so a listener that refuses it cannot leave the socket unasked or the close unresolved.
-      // The bus records the refusal through the stream's own logger, and the codeless error the socket reported is quiet on an open stream, so it adds no line.
+      // The socket has been asked to close and the release has begun before the fault is announced, so a listener that refuses it cannot leave the socket unasked
+      // or the close unresolved. The bus records the refusal through the stream's own logger, and the codeless error the socket reported is quiet on an open
+      // stream, so it adds no line.
       const lines = log.entries.filter((entry) => entry.level !== "debug");
 
       assert.deepEqual(lines.map((entry) => [ entry.level, entry.message ]), [[ "error", "An event listener threw; the remaining listeners still run." ]],
@@ -880,6 +898,23 @@ describe("EventStream", () => {
       assert.deepEqual(log.entries.filter((entry) => ![ "debug", "warn" ].includes(entry.level)), [], "and nothing else logs above debug");
 
       await stream.close();
+    });
+
+    test("a logger that throws on an open stream's socket-error line has already let the rail hear the fault", async () => {
+
+      const rail: unknown[] = [];
+      const railAtLine: number[] = [];
+      const opened = await openStream({ log: throwingOnWarn(() => void railAtLine.push(rail.length)) });
+
+      await using stream = opened.stream;
+
+      stream.on("error", (error) => void rail.push(error));
+
+      // A reset logs at warning, and the fake dispatches the way the platform's socket does, so the logger's throw comes back out of the emit that raised it.
+      assert.throws(() => opened.ws.emitError(errnoError("read ECONNRESET", "ECONNRESET")), { message: "the logger refused the warning line" });
+
+      assert.deepEqual(railAtLine, [1], "the fault was on the rail when its line was written");
+      assert.equal(rail.length, 1);
     });
 
     test("a stall before the open logs nothing", async () => {
@@ -1131,6 +1166,31 @@ describe("EventStream", () => {
       assert.equal(errors.length, 0, "the threshold is a floor the silence must reach, not merely approach");
     });
 
+    test("a wall clock set back does not hold off the watchdog once monotonic time has passed the threshold", async () => {
+
+      const clock = new TestClock();
+      const { stream, ws } = await openStream({ clock });
+      const errors = collect(stream, "error");
+
+      /* A frame lands a tick short of the watchdog's first wake, and the wall clock is then set back by the time that had passed. The test clock moves its monotonic
+       * reading on forward steps alone, so the step back leaves that reading where the frame stamped it, and the wake comes due once virtual time reaches it again a
+       * threshold later. By then the time that has passed since the frame is the whole threshold while the wall clock reads a single millisecond since it, so only a
+       * silence measured on the monotonic reading trips here.
+       */
+      clock.advance(ACCESS_EVENTS_HEARTBEAT_TIMEOUT - 1);
+      ws.emitMessage(HEARTBEAT_FRAME);
+      clock.advance(-(ACCESS_EVENTS_HEARTBEAT_TIMEOUT - 1));
+      clock.advance(ACCESS_EVENTS_HEARTBEAT_TIMEOUT);
+      await settle();
+
+      assert.equal(errors.length, 1, "the silence the monotonic reading measured reached the threshold");
+
+      const [stallError] = first(errors);
+
+      assert.ok(stallError instanceof AccessStallError, "a silent socket surfaces as a stall error");
+      assert.equal(stallError.silentForMs, ACCESS_EVENTS_HEARTBEAT_TIMEOUT, "and the silence it reports is the monotonic one");
+    });
+
     test("the watchdog also bounds a connect that never completes", async () => {
 
       const clock = new TestClock();
@@ -1161,7 +1221,7 @@ describe("EventStream", () => {
 
       assert.equal(closed.length, 1, "closed fires exactly once across repeated close()");
 
-      // After teardown the single AbortController has detached every socket listener, so a late frame delivers nothing.
+      // After teardown the stream has taken every socket listener off by the identity it registered it under, so a late frame delivers nothing.
       ws.emitMessage(frame(packet));
       assert.equal(packets.length, 0);
     });
@@ -1248,26 +1308,34 @@ describe("EventStream", () => {
       assert.equal(closed.length, 1);
     });
 
-    test("a caller abort after the open tears the stream down and leaves the handshake resolved", async () => {
+    test("a caller abort after the open leaves the stream open and the handshake resolved", async () => {
 
       const controller = new AbortController();
       const ws = new FakeWebSocket({ autoOpen: false });
-      const stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: (): AccessWebSocket => ws });
+
+      await using stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: (): AccessWebSocket => ws });
 
       ws.emitOpen();
       await stream.opened;
 
       const closed = collect(stream, "closed");
       const errors = collect(stream, "error");
+      const packets = collect(stream, "packet");
+      const packet = findPacket((entry) => entry.event === "access.data.device.update", "a legacy device update");
 
-      // The handshake has already settled, so the caller's signal is a teardown rather than a cancellation: what `opened` answered stands, and a teardown the
-      // caller asked for is not a fault.
+      /* The caller's signal cancels the connect and nothing after it, so the open takes the stream's listener off it. An abort from then on comes from a caller
+       * whose connect has already finished: what `opened` answered stands, and the live stream keeps running until its own close or a fault ends it.
+       */
+      assert.equal(getEventListeners(controller.signal, "abort").length, 0, "the open takes the stream's listener off the caller's signal");
+
       controller.abort();
       await stream.opened;
+      ws.emitMessage(frame(packet));
 
-      assert.equal(errors.length, 0, "a caller's abort after the open is a lifecycle end rather than a fault");
-      assert.equal(closed.length, 1);
-      assert.equal(ws.closeRequested, true);
+      assert.equal(closed.length, 0, "a caller's abort after the open does not end the stream");
+      assert.equal(errors.length, 0, "and puts nothing on the error rail");
+      assert.equal(ws.closeRequested, false, "the socket is not asked to close");
+      assert.equal(packets.length, 1, "the live stream still delivers what the socket receives");
     });
 
     test("a late open after the teardown neither reopens the stream nor tears it down a second time", async () => {
@@ -1391,6 +1459,183 @@ describe("EventStream", () => {
     });
   });
 
+  /* The code and the reason `closed` carries, which the teardown derives from why it ran: the peer's own frame for a close the peer started, 1006 for a fault,
+   * and 1000 for a close the stream chose. The rows for a chosen close run over a socket that reports a failure from inside close(), as undici does for one still
+   * connecting, so a socket listener left attached through the stream's own request to close would carry that failure into the teardown and announce it as a
+   * fault's or a peer's close instead.
+   */
+  describe("the close code", () => {
+
+    const CLOSED_BY_CLIENT = "the notification stream was closed by the client";
+
+    test("a socket error on an open stream closes with 1006", async () => {
+
+      const opened = await openStream();
+
+      await using stream = opened.stream;
+      const closed = collect(stream, "closed");
+
+      opened.ws.emitError(new Error("socket reset"));
+
+      assert.deepEqual(closed, [[{ code: 1006, reason: "the notification stream connection errored" }]]);
+    });
+
+    test("a stall of an open stream closes with 1006", async () => {
+
+      const clock = new TestClock();
+      const opened = await openStream({ clock });
+
+      await using stream = opened.stream;
+      const closed = collect(stream, "closed");
+
+      clock.advance(ACCESS_EVENTS_HEARTBEAT_TIMEOUT);
+      await settle();
+
+      assert.deepEqual(closed, [[{ code: 1006, reason: "the notification stream stalled past the watchdog window" }]]);
+    });
+
+    test("a close() an error listener calls during a fault closes with the fault's 1006 and its reason", async () => {
+
+      const opened = await openStream();
+
+      await using stream = opened.stream;
+      const closed = collect(stream, "closed");
+      const reentered: Promise<void>[] = [];
+
+      // The rail hears the fault from inside the teardown the fault runs, so this close() arrives before that teardown announces its close, and the close announced is
+      // still the fault's, its code and its reason derived from why the teardown ran.
+      stream.on("error", () => {
+
+        reentered.push(stream.close());
+      });
+
+      opened.ws.emitError(new Error("socket reset"));
+      await Promise.all(reentered);
+
+      assert.equal(reentered.length, 1, "the listener's close() ran from inside the fault's teardown");
+      assert.deepEqual(closed, [[{ code: 1006, reason: "the notification stream connection errored" }]]);
+    });
+
+    test("a peer's close carries its own frame's code and reason", async () => {
+
+      const opened = await openStream();
+
+      await using stream = opened.stream;
+      const closed = collect(stream, "closed");
+
+      // A code no teardown the stream chooses for itself answers, so the row reads the frame passing through rather than a classification that happens to agree.
+      opened.ws.emitClose(4000, "controller rebooting");
+
+      assert.deepEqual(closed, [[{ code: 4000, reason: "controller rebooting" }]]);
+    });
+
+    const chosen: readonly { end: (stream: EventStream, controller: AbortController) => Promise<void> | void; name: string; opens: boolean; reason: string }[] = [
+
+      { end: async (stream): Promise<void> => stream.close(), name: "close() of an open stream", opens: true, reason: CLOSED_BY_CLIENT },
+      { end: async (stream): Promise<void> => stream.close(), name: "close() of a stream still connecting", opens: false, reason: CLOSED_BY_CLIENT },
+      { end: async (stream): Promise<void> => stream[Symbol.asyncDispose](), name: "disposal of an open stream", opens: true, reason: CLOSED_BY_CLIENT },
+      { end: (_stream, controller): void => controller.abort(), name: "the caller's cancel of a connect in flight", opens: false,
+        reason: "connection aborted by the caller's signal" }
+    ];
+
+    for(const { end, name, opens, reason } of chosen) {
+
+      test(name + " closes with 1000 over a socket that reports a failure from inside close()", async () => {
+
+        const controller = new AbortController();
+        const ws = new FakeWebSocket({ autoOpen: false, failsOnClose: true });
+        const stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: (): AccessWebSocket => ws });
+        const closed = collect(stream, "closed");
+        const errors = collect(stream, "error");
+
+        if(opens) {
+
+          ws.emitOpen();
+          await stream.opened;
+        }
+
+        await end(stream, controller);
+
+        assert.equal(ws.closeRequested, true, "the stream asked the socket to close, which is what fires the socket's failure");
+        assert.deepEqual(closed, [[{ code: 1000, reason }]], "the close is announced as the one the stream chose");
+        assert.equal(errors.length, 0, "and the rail stays empty");
+      });
+    }
+  });
+
+  /* The listener a stream registers on its caller's signal, read through the platform's own count of a target's listeners. The stream takes that listener off by
+   * identity at the open and in its teardown, so the rows that read the teardown's removal end a stream that never opened: one that had opened has already let
+   * the signal go. The signal stays live in every row but the already-aborted one, so a count of zero is the stream's own removal and never the abort's.
+   */
+  describe("the caller's signal", () => {
+
+    const ends: readonly { end: (built: { clock: TestClock; stream: EventStream; ws: FakeWebSocket }) => Promise<void> | void; name: string }[] = [
+
+      { end: async ({ stream }): Promise<void> => stream.close(), name: "close()" },
+      { end: ({ ws }): void => ws.emitClose(1006, "handshake failed"), name: "a peer close" },
+      { end: ({ ws }): void => ws.emitError(new Error("connection refused")), name: "a socket error" },
+      {
+
+        end: async ({ clock }): Promise<void> => {
+
+          clock.advance(ACCESS_EVENTS_HEARTBEAT_TIMEOUT);
+          await settle();
+        },
+        name: "a stall"
+      }
+    ];
+
+    for(const { end, name } of ends) {
+
+      test(name + " before the open takes the stream's listener off a caller's signal that is still live", async () => {
+
+        const clock = new TestClock();
+        const controller = new AbortController();
+        const ws = new FakeWebSocket({ autoOpen: false });
+        const stream = new EventStream({ clock, host: HOST, log: silentLog(), signal: controller.signal, webSocket: (): AccessWebSocket => ws });
+        const closed = collect(stream, "closed");
+
+        assert.equal(getEventListeners(controller.signal, "abort").length, 1, "a connect in flight listens to the caller's signal");
+
+        await end({ clock, stream, ws });
+
+        assert.equal(closed.length, 1, "the stream has torn down");
+        assert.equal(getEventListeners(controller.signal, "abort").length, 0, "and taken its listener off the caller's signal, which never aborted");
+      });
+    }
+
+    test("an already-aborted caller signal leaves no listener on it", async () => {
+
+      const controller = new AbortController();
+      const ws = new FakeWebSocket({ autoOpen: false });
+
+      controller.abort();
+
+      const stream = new EventStream({ host: HOST, log: silentLog(), signal: controller.signal, webSocket: (): AccessWebSocket => ws });
+
+      // The teardown runs from inside the constructor, so a listener registered after it would have no teardown left to take it off.
+      await assert.rejects(stream.opened, AccessAbortedError);
+      assert.equal(getEventListeners(controller.signal, "abort").length, 0, "with no listener registered");
+    });
+
+    test("a stream that closes on a caller signal another stream shares leaves the other's listener in place", async () => {
+
+      const controller = new AbortController();
+      const build = (): EventStream => new EventStream({ host: HOST, log: silentLog(), signal: controller.signal,
+        webSocket: (): AccessWebSocket => new FakeWebSocket({ autoOpen: false }) });
+      const first = build();
+
+      await using second = build();
+
+      assert.equal(getEventListeners(controller.signal, "abort").length, 2, "each connect in flight listens to the signal");
+
+      // Each stream takes off the listener it registered and no other, which is the property a signal handed to one connect attempt after another rests on.
+      await first.close();
+
+      assert.equal(getEventListeners(controller.signal, "abort").length, 1, "the first stream's close leaves the second's listener in place");
+    });
+  });
+
   /* The disposal contract, over the socket the stream builds for itself.
    *
    * Every suite above injects a fake socket, which is the right instrument for decode, fan-out, and teardown ordering and the wrong one for this: a fake has no
@@ -1436,13 +1681,12 @@ describe("EventStream", () => {
     test("close() has released the connection it owns by the time a closed listener runs", async () => {
 
       await using server = await createLoopbackServer("ignoresClose");
-      const sockets: Socket[] = [];
 
       /* The stream holds its socket privately, so the row takes it from undici's own announcement of every connection a client establishes. The peer learns of a
        * severance only on a later turn, which makes its end the wrong observer here: what the row reads is the order inside the stream, the socket already destroyed
        * when `closed` is delivered, because the release runs ahead of every emit.
        */
-      using connectedSub = subscribeTo(diagnosticsChannel.channel<{ socket: Socket }>("undici:client:connected"), (message) => void sockets.push(message.socket));
+      using announced = announcedSockets();
 
       const stream = new EventStream({ clock: new TestClock(), host: loopbackHost(server.port), log: silentLog() });
 
@@ -1450,12 +1694,65 @@ describe("EventStream", () => {
 
       const destroyedAtClosed: boolean[] = [];
 
-      stream.on("closed", () => void destroyedAtClosed.push(sockets.every((socket) => socket.destroyed)));
+      stream.on("closed", () => void destroyedAtClosed.push(announced.sockets.every((socket) => socket.destroyed)));
 
       await stream.close();
 
-      assert.equal(sockets.length, 1, "the one socket the stream dialed was announced");
+      assert.equal(announced.sockets.length, 1, "the one socket the stream dialed was announced");
       assert.deepEqual(destroyedAtClosed, [true], "the connection is released before closed is delivered");
+    });
+
+    test("a stall has released the connection it owns by the time an error listener hears it", async () => {
+
+      await using server = await createLoopbackServer("ignoresClose");
+
+      /* A stall is the one fault an open stream meets with its socket still whole: a socket error or a peer's close arrives once undici has already destroyed the
+       * socket underneath it, so only a stall shows whether the release runs ahead of the rail rather than behind it.
+       */
+      using announced = announcedSockets();
+
+      const clock = new TestClock();
+      const stream = new EventStream({ clock, host: loopbackHost(server.port), log: silentLog() });
+
+      await stream.opened;
+
+      const destroyedAtRail: boolean[] = [];
+
+      stream.on("error", () => void destroyedAtRail.push(announced.sockets.every((socket) => socket.destroyed)));
+
+      clock.advance(ACCESS_EVENTS_HEARTBEAT_TIMEOUT);
+      await settle();
+
+      assert.equal(announced.sockets.length, 1, "the one socket the stream dialed was announced");
+      assert.deepEqual(destroyedAtRail, [true], "the connection is released before the stall reaches the rail");
+
+      await stream.close();
+    });
+
+    test("a logger that throws on an open stall's line leaves the connection released and the stall on the rail", async () => {
+
+      await using server = await createLoopbackServer("ignoresClose");
+
+      using announced = announcedSockets();
+
+      const clock = new TestClock();
+      const stream = new EventStream({ clock, host: loopbackHost(server.port), log: throwingOnWarn() });
+      const errors = collect(stream, "error");
+
+      await stream.opened;
+
+      /* The teardown writes the stall's line after the release and the rail, so a logger that refuses the line ends the teardown with nothing left to hold. The
+       * throw lands in the watchdog's own catch, which ends a loop the stall was ending anyway, and the socket is read here rather than through the peer because
+       * the peer learns of a severance only on a later turn.
+       */
+      clock.advance(ACCESS_EVENTS_HEARTBEAT_TIMEOUT);
+      await settle();
+
+      assert.deepEqual(announced.sockets.map((socket) => socket.destroyed), [true], "the connection is released though the stall's line threw");
+      assert.equal(errors.length, 1, "the stall reached the rail ahead of its line");
+      assert.ok(first(errors)[0] instanceof AccessStallError);
+
+      await stream.close();
     });
 
     test("a closed listener that throws does not leave the connection held", async () => {

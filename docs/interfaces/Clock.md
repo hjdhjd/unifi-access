@@ -6,18 +6,20 @@
 
 # Interface: Clock
 
-Source of time for any code that needs to know "what time is it now?", "wake me up after a delay," or "call me back once the time is up." Production code reads
-time exclusively through this interface, never through `Date.now()`, `node:timers/promises`, or the global `setTimeout` directly. Tests substitute a fake clock
-to drive time deterministically without real-time waits or module-level mocking.
+Source of time for any code that needs to know "what time is it now?", "how much time has passed?", "wake me up after a delay," or "call me back once the time is
+up." Production code reads time exclusively through this interface, never through `Date.now()`, `process.hrtime`, `node:timers/promises`, or the global
+`setTimeout` directly. Tests substitute a fake clock to drive time deterministically without real-time waits or module-level mocking.
 
-The interface is shaped by what consumers actually need - a clock, a one-shot delay, and a one-shot callback timer (`now` / `delay` / `schedule`), no more. Adding
-methods speculatively (setImmediate, a repeating timer, etc.) would be YAGNI; adding them when a consumer first needs one is principled, and each member here
-answers a consumer. `now` serves the throttle breaker's cooldown and the elapsed time a failed request reports, readings a suite steps rather than waits for.
-`delay` serves the connection-recovery backoff curve, which needs a one-shot wait of varying duration. `schedule` serves the transport's request deadline, which
-`armDeadline` arms on it, so a suite fires the deadline rather than waiting it out and a request releases its timer the moment it settles. A repeating consumer -
-the heartbeat watchdog, the refresh failsafe - is itself a loop that awaits one `delay` per pass, so that single primitive covers a varying sequence and a fixed
-cadence alike. The consumers are every subsystem that needs wall-clock time, a delay, or a deadline - the transport throttle breaker and the request deadline
-beside it, the events heartbeat watchdog, the store refresh loop, and the connection recovery loop among them.
+The interface is shaped by what consumers actually need - a clock, a monotonic reading, a one-shot delay, and a one-shot callback timer (`now` / `monotonic` /
+`delay` / `schedule`), no more. Adding methods speculatively (setImmediate, a repeating timer, etc.) would be YAGNI; adding them when a consumer first needs one
+is principled. `monotonic` serves every elapsed time the library measures - the throttle breaker's cooldown, a request's duration and the elapsed time a failed
+one reports, a connection attempt's elapsed time, and the heartbeat watchdog's silence - because a wall-clock step would move a measure taken on `now`, and these
+are readings a suite steps rather than waits for. `now` is the time of day, the reading for stamping a point in time, and no interval the library measures reads
+it. `delay` serves the connection-recovery backoff curve, which needs a one-shot wait of varying duration. `schedule` serves the transport's request deadline,
+which `armDeadline` arms on it, so a suite fires the deadline rather than waiting it out and a request releases its timer the moment it settles. A repeating
+consumer - the heartbeat watchdog, the refresh failsafe - is itself a loop that awaits one `delay` per pass, so that single primitive covers a varying sequence and
+a fixed cadence alike. The consumers are every subsystem that needs an elapsed time, a delay, or a deadline - the transport throttle breaker and the request
+deadline beside it, the events heartbeat watchdog, the store refresh loop, and the connection recovery loop among them.
 
 Why dependency injection here rather than module mocking: time is a real dependency the code reads from, not an incidental detail of the runtime. Naming
 it as a parameter at the function (or constructor) signature makes the dependency visible at the call site - a reader sees `clock: Clock` and immediately
@@ -56,6 +58,26 @@ the same `AbortError`. With nothing armed, an infinite delay holds no process op
 `Promise`\<`void`\>
 
 A promise that resolves after the delay, or rejects with `AbortError` on abort.
+
+***
+
+### monotonic()
+
+```ts
+monotonic(): number;
+```
+
+Return a reading of the platform's monotonic clock: an integer count of microseconds on `process.hrtime`'s timeline, from its origin, divided by 1000, so the
+reading is in milliseconds and `Math.round(reading * 1000)` recovers the count exactly. A wall-clock change never moves it, so a later reading less an earlier
+one is the time that passed between them however the time of day was set meanwhile. Whether it advances across a system suspend depends on the platform's
+monotonic clock. Its origin is the platform's rather than the process's, so an uptime is a consumer's own difference from a reading it took when it started.
+The production [wallClock](../variables/wallClock.md) implements this as `process.hrtime.bigint()` truncated to whole microseconds.
+
+#### Returns
+
+`number`
+
+The monotonic reading, in milliseconds to the microsecond.
 
 ***
 

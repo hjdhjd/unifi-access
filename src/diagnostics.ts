@@ -47,8 +47,9 @@ export const channels = {
   connectionTransition: diagnosticsChannel.channel<AccessConnectionTransitionPayload>("unifi-access:connection:transition"),
 
   /** The realtime notification WebSocket closed. Published by the `EventStream` from its single teardown path, so it fires exactly once per stream and for every
-   * cause alike - a peer close, a socket error, a watchdog stall, or a deliberate `close()`. The payload mirrors the close frame, which is what tells a consumer
-   * whether the controller ended the connection cleanly or it dropped.
+   * cause alike - a peer close, a socket error, a watchdog stall, the caller's cancel of a connect in flight, or a deliberate `close()`. The payload's code is
+   * the peer's own close frame's when the controller closed the socket, and otherwise the library's classification of the teardown - 1000 for a close the stream
+   * chose, 1006 for one a failure forced - which is what tells a consumer whether the connection ended cleanly or it dropped.
    */
   eventsClosed: diagnosticsChannel.channel<AccessEventsClosedPayload>("unifi-access:events:closed"),
 
@@ -124,7 +125,9 @@ export interface AccessStoreDispatchPayload {
 }
 
 /**
- * Payload published on {@link channels.eventsClosed}. `code` and `reason` mirror the WebSocket close frame.
+ * Payload published on {@link channels.eventsClosed}. When the controller closes the stream unprompted, `code` and `reason` carry the peer's WebSocket close
+ * frame. When the stream closes itself, they carry the library's own classification instead: `1000` for a teardown it chose (an explicit `close()` or the
+ * caller's cancel of a connect in flight) and `1006` for one a failure forced (a socket error or a watchdog stall), with a reason describing what ended it.
  *
  * @category Diagnostics
  */

@@ -1,11 +1,12 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * clock.test.ts: Unit tests for the production wall clock and the deadline armed on it. The interface itself is the contract that lets every other module take time
- * as an injected dependency; here we verify the production implementation reads real time, that its delay resolves once its duration elapses and rejects cleanly
- * when its signal aborts, that its callback timer runs once after its duration, never once disposed, and holds the process open only when asked to, that a delay or
- * a timer past the platform timer's ceiling is carried in full rather than fired at once, each of a delay's hops under the caller's signal and each of a timer's
- * under its process-hold policy, that an infinite span arms nothing and never elapses - its delay settling only when its signal aborts - while `NaN` and negative
- * infinity keep the platform's handling, and that a deadline armed on it aborts with the platform's own timeout reason and never holds the process open while pending.
+ * as an injected dependency; here we verify the production implementation reads real time, that its monotonic reading is the platform's own in whole microseconds,
+ * never decreasing and rising across a real wait while the wall clock is stepped back, that its delay resolves once its duration elapses and rejects cleanly when
+ * its signal aborts, that its callback timer runs once after its duration, never once disposed, and holds the process open only when asked to, that a delay or a
+ * timer past the platform timer's ceiling is carried in full rather than fired at once, each of a delay's hops under the caller's signal and each of a timer's under
+ * its process-hold policy, that an infinite span arms nothing and never elapses - its delay settling only when its signal aborts - while `NaN` and negative infinity
+ * keep the platform's handling, and that a deadline armed on it aborts with the platform's own timeout reason and never holds the process open while pending.
  */
 import { TIMER_DELAY_MAX_MS, armDeadline, wallClock } from "./clock.ts";
 import { describe, test } from "node:test";
@@ -13,6 +14,12 @@ import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
 import { settle } from "homebridge-plugin-utils/testing";
 import timersPromises from "node:timers/promises";
+
+// How many successive monotonic reads a row compares, enough that a reading which ran backward even rarely would show.
+const MONOTONIC_READS = 10000;
+
+// The wall-clock time a row seeds mocked `Date` with before stepping it back to half of it.
+const MOCKED_WALL_CLOCK_MS = 1000000;
 
 // How long a row waits in real time to tell a span that never comes due from one the platform fires after a millisecond. The platform fires timers in expiry
 // order, so a wait well past that millisecond tells the two apart without leaning on the host's speed.
@@ -54,6 +61,54 @@ describe("wallClock", () => {
     const observed = wallClock.now();
 
     assert.ok((observed >= before) && (observed <= Date.now()), "now() should fall within the surrounding Date.now() readings");
+  });
+
+  test("monotonic() reads the platform's monotonic clock, between bracketing reads taken in its own truncated microseconds", () => {
+
+    // The bracket reads the clock the way the member is documented to, truncated to whole microseconds and then put in milliseconds, so a read landing on the same
+    // microsecond as a bound compares equal to it rather than falling outside a finer one.
+    const bracket = (): number => Number(process.hrtime.bigint() / 1000n) / 1000;
+    const before = bracket();
+    const observed = wallClock.monotonic();
+    const after = bracket();
+
+    assert.ok((observed >= before) && (observed <= after), "wallClock.monotonic() must fall within the surrounding reads: " + [ before, observed, after ].join(" "));
+    assert.equal(Math.round(observed * 1000) / 1000, observed, "the reading must be a whole count of microseconds, in milliseconds");
+  });
+
+  test("monotonic() never decreases across successive reads", () => {
+
+    let decreases = 0;
+    let previous = wallClock.monotonic();
+
+    for(let read = 0; read < MONOTONIC_READS; read++) {
+
+      const current = wallClock.monotonic();
+
+      if(current < previous) {
+
+        decreases++;
+      }
+
+      previous = current;
+    }
+
+    assert.equal(decreases, 0, "no reading may fall below the one before it");
+  });
+
+  test("monotonic() rises across a real wait while mock timers step the wall clock back", async (t) => {
+
+    // Only `Date` is mocked, so the wait below runs on the real timers while the wall clock is set back underneath it.
+    t.mock.timers.enable({ apis: ["Date"], now: MOCKED_WALL_CLOCK_MS });
+
+    const before = wallClock.monotonic();
+
+    t.mock.timers.setTime(MOCKED_WALL_CLOCK_MS / 2);
+
+    await timersPromises.setTimeout(5);
+
+    assert.ok(Date.now() < MOCKED_WALL_CLOCK_MS, "the wall clock must have been stepped back");
+    assert.ok(wallClock.monotonic() > before, "the monotonic reading must rise across the real wait whatever the wall clock did");
   });
 
   test("delay resolves once its duration elapses", async () => {

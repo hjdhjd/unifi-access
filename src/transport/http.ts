@@ -351,7 +351,8 @@ export class Transport implements AsyncDisposable {
   readonly #origin: string;
   readonly #verifyTls: boolean;
 
-  /* The breaker's only mutable state: the consecutive-failure count and the timestamp the cooldown last (re-)armed. `null` means the breaker is closed.
+  /* The breaker's only mutable state: the consecutive-failure count and the monotonic reading the cooldown last (re-)armed at, so the cooldown measures the time
+   * that passed however the time of day is set meanwhile. `null` means the breaker is closed.
    *
    * The pool is the dispatcher every request goes to and the connector built beside it, travelling as one value so the two can never disagree about which pool a
    * dial belongs to, and reassigned whole because reset() rebuilds both together. An injected dispatcher is carried with a connector of `null`: its lifecycle
@@ -425,7 +426,7 @@ export class Transport implements AsyncDisposable {
     // cadence and its booked outcome (success closes the breaker, failure re-arms the cooldown) is what keeps re-probe and breaker on one cadence.
     if((opts.probe !== true) && (this.#throttledSince !== null)) {
 
-      const remaining = COOLDOWN_MS - (this.#clock.now() - this.#throttledSince);
+      const remaining = COOLDOWN_MS - (this.#clock.monotonic() - this.#throttledSince);
 
       if(remaining > 0) {
 
@@ -584,7 +585,9 @@ export class Transport implements AsyncDisposable {
       channels.httpRequestStart.publish({ host: this.#host, method, requestId, url } satisfies AccessHttpRequestStartPayload);
     }
 
-    const startedAt = this.#clock.now();
+    // The exchange's elapsed time is measured on the monotonic reading, so the duration it publishes and the elapsed time a failure reports are the time that
+    // passed however the time of day is set meanwhile.
+    const startedAt = this.#clock.monotonic();
 
     try {
 
@@ -629,14 +632,14 @@ export class Transport implements AsyncDisposable {
 
       const result = await Promise.race([ exchange(), settlement.promise ]).finally(() => signal.removeEventListener("abort", settle));
 
-      this.#publishEnd({ durationMs: this.#clock.now() - startedAt, method, outcome: "response", requestId, statusCode: result.statusCode, url });
+      this.#publishEnd({ durationMs: this.#clock.monotonic() - startedAt, method, outcome: "response", requestId, statusCode: result.statusCode, url });
 
       return result;
     } catch(error) {
 
-      const classified = this.#toAccessError(error, opts.signal, deadline.signal, this.#clock.now() - startedAt);
+      const classified = this.#toAccessError(error, opts.signal, deadline.signal, this.#clock.monotonic() - startedAt);
 
-      this.#publishEnd({ durationMs: this.#clock.now() - startedAt, error: classified.message, method, outcome: "failure", requestId, url });
+      this.#publishEnd({ durationMs: this.#clock.monotonic() - startedAt, error: classified.message, method, outcome: "failure", requestId, url });
 
       throw classified;
     }
@@ -673,14 +676,14 @@ export class Transport implements AsyncDisposable {
     // `throttleExited`, so we do not emit `throttleEntered` again - the consumer's view is that we have been throttled the whole time).
     if(this.#throttledSince !== null) {
 
-      this.#throttledSince = this.#clock.now();
+      this.#throttledSince = this.#clock.monotonic();
 
       return;
     }
 
     if(this.#consecutiveFailures >= ACCESS_API_ERROR_LIMIT) {
 
-      this.#throttledSince = this.#clock.now();
+      this.#throttledSince = this.#clock.monotonic();
 
       this.#log.warn("Throttling requests to the UniFi Access controller after repeated failures.",
         { consecutiveFailures: this.#consecutiveFailures, cooldownMs: COOLDOWN_MS, errorLimit: ACCESS_API_ERROR_LIMIT });

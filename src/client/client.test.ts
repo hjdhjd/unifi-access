@@ -79,14 +79,14 @@ interface CapturedConnect {
 }
 
 // Connect while capturing the notification socket the factory builds, so a test can drive realtime frames into the live client. A test that reads what the client
-// logged hands its own logger in.
-async function connectCapturing(agent: MockAgent, options: { clock?: TestClock; log?: AccessLogging;
-  refreshIntervalMs?: number | false; } = {}): Promise<CapturedConnect> {
+// logged hands its own logger in, and one that reads what the connect signal governs hands its signal in.
+async function connectCapturing(agent: MockAgent, options: { clock?: TestClock; log?: AccessLogging; refreshIntervalMs?: number | false;
+  signal?: AbortSignal; } = {}): Promise<CapturedConnect> {
 
   let ws: Nullable<FakeWebSocket> = null;
   const client = await AccessClient.connect({ dispatcher: agent, host: HOST, log: options.log ?? silentLog(), password: "p",
     refreshIntervalMs: options.refreshIntervalMs ?? false, username: "u", webSocket: () => (ws = new FakeWebSocket()),
-    ...((options.clock !== undefined) && { clock: options.clock }) });
+    ...((options.clock !== undefined) && { clock: options.clock }), ...((options.signal !== undefined) && { signal: options.signal }) });
 
   assert.ok(ws, "the notification socket factory must have been invoked during connect");
 
@@ -235,6 +235,32 @@ describe("AccessClient.connect", () => {
       // Not learning whether the account is privileged is different from learning that it is not, so the verdict stays undetermined and the client is still usable.
       assert.equal(client.isAdmin, null);
       assert.equal(client.controllerName, "host-2.test.local");
+    });
+
+    test("a connect signal aborted after the connect resolves leaves the realtime channel open and the connection healthy", async () => {
+
+      const { agent, pool } = mockController();
+      const controller = new AbortController();
+
+      interceptLogin(pool);
+      interceptPass(pool);
+
+      const captured = await connectCapturing(agent, { signal: controller.signal });
+
+      await using client = captured.client;
+      const { ws } = captured;
+
+      /* The signal cancels the initial connect and nothing after it. The monitor hears only the stream's fault rail, which a caller's cancel never reaches, so a
+       * stream that obeyed the signal past its open would end the realtime channel with no recovery to bring it back, while the connection still read healthy.
+       */
+      controller.abort();
+      await settle();
+
+      ws.emitMessage(deviceFrame(HUB, { "alias": "Still live" }));
+
+      assert.equal(ws.closeRequested, false, "the notification socket is not asked to close");
+      assert.equal(client.device(HUB)?.name, "Still live", "the realtime channel still carries frames into the state model");
+      assert.equal(client.connection.state, "healthy");
     });
   });
 

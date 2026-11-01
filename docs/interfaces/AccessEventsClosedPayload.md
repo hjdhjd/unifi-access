@@ -6,7 +6,9 @@
 
 # Interface: AccessEventsClosedPayload
 
-Payload published on [channels.eventsClosed](../variables/channels.md#property-eventsclosed). `code` and `reason` mirror the WebSocket close frame.
+Payload published on [channels.eventsClosed](../variables/channels.md#property-eventsclosed). When the controller closes the stream unprompted, `code` and `reason` carry the peer's WebSocket close
+frame. When the stream closes itself, they carry the library's own classification instead: `1000` for a teardown it chose (an explicit `close()` or the
+caller's cancel of a connect in flight) and `1006` for one a failure forced (a socket error or a watchdog stall), with a reason describing what ended it.
 
 ## Properties
 

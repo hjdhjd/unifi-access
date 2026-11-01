@@ -10,8 +10,8 @@
  * each step, an aborted wait's reading saying whether its rejection carries the reason the abort was handed. A change on either side to what those rows observe
  * reddens it here, and a divergence is a divergence from homebridge-plugin-utils' shape, resolved by reading its clock, never by loosening the assertion.
  * The differential rows read no timer's process-hold policy and no `NaN` or negative-infinity span, so `wallClock`'s own rows in `src/clock.test.ts` are what hold
- * the per-hop `unref` and the `NaN` and negative-infinity handling. Beside the scenarios, the compiler holds homebridge-plugin-utils' `TestClock` and `systemClock`
- * to this library's `Clock`, so a consumer may inject either.
+ * the per-hop `unref` and the `NaN` and negative-infinity handling. Beside the scenarios, one row holds `wallClock`'s monotonic reading between bracketing reads of
+ * `systemClock`'s, and the compiler holds homebridge-plugin-utils' `TestClock` and `systemClock` to this library's `Clock`, so a consumer may inject either.
  */
 import type { Assert, Extends } from "homebridge-plugin-utils/testing";
 import type { Clock, Deadline } from "./clock.ts";
@@ -36,6 +36,7 @@ const _testClockIsAClock: Clock = new TestClock();
 const _systemClockIsAClock: Clock = systemClock;
 
 type _DelayConforms = Assert<Extends<TestClock["delay"] | (typeof systemClock)["delay"], AsFunction<Clock["delay"]>>>;
+type _MonotonicConforms = Assert<Extends<TestClock["monotonic"] | (typeof systemClock)["monotonic"], AsFunction<Clock["monotonic"]>>>;
 type _NowConforms = Assert<Extends<TestClock["now"] | (typeof systemClock)["now"], AsFunction<Clock["now"]>>>;
 type _ScheduleConforms = Assert<Extends<TestClock["schedule"] | (typeof systemClock)["schedule"], AsFunction<Clock["schedule"]>>>;
 
@@ -284,4 +285,16 @@ describe("wallClock parity with homebridge-plugin-utils' systemClock", () => {
       assert.deepEqual(await observeClock(t, wallClock, scenario), await observeClock(t, systemClock, scenario), "the two clocks agree on " + scenario.name);
     });
   }
+
+  test("the monotonic reading falls between bracketing reads of homebridge-plugin-utils' systemClock, in the same whole microseconds", () => {
+
+    // Both clocks read the one platform timeline, so a local reading taken between two of homebridge-plugin-utils' falls between them, and both truncate to whole
+    // microseconds, so a reading landing on a bound's microsecond compares equal to it rather than falling outside a finer one.
+    const before = systemClock.monotonic();
+    const observed = wallClock.monotonic();
+    const after = systemClock.monotonic();
+
+    assert.ok((observed >= before) && (observed <= after), "wallClock must read within the bracketing systemClock reads: " + [ before, observed, after ].join(" "));
+    assert.equal(Math.round(observed * 1000) / 1000, observed, "the reading must be a whole count of microseconds, in milliseconds, as systemClock's is");
+  });
 });

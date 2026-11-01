@@ -2,16 +2,19 @@
  *
  * events-stream.helpers.ts: The peers EventStream tests drive it against - a deterministic in-memory fake WebSocket for everything above the socket, and a loopback
  * TLS server that speaks the upgrade by hand for the things only a real socket can show, reachable directly or through a TCP proxy that resets the client's
- * connection on demand.
+ * connection on demand - and the record of the sockets undici announces, which is how a row reads the real connection a stream holds privately.
  */
 import { acceptConnection, createConnectionLedger, createLoopbackTcpProxy } from "./loopback.helpers.ts";
 import { listenOnLoopback, stopListening } from "homebridge-plugin-utils/testing";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
 import type { AccessWebSocket } from "./ws.ts";
 import type { LoopbackConnection } from "./loopback.helpers.ts";
+import type { Socket } from "node:net";
 import type { TLSSocket } from "node:tls";
 import { createHash } from "node:crypto";
 import { createServer } from "node:tls";
+import diagnosticsChannel from "node:diagnostics_channel";
+import { subscribeTo } from "../testing.helpers.ts";
 
 // The fixed value RFC 6455 defines for the handshake digest, and the blank line that ends an HTTP header block.
 const WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -35,9 +38,9 @@ interface ListenerEntry {
  *
  * - `autoOpen` (default `true`) schedules an `open` event on the next microtask, so a consumer that simply `await`s the stream's open handshake connects without
  *   the test having to drive `emitOpen()` by hand. Tests that scrutinize the handshake itself pass `false` and open explicitly.
- * - `failsOnClose` (default `false`) fires a `close` event from inside `close()` itself, which is what undici does to a socket that has not finished its
- *   upgrade: a close request fails the connection from underneath rather than sending a close frame, and the failure is reported synchronously. A test asks for
- *   it to drive a close that lands while the caller is still inside the teardown that requested it.
+ * - `failsOnClose` (default `false`) fires an `error` event and then a `close` event with code 1006 from inside `close()` itself, which is what undici does to a
+ *   socket that has not finished its upgrade: a close request fails the connection from underneath rather than sending a close frame, and the failure is
+ *   reported synchronously. A test asks for it to drive a failure that lands while the caller is still inside the teardown that requested it.
  */
 export interface FakeWebSocketOptions {
 
@@ -84,8 +87,9 @@ export class FakeWebSocket implements AccessWebSocket {
   }
 
   /**
-   * Request the socket close. Records the request, and with `failsOnClose` fires the `close` a socket that never finished connecting reports from inside this
-   * call. Without it the close event is left for the test to emit, which is what every row that drives a settled connection wants.
+   * Request the socket close. Records the request, and with `failsOnClose` fires the `error` and then the `close` a socket that never finished connecting reports
+   * from inside this call, in the order undici fires them. Without it the close event is left for the test to emit, which is what every row that drives a
+   * settled connection wants.
    */
   close(): void {
 
@@ -93,6 +97,7 @@ export class FakeWebSocket implements AccessWebSocket {
 
     if(this.#failsOnClose) {
 
+      this.emitError(new TypeError("connection failed"));
       this.emitClose(1006, "connection failed");
     }
   }
@@ -343,6 +348,22 @@ export async function createProxiedLoopbackServer(behavior: LoopbackPeerBehavior
     port: proxy.port,
     reset: (): void => proxy.reset()
   };
+}
+
+/**
+ * The sockets undici announces as it establishes each client connection, gathered for as long as the handle stays undisposed. A stream holds its socket
+ * privately, so a row that reads whether the stream has released its connection takes the socket from undici's own `undici:client:connected` announcement, and
+ * reads it at the moment the row cares about - inside a listener the stream notifies, or after a logger's throw - rather than waiting on the peer, which learns
+ * of a severance only on a later turn.
+ *
+ * @returns The sockets announced so far, gathered as they arrive, and the disposal that stops gathering them.
+ */
+export function announcedSockets(): Disposable & { readonly sockets: readonly Socket[] } {
+
+  const sockets: Socket[] = [];
+  const subscription = subscribeTo(diagnosticsChannel.channel<{ socket: Socket }>("undici:client:connected"), (message) => void sockets.push(message.socket));
+
+  return { [Symbol.dispose]: (): void => subscription[Symbol.dispose](), sockets };
 }
 
 // The handshake's proof that the peer speaks the protocol: the client's key concatenated with the RFC's fixed value, hashed and encoded. A client that does not

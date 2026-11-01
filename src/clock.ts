@@ -5,18 +5,20 @@
 import timersPromises from "node:timers/promises";
 
 /**
- * Source of time for any code that needs to know "what time is it now?", "wake me up after a delay," or "call me back once the time is up." Production code reads
- * time exclusively through this interface, never through `Date.now()`, `node:timers/promises`, or the global `setTimeout` directly. Tests substitute a fake clock
- * to drive time deterministically without real-time waits or module-level mocking.
+ * Source of time for any code that needs to know "what time is it now?", "how much time has passed?", "wake me up after a delay," or "call me back once the time is
+ * up." Production code reads time exclusively through this interface, never through `Date.now()`, `process.hrtime`, `node:timers/promises`, or the global
+ * `setTimeout` directly. Tests substitute a fake clock to drive time deterministically without real-time waits or module-level mocking.
  *
- * The interface is shaped by what consumers actually need - a clock, a one-shot delay, and a one-shot callback timer (`now` / `delay` / `schedule`), no more. Adding
- * methods speculatively (setImmediate, a repeating timer, etc.) would be YAGNI; adding them when a consumer first needs one is principled, and each member here
- * answers a consumer. `now` serves the throttle breaker's cooldown and the elapsed time a failed request reports, readings a suite steps rather than waits for.
- * `delay` serves the connection-recovery backoff curve, which needs a one-shot wait of varying duration. `schedule` serves the transport's request deadline, which
- * `armDeadline` arms on it, so a suite fires the deadline rather than waiting it out and a request releases its timer the moment it settles. A repeating consumer -
- * the heartbeat watchdog, the refresh failsafe - is itself a loop that awaits one `delay` per pass, so that single primitive covers a varying sequence and a fixed
- * cadence alike. The consumers are every subsystem that needs wall-clock time, a delay, or a deadline - the transport throttle breaker and the request deadline
- * beside it, the events heartbeat watchdog, the store refresh loop, and the connection recovery loop among them.
+ * The interface is shaped by what consumers actually need - a clock, a monotonic reading, a one-shot delay, and a one-shot callback timer (`now` / `monotonic` /
+ * `delay` / `schedule`), no more. Adding methods speculatively (setImmediate, a repeating timer, etc.) would be YAGNI; adding them when a consumer first needs one
+ * is principled. `monotonic` serves every elapsed time the library measures - the throttle breaker's cooldown, a request's duration and the elapsed time a failed
+ * one reports, a connection attempt's elapsed time, and the heartbeat watchdog's silence - because a wall-clock step would move a measure taken on `now`, and these
+ * are readings a suite steps rather than waits for. `now` is the time of day, the reading for stamping a point in time, and no interval the library measures reads
+ * it. `delay` serves the connection-recovery backoff curve, which needs a one-shot wait of varying duration. `schedule` serves the transport's request deadline,
+ * which `armDeadline` arms on it, so a suite fires the deadline rather than waiting it out and a request releases its timer the moment it settles. A repeating
+ * consumer - the heartbeat watchdog, the refresh failsafe - is itself a loop that awaits one `delay` per pass, so that single primitive covers a varying sequence and
+ * a fixed cadence alike. The consumers are every subsystem that needs an elapsed time, a delay, or a deadline - the transport throttle breaker and the request
+ * deadline beside it, the events heartbeat watchdog, the store refresh loop, and the connection recovery loop among them.
  *
  * Why dependency injection here rather than module mocking: time is a real dependency the code reads from, not an incidental detail of the runtime. Naming
  * it as a parameter at the function (or constructor) signature makes the dependency visible at the call site - a reader sees `clock: Clock` and immediately
@@ -45,6 +47,17 @@ export interface Clock {
    * @returns A promise that resolves after the delay, or rejects with `AbortError` on abort.
    */
   delay(ms: number, init: { signal: AbortSignal }): Promise<void>;
+
+  /**
+   * Return a reading of the platform's monotonic clock: an integer count of microseconds on `process.hrtime`'s timeline, from its origin, divided by 1000, so the
+   * reading is in milliseconds and `Math.round(reading * 1000)` recovers the count exactly. A wall-clock change never moves it, so a later reading less an earlier
+   * one is the time that passed between them however the time of day was set meanwhile. Whether it advances across a system suspend depends on the platform's
+   * monotonic clock. Its origin is the platform's rather than the process's, so an uptime is a consumer's own difference from a reading it took when it started.
+   * The production {@link wallClock} implements this as `process.hrtime.bigint()` truncated to whole microseconds.
+   *
+   * @returns The monotonic reading, in milliseconds to the microsecond.
+   */
+  monotonic(): number;
 
   /**
    * Returns the current wall-clock time in milliseconds since the Unix epoch. The semantic matches `Date.now()`.
@@ -186,11 +199,12 @@ function delayUntilAbort({ signal }: { signal: AbortSignal }): Promise<void> {
 }
 
 /**
- * The production clock. Reads wall-clock time via `Date.now()`, delays via `node:timers/promises`, and arms callback timers on the global `setTimeout`. This shim
- * is the single bridge between the `Clock` interface and Node's runtime; consumers always go through `Clock`, never directly to the Node primitives, so an
- * unmocked call site behaves exactly like a direct `Date.now()`, `node:timers/promises`, or `setTimeout` call would - except where the platform timer's range runs
- * out: past the ceiling, where the platform would fire at once and this clock fires when asked, and at an infinite span, which the platform would fire at once and
- * this clock never fires.
+ * The production clock. Reads wall-clock time via `Date.now()`, the monotonic clock via `process.hrtime.bigint()` truncated to whole microseconds and read in
+ * milliseconds, delays via `node:timers/promises`, and arms callback timers on the global `setTimeout`. This shim is the single bridge between the `Clock`
+ * interface and Node's runtime; consumers always go through `Clock`, never directly to the Node primitives, so an unmocked call site behaves exactly like a direct
+ * `Date.now()`, `process.hrtime.bigint()`, `node:timers/promises`, or `setTimeout` call would - except where the platform timer's range runs out: past the
+ * ceiling, where the platform would fire at once and this clock fires when asked, and at an infinite span, which the platform would fire at once and this clock
+ * never fires.
  *
  * Consumer tests (the `ConnectionMonitor`, `EventStream`, `StateStore`, and the like) construct homebridge-plugin-utils' `TestClock` instead of importing this; this
  * module's own test exercises `wallClock` directly to confirm it reads real time and drives real timers. Production code receives this as the default in every
@@ -217,6 +231,12 @@ export const wallClock: Clock = {
 
     return pastCeiling(ms) ? delayPastCeiling(ms, init) : timersPromises.setTimeout(ms, undefined, init);
   },
+
+  /* The reading is truncated to whole microseconds before it becomes a `number`, because nanoseconds since the platform's origin, which is near boot on common
+   * hosts, outgrow the integers a `number` holds exactly after about a hundred days. A count of microseconds stays exact, and its reading in milliseconds rounds
+   * back to it, for years past any realistic uptime, so a consumer recovering the microseconds with `Math.round` gets back the very count this read.
+   */
+  monotonic: (): number => Number(process.hrtime.bigint() / 1000n) / 1000,
 
   now: (): number => Date.now(),
 
