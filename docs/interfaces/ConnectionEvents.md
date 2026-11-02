@@ -12,7 +12,7 @@ The events [ConnectionMonitor](ConnectionMonitor.md) publishes on its three-rail
 - `controllerLost` fires when the controller is concluded lost, and again whenever the class the loss is announced as changes, carrying the fault that settled
   it.
 - `controllerRebooted` fires when the controller's reported uptime falls far enough to read as a restart, carrying both readings.
-- `controllerRecovered` fires when the connection returns to healthy after having been lost.
+- `controllerRecovered` fires when recovery completes after the connection was lost, into `healthy` or into `throttled` when the transport's breaker is open.
 - `throttleEntered` and `throttleExited` forward the transport breaker's own transitions.
 
 ## Properties

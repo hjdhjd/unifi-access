@@ -309,7 +309,7 @@ const doctorHandler: CommandHandler = async (ctx) => {
     // throttle alone.
     await check("Connection monitor", () => Promise.resolve({
 
-      detail: "state=" + connected.connection.state + ", throttled=" + connected.connection.isThrottled.toString(),
+      detail: "state=" + connected.connection.state + ", throttled=" + connected.connection.isThrottled.toString() + ", lost=" + connected.connection.isLost.toString(),
       status: connected.connection.isHealthy ? "pass" : "fail"
     }));
 

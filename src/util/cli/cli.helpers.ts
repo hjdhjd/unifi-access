@@ -12,7 +12,7 @@
 import { AccessApiError, deviceAccessMethodStates as readAccessMethodStates, portBindings as readPortBindings, isTamperCapable as readTamperCapability,
   tamperState as readTamperState, terminalInput as readTerminalInput } from "../../index.ts";
 import type { AccessApiOverride, AccessCapabilities, AccessClient, AccessDoorStateEntry, AccessEventPacket, AccessLockRule, AccessMethod,
-  AccessOfficialDoorUnlockActor, AccessPortBinding, AccessStateDevice, AccessTerminalInput, AccessTerminalInputFacts } from "../../index.ts";
+  AccessOfficialDoorUnlockActor, AccessPortBinding, AccessStateDevice, AccessTerminalInput, AccessTerminalInputFacts, ConnectionState } from "../../index.ts";
 import type { CommandContext, LoadCredentials, OpenClient } from "./shared.ts";
 import { Output } from "./output/format.ts";
 import type { UfaCredentials } from "./credentials.ts";
@@ -123,7 +123,7 @@ export interface FakeClientSpec {
 
   accessPoints?: FakeDeviceSpec[];
   capabilities?: AccessCapabilities;
-  connection?: { isHealthy?: boolean; isThrottled?: boolean; state?: string };
+  connection?: { isHealthy?: boolean; isLost?: boolean; isThrottled?: boolean; state?: ConnectionState };
   controllerInfo?: unknown;
   controllerName?: string | null;
   devices?: FakeDeviceSpec[];
@@ -581,7 +581,8 @@ export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; c
     accessPoint: (id: string): unknown => accessPointHandles.find((device) => device["id"] === id),
     accessPoints: accessPointHandles,
     capabilities,
-    connection: { isHealthy: spec.connection?.isHealthy ?? true, isThrottled: spec.connection?.isThrottled ?? false, state: spec.connection?.state ?? "connected" },
+    connection: { isHealthy: spec.connection?.isHealthy ?? true, isLost: spec.connection?.isLost ?? false, isThrottled: spec.connection?.isThrottled ?? false,
+      state: spec.connection?.state ?? "healthy" },
     controllerInfo: spec.controllerInfo ?? null,
     /* The two verdicts a token-only client genuinely has none of: no controller document, so no name, and no account, so no privilege verdict. The fake
      * enforces null for controllerName and isAdmin in that mode because the library does, and an explicit null a test states on purpose (a controller whose

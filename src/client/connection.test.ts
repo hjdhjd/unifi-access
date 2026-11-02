@@ -414,6 +414,24 @@ async function assertRecoveryDelays(options: { delays: readonly number[]; label:
   }
 }
 
+// The loss fact as a synchronous stateChanged listener reads it at an edge, beside the state that edge reached.
+interface EdgeFact {
+
+  isLost: boolean;
+  to: ConnectionState;
+}
+
+// Read the loss fact inside a stateChanged listener at every edge from here on, so a row asserts what a consumer sees at the moment each edge fires rather than after
+// the work that follows it has run.
+function factAtEachEdge(monitor: ConnectionMonitor): EdgeFact[] {
+
+  const edges: EdgeFact[] = [];
+
+  monitor.on("stateChanged", ({ to }): void => void edges.push({ isLost: monitor.isLost, to }));
+
+  return edges;
+}
+
 describe("ConnectionMonitor", () => {
 
   describe("initial state", () => {
@@ -1483,6 +1501,141 @@ describe("ConnectionMonitor", () => {
       control.setVerifyError(new AccessRequestError("limited", { statusCode: 429 }));
       await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(2), ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady,
         ACCESS_RECOVERY_REFUSAL_SCHEDULE_MS.steady ], label: "once rate limited", rig });
+    });
+  });
+
+  describe("the loss fact", () => {
+
+    test("a fault that recovers on its first probe reads not lost at every edge", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { clock, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      assert.equal(monitor.isLost, false, "a healthy connection is not lost");
+
+      const edges = factAtEachEdge(monitor);
+
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => monitor.state === "healthy", { description: "the first probe to recover the connection" });
+
+      assert.deepEqual(edges, [ { isLost: false, to: "degraded" }, { isLost: false, to: "reconnecting" }, { isLost: false, to: "healthy" } ]);
+    });
+
+    test("a loss reads lost from the edge into lost, through a failed attempt and reconnecting, until the edge back to healthy", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { clock, control, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factAtEachEdge(monitor);
+
+      control.setVerifyError(new AccessNetworkError("down"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => monitor.state === "lost", { description: "the failed probe to report the connection lost" });
+
+      // A failed attempt inside the loss crosses no edge, so the fact is read directly here.
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      assert.equal(monitor.isLost, true, "a failed attempt holds the fact");
+
+      // The probe answers and the re-bootstrap fails, which walks reconnecting and back into lost.
+      control.setVerifyError(null);
+      control.setReBootstrapError(new AccessNetworkError("documents unavailable"));
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => edges.length === 4, { description: "the failed re-bootstrap to return to lost" });
+
+      control.setReBootstrapError(null);
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => monitor.state === "healthy", { description: "recovery once the controller returned" });
+
+      assert.deepEqual(edges, [ { isLost: false, to: "degraded" }, { isLost: true, to: "lost" }, { isLost: true, to: "reconnecting" }, { isLost: true, to: "lost" },
+        { isLost: true, to: "reconnecting" }, { isLost: false, to: "healthy" } ]);
+    });
+
+    test("recovery into an open breaker reads not lost at the edge into throttled", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { clock, control, streams, throttle } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factAtEachEdge(monitor);
+
+      control.setVerifyError(new AccessNetworkError("down"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => monitor.state === "lost", { description: "the failed probe to report the connection lost" });
+
+      // The breaker opens while recovery owns the phase, so it drives no edge of its own, and recovery completes into it.
+      throttle.set(true);
+      control.setVerifyError(null);
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => monitor.state === "throttled", { description: "recovery to complete into the open breaker" });
+
+      assert.deepEqual(edges, [ { isLost: false, to: "degraded" }, { isLost: true, to: "lost" }, { isLost: true, to: "reconnecting" },
+        { isLost: false, to: "throttled" } ]);
+    });
+
+    test("a class change re-announcing a loss holds the fact and crosses no edge", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { clock, control, events, streams } = rig;
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factAtEachEdge(monitor);
+      const atAnnouncement: boolean[] = [];
+
+      monitor.on("controllerLost", (): void => void atAnnouncement.push(monitor.isLost));
+
+      control.setVerifyError(new AccessNetworkError("down"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => monitor.state === "lost", { description: "the failed probe to report the connection lost" });
+
+      control.setVerifyError(new AccessAuthError("refused", { statusCode: 401 }));
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => events.lost.length === 2, { description: "the turn to refusing to be announced" });
+
+      assert.deepEqual(atAnnouncement, [ true, true ], "every announcement reads the fact true");
+      assert.deepEqual(edges, [ { isLost: false, to: "degraded" }, { isLost: true, to: "lost" } ], "the turn crosses no edge");
+    });
+
+    test("disposal mid-loss emits no edge and keeps the fact it last held", async () => {
+
+      const { clock, control, monitor, streams } = await harness();
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factAtEachEdge(monitor);
+
+      control.setVerifyError(new AccessNetworkError("down"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, [ACCESS_RECOVERY_STEADY_INTERVAL_MS]);
+      await settleUntil(() => monitor.state === "lost", { description: "the failed probe to report the connection lost" });
+
+      await monitor[Symbol.asyncDispose]();
+      await settle();
+
+      assert.deepEqual(edges, [ { isLost: false, to: "degraded" }, { isLost: true, to: "lost" } ], "disposal emits no edge");
+      assert.equal(monitor.isLost, true, "a disposed monitor keeps the loss it last held");
     });
   });
 

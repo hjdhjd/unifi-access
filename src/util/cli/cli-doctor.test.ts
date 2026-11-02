@@ -178,7 +178,7 @@ describe("the doctor's carried posture", () => {
     const cases: [ string, FakeClientSpec ][] = [
       [ "State and inventory", { ...healthy, snapshot: { controller: { host: { uptime: 1 } }, root: null } } ],
       [ "Derived state (selectors)", { ...healthy, controllerName: null } ],
-      [ "Connection monitor", { ...healthy, connection: { isHealthy: false, state: "disconnected" } } ]
+      [ "Connection monitor", { ...healthy, connection: { isHealthy: false, isLost: true, state: "lost" } } ]
     ];
 
     for(const [ name, spec ] of cases) {
@@ -266,13 +266,20 @@ describe("the doctor's carried posture", () => {
 
   test("the human report tags a failing check", async () => {
 
-    const { calls, client } = makeFakeClient({ ...healthy, connection: { isHealthy: false, state: "disconnected" } });
+    const { calls, client } = makeFakeClient({ ...healthy, connection: { isHealthy: false, isLost: true, state: "lost" } });
     const { ctx, lines } = makeCommandContext({ calls, client });
 
     const code = await withExitCode(async () => doctor.run(ctx));
 
-    assert.match(rendered(lines).find((line) => line.includes("Connection monitor")) ?? "", /^FAIL {2}Connection monitor/);
+    assert.match(rendered(lines).find((line) => line.includes("Connection monitor")) ?? "", /^FAIL {2}Connection monitor {2}state=lost, throttled=false, lost=true$/);
     assert.equal(code, 1);
+  });
+
+  test("the connection check's detail reads the state, the breaker and the loss fact", async () => {
+
+    const { report } = await runDoctor({ ...healthy, packets: [RING] });
+
+    assert.equal(report.results.find((result) => result.name === "Connection monitor")?.detail, "state=healthy, throttled=false, lost=false");
   });
 
   test("a failed connect ends the run with the failure reported", async () => {

@@ -26,6 +26,28 @@ Whether the connection is in steady operation.
 
 ***
 
+### isLost
+
+#### Get Signature
+
+```ts
+get isLost(): boolean;
+```
+
+Whether the current recovery episode has concluded the connection lost. It turns true at the episode's first loss, the edge into `lost` that fires
+`controllerLost`, holds through every failed attempt and every `reconnecting` that follows, and turns false at the edge recovery completes on, into `healthy` or
+into `throttled` when the transport's breaker is open, which is the edge `controllerRecovered` follows. A fault that recovers before any attempt fails never
+turns it on.
+
+It changes only on a `stateChanged` transition: it is set before the edge into `lost` emits and cleared before the edge recovery completes on emits, so a
+listener reads at each edge the value that edge stands for. Disposal emits no edge, so a disposed monitor keeps the value it last held.
+
+##### Returns
+
+`boolean`
+
+***
+
 ### isThrottled
 
 #### Get Signature

@@ -160,7 +160,7 @@ export interface ConnectionTransition {
  * - `controllerLost` fires when the controller is concluded lost, and again whenever the class the loss is announced as changes, carrying the fault that settled
  *   it.
  * - `controllerRebooted` fires when the controller's reported uptime falls far enough to read as a restart, carrying both readings.
- * - `controllerRecovered` fires when the connection returns to healthy after having been lost.
+ * - `controllerRecovered` fires when recovery completes after the connection was lost, into `healthy` or into `throttled` when the transport's breaker is open.
  * - `throttleEntered` and `throttleExited` forward the transport breaker's own transitions.
  *
  * @category Client
@@ -360,10 +360,10 @@ export class ConnectionMonitor {
   /* The state machine's own bookkeeping. The observable state is derived from the phase and the transport's live verdict rather than stored. `#lastFault` is the most
    * recent typed fault: it supplies a transition's reason and the lost announcement's payload, and whether it is a refusal, a refused sign-in or a rate limit alike,
    * chooses the recovery schedule. `#announcedLoss` is the class the episode's loss was last announced as, null until an episode reaches lost, so a loss is announced
-   * again only when its class changes and recovery is announced only after a genuine loss. `#reportedState` caches the last announced value purely to dedup.
-   * `#recovering` keeps a re-entrant fault from starting a second loop, and `#recoveryWake` is the handle that lets a detected restart interrupt a parked wait.
-   * `#lastUptime` is the restart detector's baseline: seeded at construction from what the store already holds, updated on every yield, and dying with the monitor -
-   * there is no reset path because there is no lifecycle event that would want one.
+   * again only when its class changes, recovery is announced only after a genuine loss, and `isLost` is its public reading. `#reportedState` caches the last announced
+   * value purely to dedup. `#recovering` keeps a re-entrant fault from starting a second loop, and `#recoveryWake` is the handle that lets a detected restart interrupt
+   * a parked wait. `#lastUptime` is the restart detector's baseline: seeded at construction from what the store already holds, updated on every yield, and dying with
+   * the monitor - there is no reset path because there is no lifecycle event that would want one.
    */
   #announcedLoss: Nullable<LossClass> = null;
   #lastFault: Nullable<AccessError> = null;
@@ -428,6 +428,20 @@ export class ConnectionMonitor {
   get isHealthy(): boolean {
 
     return this.#derive() === "healthy";
+  }
+
+  /**
+   * Whether the current recovery episode has concluded the connection lost. It turns true at the episode's first loss, the edge into `lost` that fires
+   * `controllerLost`, holds through every failed attempt and every `reconnecting` that follows, and turns false at the edge recovery completes on, into `healthy` or
+   * into `throttled` when the transport's breaker is open, which is the edge `controllerRecovered` follows. A fault that recovers before any attempt fails never
+   * turns it on.
+   *
+   * It changes only on a `stateChanged` transition: it is set before the edge into `lost` emits and cleared before the edge recovery completes on emits, so a
+   * listener reads at each edge the value that edge stands for. Disposal emits no edge, so a disposed monitor keeps the value it last held.
+   */
+  get isLost(): boolean {
+
+    return this.#announcedLoss !== null;
   }
 
   /**
@@ -601,10 +615,10 @@ export class ConnectionMonitor {
     this.#recompute();
   }
 
-  /* Conclude the connection is lost, recording the fault and the class it is announced as, which also marks the episode so a later return to healthy is announced as a
-   * recovery. One rule announces the loss, in the lost line and on `controllerLost` alike: the episode's first loss, and each turn of its announced class, never a failed
-   * attempt that leaves its class unchanged. The one derivation of the class chooses the line's sentence and its level, while the recovery schedule keeps its own
-   * refusal-or-not reading of the same fault, so a refused sign-in turning into a rate limit is announced again on the rung it stood on.
+  /* Conclude the connection is lost, recording the fault and the class it is announced as, which also marks the episode so the recovery that ends it is announced. One
+   * rule announces the loss, in the lost line and on `controllerLost` alike: the episode's first loss, and each turn of its announced class, never a failed attempt that
+   * leaves its class unchanged. The one derivation of the class chooses the line's sentence and its level, while the recovery schedule keeps its own refusal-or-not
+   * reading of the same fault, so a refused sign-in turning into a rate limit is announced again on the rung it stood on.
    */
   #enterLost(reason: AccessError): void {
 
@@ -847,9 +861,9 @@ export class ConnectionMonitor {
     }
   }
 
-  // Recovery completed. Clear the fault, return to healthy, and announce a recovery only when the episode had actually reached lost - a transient stall that
-  // re-bootstrapped without the controller ever going unreachable does not warrant one. The transient case still confirms itself at the stream level, so each
-  // recovery logs exactly one closing line and the cases cannot both fire.
+  // Recovery completed. Clear the fault and the loss before the edge recovery completes on, so isLost reads false on it, return to healthy, and announce a recovery
+  // only when the episode had actually reached lost - a transient stall that re-bootstrapped without the controller ever going unreachable does not warrant one. The
+  // transient case still confirms itself at the stream level, so each recovery logs exactly one closing line and the cases cannot both fire.
   #onRecovered(): void {
 
     const recovered = this.#announcedLoss !== null;
