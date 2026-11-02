@@ -28,7 +28,7 @@ import type { AccessTypedEvent } from "./events.ts";
 import { assertNever } from "../errors.ts";
 import { deriveDoorState } from "./door-state.ts";
 import { isDeepStrictEqual } from "node:util";
-import { isRecord } from "../json.ts";
+import { isPlainObject } from "./plain-object.ts";
 import { normalizeMacAddress } from "./vocabulary.ts";
 
 /* The records as they are stored, shaped by these principles.
@@ -719,7 +719,7 @@ function mergeKeyedRows(held: AccessDeviceEntryConfig[], supplied: readonly Acce
 
   for(const row of supplied) {
 
-    if(!isRecord(row) || (typeof row[ROW_IDENTITY] !== "string")) {
+    if(!isPlainObject(row) || (typeof row[ROW_IDENTITY] !== "string")) {
 
       continue;
     }
@@ -765,7 +765,7 @@ function mergeValueSet(held: string[], supplied: readonly AccessKnownJsonValue[]
 // record has never held is admitted on this and nothing else.
 function isConfigRow(value: unknown): value is AccessDeviceEntryConfig {
 
-  return isRecord(value) && (typeof value["device_id"] === "string") && (typeof value[ROW_IDENTITY] === "string") && (typeof value["tag"] === "string") &&
+  return isPlainObject(value) && (typeof value["device_id"] === "string") && (typeof value[ROW_IDENTITY] === "string") && (typeof value["tag"] === "string") &&
     (typeof value["value"] === "string");
 }
 
@@ -776,8 +776,8 @@ function mergeRecord<T extends Record<string, AccessKnownJsonValue>>(record: T, 
   return mergeObjects(record, patch) as T;
 }
 
-/* Recursively merge a partial onto a record. Objects merge key by key, while arrays and primitives replace wholesale as the wire-authoritative values they are. The
- * merge is value-aware: it returns the *same reference* when the patch changes nothing and rebuilds only the nodes on the path to an actual change, which is the
+/* Recursively merge a partial onto a record. Plain objects merge key by key, while arrays and primitives replace wholesale as the wire-authoritative values they are.
+ * The merge is value-aware: it returns the *same reference* when the patch changes nothing and rebuilds only the nodes on the path to an actual change, which is the
  * structural-sharing engine the no-op guarantee rests on. The record is cloned lazily, on the first real change, so an all-no-op merge allocates nothing.
  *
  * A null-valued key is skipped at every depth. The obvious alternative, treating an explicit null as a clear, is wrong for this controller: on this wire a null means
@@ -795,6 +795,13 @@ function mergeObjects(record: Record<string, unknown>, patch: Record<string, unk
 
   for(const key of Object.keys(patch)) {
 
+    // Parsed JSON gives a key named `__proto__` as an own property, and assigning it onto the record's literal copy would reach the inherited setter and swap the
+    // record's prototype rather than write a field. No controller record has a field by that name, so refusing the key here, before anything reads it, loses nothing.
+    if(key === "__proto__") {
+
+      continue;
+    }
+
     const patchValue = patch[key];
 
     if(patchValue === null) {
@@ -806,16 +813,16 @@ function mergeObjects(record: Record<string, unknown>, patch: Record<string, unk
     let isChange: boolean;
     let nextValue: unknown;
 
-    // Object onto object recurses, inheriting the reference-preserving no-op. Anything else replaces wholesale, and counts as a change only when it differs by value
-    // from what is there, or introduces a key the record did not have.
-    if(isRecord(patchValue) && isRecord(recordValue)) {
+    // Plain object onto plain object recurses, inheriting the reference-preserving no-op. Anything else replaces wholesale, and counts as a change only when it differs
+    // by value from what is there, or introduces a key the record did not have.
+    if(isPlainObject(patchValue) && isPlainObject(recordValue)) {
 
       nextValue = mergeObjects(recordValue, patchValue);
       isChange = !Object.is(nextValue, recordValue);
     } else {
 
       nextValue = patchValue;
-      isChange = !(key in record) || !isDeepStrictEqual(recordValue, patchValue);
+      isChange = !Object.hasOwn(record, key) || !isDeepStrictEqual(recordValue, patchValue);
     }
 
     if(isChange) {

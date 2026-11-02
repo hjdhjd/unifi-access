@@ -5,7 +5,7 @@
 import type { AccessKnownJsonValue, Nullable } from "../types/index.ts";
 import type { AccessOfficialCallOptions, OfficialDispatch, OfficialDomainOptions } from "./dispatch.ts";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { isRecord } from "../json.ts";
+import { isPlainObject } from "../protocol/plain-object.ts";
 import { officialEndpoint } from "./endpoints.ts";
 
 /**
@@ -391,14 +391,14 @@ const WEBHOOK_EVENT_NAMES: ReadonlySet<string> = new Set(Object.keys({
  */
 export function isAccessWebhookDelivery(value: unknown): value is AccessWebhookEvent {
 
-  if(!isRecord(value)) {
+  if(!isPlainObject(value)) {
 
     return false;
   }
 
   const data = value["data"];
 
-  if(!WEBHOOK_EVENT_NAMES.has(value["event"] as string) || (typeof value["event_object_id"] !== "string") || !isRecord(data)) {
+  if(!WEBHOOK_EVENT_NAMES.has(value["event"] as string) || (typeof value["event_object_id"] !== "string") || !isPlainObject(data)) {
 
     return false;
   }
@@ -407,13 +407,13 @@ export function isAccessWebhookDelivery(value: unknown): value is AccessWebhookE
   // and only the second is something the controller sends.
   for(const member of [ "actor", "device" ]) {
 
-    if(!(member in data) || ((data[member] !== null) && !isRecord(data[member]))) {
+    if(!(member in data) || ((data[member] !== null) && !isPlainObject(data[member]))) {
 
       return false;
     }
   }
 
-  return isRecord(data["location"]) && isRecord(data["object"]);
+  return isPlainObject(data["location"]) && isPlainObject(data["object"]);
 }
 
 /**

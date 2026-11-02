@@ -29,7 +29,7 @@
  * consistency is bought with, bounded by a site's identity vocabulary plus one entry per event identifier on a long stream. And a value that legitimately changes
  * during a run, a renewed lease or a renamed door, takes a fresh stand-in: this is content-keyed pseudonymization, which describes values rather than entities.
  */
-import { isMacAddress, normalizeMacAddress } from "../../index.ts";
+import { isMacAddress, isPlainObject, normalizeMacAddress } from "../../index.ts";
 
 // The replacement categories. Each keeps its own memory, so a hostname and a door name that happen to share text never collapse onto one pseudonym.
 type ScrubCategory = "email" | "hash" | "host" | "ip" | "mac" | "name" | "phone" | "plate" | "token" | "uuid";
@@ -359,20 +359,6 @@ function scrubUrl(context: ScrubContext, value: string): string {
   url.hostname = IP_PATTERN.test(url.hostname) ? scrubIp(context, url.hostname) : scrubHostname(context, url.hostname);
 
   return url.toString();
-}
-
-// Whether a value is a plain JSON object. Buffers and typed arrays answer `typeof` as objects but are binary, and arrays are handled on their own path, so the
-// prototype is what the test reads.
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-
-  if((typeof value !== "object") || (value === null)) {
-
-    return false;
-  }
-
-  const prototype: unknown = Object.getPrototypeOf(value);
-
-  return (prototype === Object.prototype) || (prototype === null);
 }
 
 // Replace a value the catalogs did not name, by its own shape, or answer `undefined` when it has no shape worth replacing. This is what covers fields on hardware

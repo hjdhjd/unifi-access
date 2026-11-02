@@ -5,6 +5,7 @@
 import { CliError } from "./shared.ts";
 import type { ConnectIdentity } from "../../index.ts";
 import { homedir } from "node:os";
+import { isPlainObject } from "../../index.ts";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 
@@ -110,7 +111,7 @@ function readAccessToken(record: Record<string, unknown>, source: string): strin
     return undefined;
   }
 
-  if((typeof tokens !== "object") || (tokens === null) || Array.isArray(tokens)) {
+  if(!isPlainObject(tokens)) {
 
     throw new CliError("The ufa.json configuration at " + source + " must express its \"tokens\" field as an object keyed by UniFi application.");
   }
@@ -120,7 +121,7 @@ function readAccessToken(record: Record<string, unknown>, source: string): strin
     return undefined;
   }
 
-  const access = tokens.access;
+  const access = tokens["access"];
 
   if((typeof access !== "string") || (access.length === 0)) {
 
@@ -239,14 +240,13 @@ export async function loadCredentials(opts: LoadCredentialsOptions = {}): Promis
     throw new CliError("The ufa.json configuration at " + source + " is not valid JSON.");
   }
 
-  if((typeof parsed !== "object") || (parsed === null)) {
+  if(!isPlainObject(parsed)) {
 
     throw new CliError("The ufa.json configuration at " + source + " must be a JSON object.");
   }
 
-  const record = parsed as Record<string, unknown>;
-  const verifyTls = readVerifyTls(record, source);
+  const verifyTls = readVerifyTls(parsed, source);
 
-  return { host: normalizeHost(requireField(record, "controller", source)), identity: composeIdentity(record, source),
+  return { host: normalizeHost(requireField(parsed, "controller", source)), identity: composeIdentity(parsed, source),
     ...((verifyTls !== undefined) && { verifyTls }) };
 }

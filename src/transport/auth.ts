@@ -9,7 +9,7 @@ import type { AccessAuthReloginPayload } from "../diagnostics.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { Nullable } from "../types/index.ts";
 import { channels } from "../diagnostics.ts";
-import { isRecord } from "../json.ts";
+import { isPlainObject } from "../protocol/plain-object.ts";
 import { noopLog } from "../logging.ts";
 import { responseOk } from "./http.ts";
 import { singleFlight } from "../single-flight.ts";
@@ -372,7 +372,7 @@ export class AuthSession {
      * present, but no capture in hand confirms that for this endpoint, and a cast would turn an assumption into a claim the compiler then trusts everywhere
      * downstream. Guarding costs two checks and keeps the uncertainty where it belongs.
      */
-    if(!isRecord(body)) {
+    if(!isPlainObject(body)) {
 
       this.#log.debug("The UniFi Access controller's account record was not the object shape the privilege check reads.");
 

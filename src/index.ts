@@ -101,6 +101,9 @@ export type { AccessEventsPacketIdKind, AccessEventsPacketNoIdKind } from "./dia
 export { ACCESS_AUTHENTICATION_TYPES, ACCESS_DOORBELL_REASON_CODES, ACCESS_METHODS, isMacAddress, normalizeActorType,
   normalizeMacAddress } from "./protocol/vocabulary.ts";
 export type { AccessActorType, AccessMethod } from "./protocol/vocabulary.ts";
+// The plain-object test - whether a value is a record with fields to read, the shape parsed JSON gives an object, so an array, a Buffer or a class instance never
+// reads as one. A value export: a consumer calls it as a free function over a payload, a bootstrap or a file it parsed, as the CLI does.
+export { isPlainObject } from "./protocol/plain-object.ts";
 export { ACCESS_TERMINAL_INPUTS } from "./protocol/terminal-inputs.ts";
 export type { AccessTerminalInput, AccessTerminalInputFacts } from "./protocol/terminal-inputs.ts";
 export { PORT_EXTENSION } from "./protocol/port-bindings.ts";

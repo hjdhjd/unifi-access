@@ -4,7 +4,7 @@
  */
 import { AccessApiError, AccessProtocolError, AccessRequestError, controllerReadinessOf } from "../errors.ts";
 import type { AccessResponse, RequestOptions, Transport } from "../transport/http.ts";
-import { isRecord } from "../json.ts";
+import { isPlainObject } from "../protocol/plain-object.ts";
 import { readResultEnvelope } from "../protocol/envelope.ts";
 
 // The content type a JSON answer carries. A binary endpoint answering in it is answering with an envelope rather than with bytes, which is what the download arm
@@ -395,7 +395,7 @@ function ensureAnswered(response: AccessResponse): AccessResponse {
 // partial report describes no page a caller could act on, and reporting it as absent leaves the caller correctly treating the response as unpaginated.
 function asPagination(value: unknown): AccessOfficialPagination | undefined {
 
-  if(!isRecord(value)) {
+  if(!isPlainObject(value)) {
 
     return undefined;
   }

@@ -3,7 +3,7 @@
  * device.ts: `ufa device <restart|settings|state|update>` - the device command group: the fleet restart policy, per-device access methods, the readings listing,
  * and the direct config write.
  */
-import { ACCESS_METHODS, ACCESS_TERMINAL_INPUTS, AccessAbortedError, AccessDeclinedError, accessMethodStates, formatErrorChain } from "../../../index.ts";
+import { ACCESS_METHODS, ACCESS_TERMINAL_INPUTS, AccessAbortedError, AccessDeclinedError, accessMethodStates, formatErrorChain, isPlainObject } from "../../../index.ts";
 import type { AccessDevice, AccessDeviceConfigPayload, AccessHub, AccessMethod, AccessPortBinding, AccessTerminalInput,
   AccessTerminalInputFacts } from "../../../index.ts";
 import { COMMON_OPTIONS, CliError, SCRUB_OPTION, commandList, createDocumentScrubber, groupCommand, isMember, parseApiOverride,
@@ -401,7 +401,7 @@ const updateHandler = async (ctx: CommandContext): Promise<void> => {
     throw new CliError("The --json payload is not valid JSON.", { cause: error, exitCode: 2 });
   }
 
-  if((typeof parsed !== "object") || (parsed === null) || Array.isArray(parsed)) {
+  if(!isPlainObject(parsed)) {
 
     throw new CliError("The --json payload must be a JSON object.", { exitCode: 2 });
   }

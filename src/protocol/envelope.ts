@@ -4,7 +4,7 @@
  */
 import { AccessApiError, AccessProtocolError } from "../errors.ts";
 import type { AccessApiResponse } from "../types/index.ts";
-import { isRecord } from "../json.ts";
+import { isPlainObject } from "./plain-object.ts";
 
 /**
  * The single home of what a decoded body means: whether it is the result envelope the controller answers in, which dialect it is written in, and what verdict
@@ -52,7 +52,7 @@ export type ResultEnvelope = AccessApiResponse | DocumentedEnvelope;
  */
 function isResultEnvelope(value: unknown): value is ResultEnvelope {
 
-  return isRecord(value) && (("codeS" in value) ? ((typeof value["code"] === "number") && (typeof value["codeS"] === "string")) :
+  return isPlainObject(value) && (("codeS" in value) ? ((typeof value["code"] === "number") && (typeof value["codeS"] === "string")) :
     (typeof value["code"] === "string"));
 }
 

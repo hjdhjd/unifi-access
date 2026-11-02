@@ -24,7 +24,7 @@ import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfigP
   AccessEventTamperAlert, AccessKnownJsonValue, AccessLocationConfig, DeepWirePartial, Nullable } from "../types/index.ts";
 import type { AccessStateDevice, AccessStateDoor } from "./reducer.ts";
 import { accessMethodValue, readAccessMethodValue } from "./vocabulary.ts";
-import { isRecord } from "../json.ts";
+import { isPlainObject } from "./plain-object.ts";
 
 // The notification names this classifier recognizes. Naming them once here makes this module the single home of the event vocabulary, which is otherwise re-parsed
 // independently by every consumer that wants to branch on what happened.
@@ -437,13 +437,13 @@ export function classifyPacket(packet: AccessEventPacket): Nullable<AccessWireEv
  */
 export function isAccessEventPacket(value: unknown): value is AccessEventPacket {
 
-  if(!isRecord(value)) {
+  if(!isPlainObject(value)) {
 
     return false;
   }
 
   return (typeof value["event"] === "string") && (typeof value["event_object_id"] === "string") && ("data" in value) &&
-    ((value["data"] === null) || isRecord(value["data"]));
+    ((value["data"] === null) || isPlainObject(value["data"]));
 }
 
 /* Admit a device payload of either dialect through its table: the fields the table names, copied under the declared members it maps them to, with the identity
@@ -489,7 +489,7 @@ function projectAccessMethods(map: AccessKnownJsonValue): AccessDeviceEntryConfi
 
   const rows: AccessDeviceEntryConfigPayload[] = [];
 
-  if(!isRecord(map)) {
+  if(!isPlainObject(map)) {
 
     return rows;
   }
@@ -553,7 +553,7 @@ function translateFields(data: Record<string, AccessKnownJsonValue>, map: Readon
  */
 function isDoorbellRingPayload(value: unknown): value is AccessEventDoorbellRing {
 
-  return isRecord(value) && (typeof value["channel"] === "string") && (typeof value["device_id"] === "string");
+  return isPlainObject(value) && (typeof value["channel"] === "string") && (typeof value["device_id"] === "string");
 }
 
 /* Whether a payload carries what a tamper alert is supposed to carry. The one member a consumer cannot do without is the hardware the alert is attributed to, so
@@ -562,31 +562,31 @@ function isDoorbellRingPayload(value: unknown): value is AccessEventDoorbellRing
  */
 function isTamperAlertPayload(value: unknown): value is AccessEventTamperAlert {
 
-  return isRecord(value) && isRecord(value["device"]) && (typeof value["device"]["unique_id"] === "string");
+  return isPlainObject(value) && isPlainObject(value["device"]) && (typeof value["device"]["unique_id"] === "string");
 }
 
 // Whether a payload carries what a ring cancellation is supposed to carry: the identifier of the call being cancelled.
 function isDoorbellCancelPayload(value: unknown): value is AccessEventDoorbellCancel {
 
-  return isRecord(value) && (typeof value["remote_call_request_id"] === "string");
+  return isPlainObject(value) && (typeof value["remote_call_request_id"] === "string");
 }
 
 // Whether a value is the emergency pair a report may carry: the physical input and the controller-issued state, each a string.
 function isDoorStateEmergency(value: unknown): value is AccessDoorStateEmergency {
 
-  return isRecord(value) && (typeof value["hardware"] === "string") && (typeof value["software"] === "string");
+  return isPlainObject(value) && (typeof value["hardware"] === "string") && (typeof value["software"] === "string");
 }
 
 // Whether a value is the alarm list an entry may carry - a list, every member of which names its kind.
 function isDoorStateAlarms(value: unknown): value is AccessDoorStateAlarm[] {
 
-  return Array.isArray(value) && value.every((alarm) => isRecord(alarm) && (typeof alarm["type"] === "string"));
+  return Array.isArray(value) && value.every((alarm) => isPlainObject(alarm) && (typeof alarm["type"] === "string"));
 }
 
 // Whether a value is the unlock suspension an entry may carry: where the suspension stands, and which unlock it applies to.
 function isDoorStateSuspend(value: unknown): value is AccessDoorStateSuspend {
 
-  return isRecord(value) && (typeof value["status"] === "string") && (typeof value["unlock_type"] === "string");
+  return isPlainObject(value) && (typeof value["status"] === "string") && (typeof value["unlock_type"] === "string");
 }
 
 // The primitive shapes the fact table reads, as predicates so every row of the table reads its member the same way.
@@ -631,7 +631,7 @@ const DOOR_STATE_FACT_ROWS = Object.entries(DOOR_STATE_FACT_GUARDS);
  */
 function isDoorStateEntry(value: unknown): value is AccessDoorStateEntry {
 
-  if(!isRecord(value) || (typeof value["location_id"] !== "string")) {
+  if(!isPlainObject(value) || (typeof value["location_id"] !== "string")) {
 
     return false;
   }
@@ -685,7 +685,7 @@ function admitEntries(value: unknown): Nullable<readonly [AccessDoorStateEntry, 
   for(const entry of value) {
 
     // A non-record is not an entry at all; a record is read without the members the wire spelled as null, and admitted on what remains.
-    if(!isRecord(entry)) {
+    if(!isPlainObject(entry)) {
 
       continue;
     }
@@ -706,7 +706,7 @@ function admitEntries(value: unknown): Nullable<readonly [AccessDoorStateEntry, 
  */
 function admitEntry(value: unknown, locationId: string): Nullable<AccessDoorStateEntry> {
 
-  if(!isRecord(value)) {
+  if(!isPlainObject(value)) {
 
     return null;
   }
@@ -726,5 +726,5 @@ function isNonEmpty<T>(value: T[]): value is [T, ...T[]] {
 // payload, so this returning undefined is not by itself a malformed packet.
 function asRecord(data: AccessEventPacket["data"]): Record<string, AccessKnownJsonValue> | undefined {
 
-  return isRecord(data) ? data : undefined;
+  return isPlainObject(data) ? data : undefined;
 }

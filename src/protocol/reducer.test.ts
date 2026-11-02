@@ -21,7 +21,7 @@ import type { AccessOfficialDoor } from "../official/spaces.ts";
 import { AccessProtocolError } from "../errors.ts";
 import assert from "node:assert/strict";
 import { isDeepStrictEqual } from "node:util";
-import { isRecord } from "../json.ts";
+import { isPlainObject } from "./plain-object.ts";
 import { present } from "homebridge-plugin-utils/testing";
 import { topologyDevices } from "../testing.helpers.ts";
 
@@ -68,6 +68,9 @@ const stateFrom = (bootstrap: AccessBootstrapConfig): AccessState => applyBootst
 
 // The door-state member of the event union, named once so the helper below reads without restating the extraction at every mention.
 type DoorStateEvent = Extract<AccessTypedEvent, { kind: "doorStateChanged" }>;
+
+// The payload of the location member of the event union, named once so a row casting a parsed patch reads without restating the extraction.
+type LocationPayload = Extract<AccessTypedEvent, { kind: "locationChanged" }>["payload"];
 
 const controllerEvent = (controller: AccessControllerConfig): AccessTypedEvent => ({ data: controller, kind: "controllerChanged" });
 
@@ -1038,7 +1041,7 @@ describe("the device-record merge", () => {
 
     // The one captured packet carrying the map: the G2 Pro's own update, which restates every value the 2026 document's rows hold and every other member the
     // newer dialect admits.
-    const specimen = findPacket((entry) => (entry.event === "access.data.v2.device.update") && isRecord(entry.data?.["access_method"]),
+    const specimen = findPacket((entry) => (entry.event === "access.data.v2.device.update") && isPlainObject(entry.data?.["access_method"]),
       "the v2 G2 Pro update carrying its access-method map");
 
     // The EAH document's G2 Pro, whose rows carry no face and no QR row, so the specimen's map names keys that record does not hold.
@@ -1052,7 +1055,7 @@ describe("the device-record merge", () => {
       const data = present(specimen.data, "the specimen's payload");
       const map = data["access_method"];
 
-      assert.ok(isRecord(map), "the specimen carries its map as a record");
+      assert.ok(isPlainObject(map), "the specimen carries its map as a record");
 
       const id = options.id ?? READER_ID;
       const access = { ...map, ...options.values };
@@ -1307,6 +1310,69 @@ describe("locationChanged", () => {
     assert.equal(merged.extras["uah-input_state_dps"], "off");
     assert.notEqual(Object.is(merged.extras, stored.extras), true, "the changed nested object should be a new reference");
     assert.equal(Object.is(next.devices, state.devices), true, "an unrelated collection should keep its reference");
+  });
+
+  test("an own __proto__ key in a patch lands nowhere and the record's prototype stays ordinary", () => {
+
+    // The patch is parsed from JSON text, as the codec hands one over, so `__proto__` is an own key of it where an object literal's `__proto__` would set its
+    // prototype instead and the row would plant nothing.
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const patch = JSON.parse("{\"__proto__\":{\"polluted\":true},\"name\":\"Front Door\"}") as LocationPayload;
+
+    assert.ok(Object.hasOwn(patch, "__proto__"), "the parsed patch carries __proto__ as an own key");
+
+    const event: AccessTypedEvent = { eventName: "access.data.location.update", id: DOOR_HUB, kind: "locationChanged", payload: patch };
+    const record = present(reduce(state, event).doors.get(DOOR_HUB), "the merged hub door");
+
+    assert.equal(record.name, "Front Door", "the patch's real field change lands");
+    assert.equal(Object.getPrototypeOf(record), Object.prototype, "the record's prototype is the ordinary object prototype");
+    assert.equal("polluted" in record, false, "no field of the planted value reads through the record");
+    assert.equal(Object.hasOwn(record, "__proto__"), false, "the key lands as no own field of the record");
+  });
+
+  test("a patch carrying only an own __proto__ key is a no-op that keeps the record reference", () => {
+
+    // The refused key is the patch's only key, so the merge has nothing to write and the patch reads as any value-identical one does.
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const patch = JSON.parse("{\"__proto__\":{\"polluted\":true}}") as LocationPayload;
+
+    assert.ok(Object.hasOwn(patch, "__proto__"), "the parsed patch carries __proto__ as an own key");
+
+    const event: AccessTypedEvent = { eventName: "access.data.location.update", id: DOOR_HUB, kind: "locationChanged", payload: patch };
+    const next = reduce(state, event);
+
+    assert.ok(Object.is(next, state), "the state keeps its reference");
+    assert.ok(Object.is(next.doors.get(DOOR_HUB), state.doors.get(DOOR_HUB)), "the record keeps its reference");
+  });
+
+  test("a nested own __proto__ key beside a real change leaves the member plain, so the ordinary frame after it keeps every sibling key", () => {
+
+    // Each frame reaches the reducer through the classifier from JSON text, as a delivery does. Were the refused key to reach the inherited setter, the stored extras
+    // would take a non-plain prototype, the next merge would read them as no record, and that frame's partial extras would replace them wholesale, dropping each key
+    // it did not name.
+    const state = stateFrom(accessBootstrap2026Fixture);
+    const stored = present(present(state.doors.get(DOOR_HUB), "the stored hub door").extras, "the stored extras");
+    const frame = (extras: string): AccessEventPacket => JSON.parse("{\"data\":{\"extras\":" + extras + "},\"event\":\"access.data.location.update\"," +
+      "\"event_object_id\":\"" + DOOR_HUB + "\"}") as AccessEventPacket;
+    const planted = frame("{\"__proto__\":{\"polluted\":true},\"door_thumbnail\":\"https://example.invalid/first.jpg\"}");
+
+    assert.ok(Object.hasOwn(planted.data?.["extras"] as object, "__proto__"), "the parsed frame carries __proto__ as an own key");
+
+    const next = reduce(reduce(state, classify(planted)), classify(frame("{\"door_thumbnail_last_update\":1786602789}")));
+    const merged = present(next.doors.get(DOOR_HUB), "the merged hub door");
+
+    assert.ok((merged.extras !== undefined) && !("door_thumbnails" in merged.extras), "the merged door keeps its own extras");
+    assert.equal(merged.extras.door_thumbnail, "https://example.invalid/first.jpg", "the real change beside the refused key lands");
+    assert.equal(merged.extras.door_thumbnail_last_update, 1786602789, "the ordinary frame's key lands");
+
+    for(const key of Object.keys(stored)) {
+
+      assert.ok(Object.hasOwn(merged.extras, key), "the sibling key " + key + " survives the ordinary frame");
+    }
+
+    assert.equal(Object.getPrototypeOf(merged.extras), Object.prototype, "the nested value's prototype is the ordinary object prototype");
+    assert.equal("polluted" in merged.extras, false, "no field of the planted value reads through the member");
+    assert.equal(Object.hasOwn(merged.extras, "__proto__"), false, "the key lands as no own field of the member");
   });
 
   test("a floor-targeted notification merges into the floors map", () => {

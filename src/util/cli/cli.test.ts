@@ -481,6 +481,15 @@ describe("credential loading", () => {
     await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), { message: /must be a JSON object/, name: "CliError" });
   });
 
+  test("a configuration that is a JSON array is refused as not an object", async () => {
+
+    const cwd = await mkdtemp(path.join(tmpdir(), "ufa-array-"));
+
+    await writeFile(path.join(cwd, "ufa.json"), "[]");
+
+    await assert.rejects(async () => loadCredentials({ cwd, home: cwd }), { message: /must be a JSON object/, name: "CliError" });
+  });
+
   test("a partial credential pair names the missing half rather than falling through", async () => {
 
     const cwd = await mkdtemp(path.join(tmpdir(), "ufa-partial-"));

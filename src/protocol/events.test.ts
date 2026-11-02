@@ -12,7 +12,7 @@ import { DEVICE_FIELD_EXCLUSIONS, DEVICE_FIELD_MAP, DEVICE_FIELD_PROJECTIONS, DE
 import { capturedPackets, classifyAs, findPacket } from "./capture.helpers.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { isRecord } from "../json.ts";
+import { isPlainObject } from "./plain-object.ts";
 import { present } from "homebridge-plugin-utils/testing";
 
 /* The kind each notification name classifies to, or null where the name is deliberately unmodeled. Every packet in every fixture group is checked against this.
@@ -260,7 +260,7 @@ describe("v2 device payload translation", () => {
 describe("the access-method map's projection", () => {
 
   // The one captured packet carrying the map: the G2 Pro's own update. Every value in it is one of the pair except the pin entry's, which the capture scrubbed.
-  const specimen = findPacket((entry) => (entry.event === "access.data.v2.device.update") && isRecord(entry.data?.["access_method"]),
+  const specimen = findPacket((entry) => (entry.event === "access.data.v2.device.update") && isPlainObject(entry.data?.["access_method"]),
     "the v2 G2 Pro update carrying its access-method map");
 
   // The rows the specimen's map projects into, in the order the map delivered its entries.
@@ -275,7 +275,7 @@ describe("the access-method map's projection", () => {
     const map = specimen.data?.["access_method"];
     const { payload } = classifyAs(specimen, "deviceChanged");
 
-    assert.ok(isRecord(map), "the specimen carries its map as a record");
+    assert.ok(isPlainObject(map), "the specimen carries its map as a record");
 
     const pin = map["pin_code"];
 
@@ -387,7 +387,7 @@ describe("the newer dialect's field census", () => {
     const carried = { device: new Set<string>(), entry: new Set<string>(), location: new Set<string>() };
     const collect = (into: Set<string>, value: unknown): void => {
 
-      if(!isRecord(value)) {
+      if(!isPlainObject(value)) {
 
         return;
       }
@@ -406,7 +406,7 @@ describe("the newer dialect's field census", () => {
       const payload = packet.data;
 
       // The packet type holds the payload nullable, so the census reads it through the same record guard the classifier reads it through.
-      if(!isRecord(payload)) {
+      if(!isPlainObject(payload)) {
 
         continue;
       }

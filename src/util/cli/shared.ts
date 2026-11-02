@@ -3,9 +3,9 @@
  * shared.ts: Cross-command CLI infrastructure - the typed CLI error, the compiled event filter engine, the topology extraction, and the Ctrl-C abort wiring.
  */
 import type { AccessApiOverride, AccessEventPacket, Nullable } from "../../index.ts";
+import { AccessClient, isPlainObject } from "../../index.ts";
 import { Output, alignedList, compareCodeUnit } from "./output/format.ts";
 import { createScrubContext, scrub } from "./scrub.ts";
-import { AccessClient } from "../../index.ts";
 import type { DeviceResolution } from "./lookup.ts";
 import type { ParseArgsOptionsConfig } from "node:util";
 import type { UfaCredentials } from "./credentials.ts";
@@ -808,12 +808,12 @@ function compileComparison(operator: string, value: string): (actual: string) =>
  */
 export function unwrapDocument(body: unknown): unknown {
 
-  if((typeof body !== "object") || (body === null)) {
+  if(!isPlainObject(body)) {
 
     return body;
   }
 
-  const data = (body as { data?: unknown }).data;
+  const data = body["data"];
 
   return Array.isArray(data) ? (data as unknown[])[0] : body;
 }
@@ -830,12 +830,12 @@ export function unwrapDocument(body: unknown): unknown {
  */
 export function documentFloors(document: unknown): Nullable<unknown[]> {
 
-  if((typeof document !== "object") || (document === null)) {
+  if(!isPlainObject(document)) {
 
     return null;
   }
 
-  const floors = (document as { floors?: unknown }).floors;
+  const floors = document["floors"];
 
   return Array.isArray(floors) ? (floors as unknown[]) : null;
 }
@@ -865,7 +865,7 @@ export function documentDoors(document: unknown): Nullable<unknown[]> {
   // is untyped at this point rather than because the wire is known to need it.
   const doors = floors.flatMap((floor) => {
 
-    const value = ((typeof floor === "object") && (floor !== null)) ? (floor as { doors?: unknown }).doors : undefined;
+    const value = isPlainObject(floor) ? floor["doors"] : undefined;
 
     return Array.isArray(value) ? (value as unknown[]) : [];
   }).filter(Boolean);
