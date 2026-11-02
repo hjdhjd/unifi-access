@@ -1,8 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * port-bindings.test.ts: Unit tests for the port-binding reads. Every record here is a real one from a committed topology capture, varied only where the case needs
- * it, so the selection and the bindings it yields are exercised against the extension lists a controller actually issues; and every absence assertion asks whether
- * the member is there at all rather than comparing it to undefined, because absent and present-but-undefined are what the record shape keeps apart.
+ * port-bindings.test.ts: Unit tests for the port-binding reads. Every record here is a real one from a committed topology capture or the scrubbed excerpt of one
+ * captured update below, varied only where the case needs it, so the selection and the bindings it yields are exercised against the extension lists a controller
+ * actually issues; and every absence assertion asks whether the member is there at all rather than comparing it to undefined, because absent and present-but-undefined
+ * are what the record shape keeps apart.
  */
 import type { AccessPortBinding, AccessPortBindingSource } from "./port-bindings.ts";
 import { EAH_ID, READER_ID, UAH_ID, ULTRA_ID, captured } from "./capture.helpers.ts";
@@ -30,6 +31,83 @@ const EAH_BINDINGS: readonly AccessPortBinding[] = [
   { doorId: "00000000-0000-0000-0000-000000000025", name: "Test Name 50", port: "port7" },
   { doorId: "00000000-0000-0000-0000-000000000017", name: "Test Name 37", port: "port5" }
 ];
+
+/* The port extensions of one captured UA Gate update, reduced to the rows the keys are read from, every identity a stand-in. The first port names its relay before its
+ * sensor and the second the other way round, as the controller delivered them, so a read going by position would fail here.
+ */
+const GATE_DOOR_1 = "00000000-0000-0000-0000-000000000090";
+const GATE_DOOR_2 = "00000000-0000-0000-0000-000000000091";
+const GATE_EXTENSIONS = [
+
+  { "extension_name": "port_setting", "source_id": "port1", "target_config": [ { "config_key": "relay_key", "config_value": "output_oper1_relay" },
+    { "config_key": "dps_key", "config_value": "input_gate_dps" } ], "target_name": "Test Name 90", "target_value": GATE_DOOR_1 },
+  { "extension_name": "port_setting", "source_id": "port2", "target_config": [ { "config_key": "dps_key", "config_value": "input_door_dps" },
+    { "config_key": "relay_key", "config_value": "output_door_lock_relay" } ], "target_name": "Test Name 91", "target_value": GATE_DOOR_2 }
+];
+
+describe("the relay and door-position keys", () => {
+
+  test("reads each port's keys from the rows a captured UA Gate carries, whatever their order", () => {
+
+    const bindings = readPortBindings({ "extensions": GATE_EXTENSIONS });
+
+    assert.deepEqual(bindings, [ { doorId: GATE_DOOR_1, dpsKey: "input_gate_dps", name: "Test Name 90", port: "port1", relayKey: "output_oper1_relay" },
+      { doorId: GATE_DOOR_2, dpsKey: "input_door_dps", name: "Test Name 91", port: "port2", relayKey: "output_door_lock_relay" } ]);
+    assert.deepEqual(firstPortBinding({ "extensions": GATE_EXTENSIONS }), bindings[0], "and the first binding carries them as the whole list does");
+  });
+
+  test("a captured hub whose configuration carries neither row has neither member", () => {
+
+    const ultra = captured(ULTRA_ID);
+    const binding = expectAt(readPortBindings(ultra), 0, "the binding");
+
+    assert.ok((ultra.extensions?.[0]?.target_config.length ?? 0) > 0, "the capture's port configuration has rows, so the read looked and found neither key");
+    assert.equal(Object.hasOwn(binding, "dpsKey"), false);
+    assert.equal(Object.hasOwn(binding, "relayKey"), false);
+    assert.deepEqual(binding, ULTRA_BINDING);
+  });
+
+  test("a row whose value is not a string leaves its member absent and the other member standing", () => {
+
+    const [port1] = GATE_EXTENSIONS;
+
+    assert.ok(port1, "the excerpt should carry its first port");
+
+    for(const value of [ true, 1 ]) {
+
+      const bindings = readPortBindings({ "extensions": [{ ...port1, "target_config": [ { "config_key": "relay_key", "config_value": value },
+        { "config_key": "dps_key", "config_value": "input_gate_dps" } ] }] });
+      const binding = expectAt(bindings, 0, "the binding");
+
+      assert.equal(Object.hasOwn(binding, "relayKey"), false, "a " + typeof value + " value is not a key");
+      assert.equal(binding.dpsKey, "input_gate_dps");
+    }
+  });
+
+  test("an extension carrying no target configuration has neither member", () => {
+
+    const [port1] = GATE_EXTENSIONS;
+
+    assert.ok(port1, "the excerpt should carry its first port");
+
+    // The member named in the destructure exists to be discarded, which is what the underscore prefix says; the rest is the extension without it.
+    const { target_config: _targetConfig, ...bare } = port1;
+
+    assert.deepEqual(readPortBindings({ "extensions": [bare] }), [{ doorId: GATE_DOOR_1, name: "Test Name 90", port: "port1" }]);
+  });
+
+  test("an intercom pairing carrying the same rows and a door still binds nothing", () => {
+
+    const pairing = captured(READER_ID).extensions?.[0];
+    const [port1] = GATE_EXTENSIONS;
+
+    assert.equal(pairing?.extension_name, "intercom_pair", "the reader's own extension should be the intercom pairing");
+    assert.ok(port1, "the excerpt should carry its first port");
+
+    // The captured pairing names no door, which would bind nothing on its own, so it is given one and the extension's name is all that stands between it and a binding.
+    assert.deepEqual(readPortBindings({ "extensions": [{ ...pairing, "target_config": port1.target_config, "target_value": GATE_DOOR_1 }] }), []);
+  });
+});
 
 describe("readPortBindings", () => {
 

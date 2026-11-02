@@ -13,7 +13,7 @@
  *
  * This is protocol-tier material for the same reason the terminal catalog is. The knowledge is about what the wire's values mean, it performs no I/O, and every
  * consumer sits above it. It is a sibling of that catalog rather than part of it because a hub's port-to-door map and what its screw terminals read are two
- * concepts: the catalog asks this module which extensions are port bindings so its duty selector reads the same ones, and asks it nothing else.
+ * concepts: the catalog asks this module which extensions are port bindings and how a row of one reads, so its duty selector reads the same ones the same way.
  *
  * The mechanism is all that lives here. Which binding of a multi-door hub is the one a consumer means - a gate's main door as against its side door - is policy
  * this library holds no opinion about, so the bindings are answered in the order the controller delivered them and nothing here ranks them.
@@ -36,8 +36,8 @@ export const PORT_EXTENSION = "port_setting";
  *
  * Declared structurally rather than as the stored device record, so this module depends on exactly the members it consults and takes no type edge to the reducer.
  * Each member serves one read. `extension_name` is what tells a port binding from every other extension kind a record can carry; `target_value` is the bound door's
- * identity; `target_name` is what the controller wrote beside it; and `source_id` names the port the binding belongs to. Both the wire's device record and the
- * reducer's stored form satisfy this.
+ * identity; `target_name` is what the controller wrote beside it; `source_id` names the port the binding belongs to; and `target_config` holds the rows the relay and
+ * door-position keys are read from. Both the wire's device record and the reducer's stored form satisfy this.
  */
 export interface AccessPortBindingSource {
 
@@ -45,6 +45,7 @@ export interface AccessPortBindingSource {
 
     readonly extension_name: string;
     readonly source_id?: string;
+    readonly target_config?: readonly { readonly config_key: string; readonly config_value: boolean | number | string }[];
     readonly target_name?: string;
     readonly target_value?: string;
   }[];
@@ -52,6 +53,8 @@ export interface AccessPortBindingSource {
 
 /**
  * One port-to-door binding: which door a hub's port is bound to, what the controller calls the thing at the other end of it, and which port it is.
+ *
+ * It also carries the relay and door-position keys the port's configuration names.
  *
  * A member whose evidence is absent is ABSENT from the object rather than present and `undefined`, the rule the terminal facts hold to as well, so a consumer asking
  * whether a binding names its port asks whether the member is there at all.
@@ -64,6 +67,12 @@ export interface AccessPortBinding {
   readonly doorId: string;
 
   /**
+   * The key of this port's door-position sensor input, exactly as the controller wrote it, from the `config_value` of the extension's `dps_key` row. It rests on a
+   * UA Gate owner's captured record, so it is passed through rather than interpreted. It is absent where the record carries none, or carries one that is not a string.
+   */
+  readonly dpsKey?: string;
+
+  /**
    * The target's name exactly as the controller wrote it, from the extension's `target_name`. On every captured hub it is the bound door's own name, and a UA Gate
    * owner reported it carrying the gate operator's name instead, so it is passed through rather than interpreted. It is absent where the record carries none.
    */
@@ -73,6 +82,12 @@ export interface AccessPortBinding {
    * The port this binding belongs to, from the extension's `source_id` - `port1` through `port8` on captured hardware. It is absent where the record carries none.
    */
   readonly port?: string;
+
+  /**
+   * The key of this port's relay output, exactly as the controller wrote it, from the `config_value` of the extension's `relay_key` row. It rests on a UA Gate owner's
+   * captured record, so it is passed through rather than interpreted. It is absent where the record carries none, or carries one that is not a string.
+   */
+  readonly relayKey?: string;
 }
 
 /**
@@ -105,9 +120,33 @@ export function *portExtensionsOf<T extends { readonly extension_name: string }>
   }
 }
 
+// The rows a port's configuration names its door-position sensor and its relay under.
+const DPS_ROW = "dps_key";
+const RELAY_ROW = "relay_key";
+
+/**
+ * A named row's value from a port extension's configuration, where the row is there and its value is a string. The wire types a row's value as a boolean, a number or
+ * a string, and what a row names here is a string, so a row carrying anything else says nothing.
+ *
+ * This is the one read of a port's configuration row: the bindings below and the terminal catalog's duty selector each go through it.
+ *
+ * @param extension - A port extension (only its configuration rows are read).
+ * @param row       - The `config_key` of the row to read.
+ *
+ * @returns The row's value, or `undefined` where the extension carries no such row or carries it as anything but a string.
+ *
+ * @category Protocol
+ */
+export function rowValueOf(extension: NonNullable<AccessPortBindingSource["extensions"]>[number], row: string): string | undefined {
+
+  const value = extension.target_config?.find((entry) => entry.config_key === row)?.config_value;
+
+  return (typeof value === "string") ? value : undefined;
+}
+
 /* Each of a record's bindings as it is met, which is what lets the whole list and the first of it be one rule rather than two of them. An extension carrying no
  * target binds no door and is passed over: the port is there, but nothing says which door it serves, and answering with a binding whose door is undefined would be
- * inventing one. The conditional spreads are what keep an absent name or port off the object rather than present and undefined.
+ * inventing one. The conditional spreads are what keep an absent member off the object rather than present and undefined.
  */
 function *portBindingsOf(device: AccessPortBindingSource): Generator<AccessPortBinding> {
 
@@ -118,8 +157,11 @@ function *portBindingsOf(device: AccessPortBindingSource): Generator<AccessPortB
       continue;
     }
 
-    yield { doorId: extension.target_value, ...((extension.target_name !== undefined) && { name: extension.target_name }),
-      ...((extension.source_id !== undefined) && { port: extension.source_id }) };
+    const dpsKey = rowValueOf(extension, DPS_ROW);
+    const relayKey = rowValueOf(extension, RELAY_ROW);
+
+    yield { doorId: extension.target_value, ...((dpsKey !== undefined) && { dpsKey }), ...((extension.target_name !== undefined) && { name: extension.target_name }),
+      ...((extension.source_id !== undefined) && { port: extension.source_id }), ...((relayKey !== undefined) && { relayKey }) };
   }
 }
 

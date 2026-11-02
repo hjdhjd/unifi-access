@@ -20,7 +20,7 @@
  * @module AccessTerminalInputs
  */
 import type { AccessDeviceEntryConfig, AccessKnownJsonValue } from "../types/index.ts";
-import { portExtensionsOf } from "./port-bindings.ts";
+import { portExtensionsOf, rowValueOf } from "./port-bindings.ts";
 
 /**
  * Every terminal a hub reports about: `dps` the door position sensor, `rel` the remote release, `ren` the request to enter, `rex` the request to exit, and
@@ -104,8 +104,9 @@ export interface AccessTerminalFamily {
  *   wired and reporting.
  * - The UA Hub's main door. Position inversion field-proven at consumer scale by this library's own earlier consumers; lock relay capture-proven 2026-08-16 on the
  *   same live controller. A UA Hub duplicates these three facts onto its door's extras under a `uah-` prefix, which the door-state module accepts as the same facts.
- * - The UA Hub's side door and the UA Gate hub. Field-derived from consumer reports rather than from any capture in hand - no sampled topology includes gate
- *   hardware - so they are marked as such here and carry no lock relay, because no report establishes one.
+ * - The UA Hub's side door and the UA Gate hub. Field-derived from consumer reports rather than from a committed capture - no sampled topology includes gate
+ *   hardware - so they are marked as such here and carry no lock relay: a UA Gate owner's captured record names a relay key that nothing here interprets, and no
+ *   report establishes how such a relay reads.
  * - The UA Hub's remote release, request to enter, and request to exit. Every one of these keys is present on both captured UA Hub units, with every reading and
  *   every pair member reading `off`, so the keys themselves are capture-established while the `on` reading of these three has never been captured - an honest limit
  *   the reads below inherit.
@@ -169,9 +170,7 @@ function dutyOf(device: AccessTerminalSource): string | undefined {
 
   for(const extension of portExtensionsOf(device)) {
 
-    const value = extension.target_config.find((entry) => entry.config_key === DUTY_KEY)?.config_value;
-
-    return (typeof value === "string") ? value : undefined;
+    return rowValueOf(extension, DUTY_KEY);
   }
 
   return undefined;
