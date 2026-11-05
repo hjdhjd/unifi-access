@@ -9,6 +9,7 @@
 ```ts
 type AccessHttpRequestEndOutcome = 
   | {
+  cancelled?: true;
   error: string;
   outcome: "failure";
 }
@@ -20,4 +21,5 @@ type AccessHttpRequestEndOutcome =
 
 How a request finished, as the two outcomes a dispatch can actually have. A response arrived and carries its status, or the request failed at the transport level
 and carries the classified error's message with no status at all, because none was ever received. As a union rather than a pair of optional fields, reading a
-status code requires narrowing to the arm that has one, so a consumer cannot read a status from a failure that never had one.
+status code requires narrowing to the arm that has one, so a consumer cannot read a status from a failure that never had one. `cancelled` is present, and `true`,
+only when the request ended because its caller chose to cancel it, so a consumer tells a cancel from a failure without reading the message.

@@ -59,8 +59,9 @@ export const channels = {
    */
   eventsPacket: diagnosticsChannel.channel<AccessEventsPacketPayload>("unifi-access:events:packet"),
 
-  /** An HTTP request completed. Published by the `Transport` on both outcomes - a response of any status, or a transport-level failure that produced none - so a
-   * consumer can measure latency and failure rate from one channel. `requestId` correlates it with the matching start.
+  /** An HTTP request completed. Published by the `Transport` on both outcomes - a response of any status, or a transport-level failure that produced none, which a
+   * request its caller cancelled reports with `cancelled` set - so a consumer can measure latency and failure rate from one channel. `requestId` correlates it with
+   * the matching start.
    */
   httpRequestEnd: diagnosticsChannel.channel<AccessHttpRequestEndPayload>("unifi-access:http:request:end"),
 
@@ -184,11 +185,12 @@ export interface AccessHttpRequestCommon {
 /**
  * How a request finished, as the two outcomes a dispatch can actually have. A response arrived and carries its status, or the request failed at the transport level
  * and carries the classified error's message with no status at all, because none was ever received. As a union rather than a pair of optional fields, reading a
- * status code requires narrowing to the arm that has one, so a consumer cannot read a status from a failure that never had one.
+ * status code requires narrowing to the arm that has one, so a consumer cannot read a status from a failure that never had one. `cancelled` is present, and `true`,
+ * only when the request ended because its caller chose to cancel it, so a consumer tells a cancel from a failure without reading the message.
  *
  * @category Diagnostics
  */
-export type AccessHttpRequestEndOutcome = { error: string; outcome: "failure" } | { outcome: "response"; statusCode: number };
+export type AccessHttpRequestEndOutcome = { cancelled?: true; error: string; outcome: "failure" } | { outcome: "response"; statusCode: number };
 
 /**
  * Payload published on {@link channels.httpRequestEnd}. Composed from the shared request fields, the measured duration and host, and the outcome union, so each

@@ -76,9 +76,9 @@ export interface RequestOptions {
  *   handshake passes `false` so its own 401 cannot recurse back into relogin.
  * - `probe` marks a request as the connection-recovery reachability trial. It skips the open breaker's cooldown gate so the trial can dispatch at the recovering
  *   coordinator's cadence rather than waiting out the full cooldown, while still booking its outcome through the normal path - so a successful probe closes the
- *   breaker exactly as the autonomous half-open trial would. A 401 the trial meets hands the mark to the relogin it triggers, so that relogin reaches the
- *   controller as the trial did. Only recovery passes `true`; ordinary requests leave it `false` and stay gated, so the breaker still guards against operational
- *   hammering.
+ *   breaker exactly as the autonomous half-open trial would, and a probe its caller cancels books nothing, like any cancelled request. A 401 the trial meets hands
+ *   the mark to the relogin it triggers, so that relogin reaches the controller as the trial did. Only recovery passes `true`; ordinary requests leave it `false`
+ *   and stay gated, so the breaker still guards against operational hammering.
  *
  * @category Transport
  */
@@ -275,6 +275,14 @@ function classifyStatus(statusCode: number, headers: IncomingHttpHeaders, body: 
   }
 }
 
+// Whether a failed request was a cancellation its caller chose, the one failure that says nothing about the controller. The caller's own abort is the
+// AccessAbortedError class; a deadline the caller supplied as its signal carries that class too, and is told apart by the platform's own deadline reason, the
+// TimeoutError that AbortSignal.timeout() fires with - a controller that lets a deadline lapse did not answer in time, whoever set the deadline.
+function callerCancelled(error: unknown, signal: AbortSignal | undefined): boolean {
+
+  return (error instanceof AccessAbortedError) && !((signal?.reason instanceof Error) && (signal.reason.name === "TimeoutError"));
+}
+
 /**
  * An HTTP response from the Access controller, returned by {@link Transport.send}. The body is eagerly buffered (so no undrained stream can hold a slot in the
  * connection pool), and decoding is synchronous and lazy on top of that buffer. `send` returns this for *any* status; call {@link AccessResponse.ensureOk} to turn
@@ -388,8 +396,9 @@ export class AccessResponse {
  *
  * - **closed:** normal operation. Each completed request books an outcome, and {@link controllerServing} is the whole test: an answer from a controller that
  *   served it, a 4xx other than a 429 among them, resets the consecutive-failure count, while a transport exception, a 5xx or a 429 increments it - a controller
- *   that refuses a request is still a controller that answered, while one limiting requests has asked to be asked less often. Crossing
- *   {@link ACCESS_API_ERROR_LIMIT} consecutive failures trips the breaker open.
+ *   that refuses a request is still a controller that answered, while one limiting requests has asked to be asked less often. A request its caller cancels, or one
+ *   never sent because its caller had already aborted, books nothing, since neither says anything about the controller. Crossing {@link ACCESS_API_ERROR_LIMIT}
+ *   consecutive failures trips the breaker open.
  * - **open:** for {@link ACCESS_API_RETRY_INTERVAL} seconds, `send` throws {@link AccessThrottledError} before dispatching - no traffic reaches the controller.
  * - **half-open:** once the cooldown elapses, requests are allowed through again as recovery probes. The first success closes the breaker (and emits
  *   `throttleExited` only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
@@ -469,8 +478,9 @@ export class Transport implements AsyncDisposable {
   }
 
   /**
-   * Send a request and return the {@link AccessResponse} for any HTTP status. Throttle-gates before dispatching, composes the caller's signal with the timeout
-   * deadline, classifies transport failures into typed errors, books the breaker outcome, and runs the 401-relogin retry (once) when a hook is wired.
+   * Send a request and return the {@link AccessResponse} for any HTTP status. Throttle-gates before dispatching, answers a caller that has already aborted without
+   * sending a request, composes the caller's signal with the timeout deadline, classifies transport failures into typed errors, books the breaker outcome unless the
+   * caller cancelled the request, and runs the 401-relogin retry (once) when a hook is wired.
    *
    * This is the transport primitive. Callers that want the ergonomic "throw on non-2xx and parse JSON" path use {@link Transport.request}; callers that need raw
    * status, headers, or bytes (the auth handshake among them) use `send` directly.
@@ -489,9 +499,10 @@ export class Transport implements AsyncDisposable {
   async send(url: string, opts: SendOptions = {}): Promise<AccessResponse> {
 
     // Gate first: if the breaker is open and still inside its cooldown window, refuse locally without touching the network. Once the cooldown has elapsed we fall
-    // through and let this request act as the half-open recovery probe; `book` will close or re-arm the breaker based on its outcome. A `probe` request - the
-    // recovery trial - skips this gate entirely: the coordinator's backoff curve is the rate limiter while it is recovering, so its probe dispatches at that
-    // cadence and its booked outcome (success closes the breaker, failure re-arms the cooldown) is what keeps re-probe and breaker on one cadence.
+    // through and let this request act as the half-open recovery probe; `book` will close or re-arm the breaker based on its outcome, and a probe its caller cancels
+    // books nothing and leaves the breaker half-open. A `probe` request - the recovery trial - skips this gate entirely: the coordinator's backoff curve is the rate
+    // limiter while it is recovering, so its probe dispatches at that cadence and the outcome it books (success closes the breaker, failure re-arms the cooldown, a
+    // cancel books nothing) is what keeps re-probe and breaker on one cadence.
     if((opts.probe !== true) && (this.#throttledSince !== null)) {
 
       const remaining = COOLDOWN_MS - (this.#clock.monotonic() - this.#throttledSince);
@@ -503,13 +514,21 @@ export class Transport implements AsyncDisposable {
     }
 
     /* Relogin retry loop. The body of the loop runs at most twice: the original attempt, and - if it returns 401 and a relogin hook is wired and succeeds - one
-     * retry with relogin disabled so a persistent 401 cannot spin. Booking happens exactly once, on the attempt whose outcome we return, and not at all for an
-     * attempt whose relogin throws: the handshake's own sends booked what the controller answered them, so booking the 401 beside them would count a controller
-     * that failed its relogin as one that served. The hook is told whether this request is the recovery probe, so a relogin the probe triggers carries its mark.
+     * retry with relogin disabled so a persistent 401 cannot spin. Only the attempt whose outcome we return can book, and it books nothing when its caller cancelled
+     * it or had already aborted before it was sent. An attempt whose relogin throws books nothing either: the handshake's own sends booked what the controller
+     * answered them, so booking the 401 beside them would count a controller that failed its relogin as one that served. The hook is told whether this request is
+     * the recovery probe, so a relogin the probe triggers carries its mark.
      */
     let allowAuthRetry = opts.authRetry ?? true;
 
     for(;;) {
+
+      // A caller that has already aborted is answered before anything is dispatched. No request is issued, so none is published and none is booked: the
+      // controller was never asked, and an abort or a deadline that fired before the request began says nothing about it.
+      if(opts.signal?.aborted === true) {
+
+        throw new AccessAbortedError("The request was aborted by the caller's signal.", { cause: opts.signal.reason });
+      }
 
       let result: { body: Buffer; headers: IncomingHttpHeaders; statusCode: number };
 
@@ -520,8 +539,16 @@ export class Transport implements AsyncDisposable {
         result = await this.#dispatch(url, opts);
       } catch(error) {
 
-        // A transport-level exception is a reachability failure - book it before propagating the already-classified error.
-        this.#book(false);
+        /* A transport-level exception is evidence the controller could not be reached or did not answer in time, so it books a failure before the
+         * already-classified error propagates. A cancellation the caller chose is the exception: it says nothing about the controller, so it books no outcome and
+         * leaves the breaker exactly as it found it. A pool reset's interruption books a failure too, though it says nothing new about the controller: the pool
+         * resets only as the breaker trips, so such a failure lands on an already-open breaker and re-arms the cooldown within moments of the trip, which moves it
+         * negligibly.
+         */
+        if(!callerCancelled(error, opts.signal)) {
+
+          this.#book(false);
+        }
 
         throw error;
       }
@@ -665,7 +692,8 @@ export class Transport implements AsyncDisposable {
       /* A signal that has already fired when the request reaches here never runs a listener attached to it, so the settlement below would never settle, and undici
        * applies a signal only at request start, after the connect has completed. The check ahead of the dispatch is what keeps such a request from opening a
        * connection at all, on any dispatcher, and throwing the reason inside the try sends it through the same catch as every other failure, so it classifies by
-       * identity and publishes the same end diagnostic. The relogin retry re-entering this method with the caller's original signal is the reachable path.
+       * identity and publishes the same end diagnostic. `send` answers a caller that had aborted before the request began, so what reaches this check is an abort
+       * landing in between, such as a start-channel subscriber aborting the caller's signal while the request start is published.
        */
       if(signal.aborted) {
 
@@ -710,7 +738,8 @@ export class Transport implements AsyncDisposable {
 
       const classified = this.#toAccessError(error, opts.signal, deadline.signal, this.#clock.monotonic() - startedAt);
 
-      this.#publishEnd({ durationMs: this.#clock.monotonic() - startedAt, error: classified.message, method, outcome: "failure", requestId, url });
+      this.#publishEnd({ ...(callerCancelled(classified, opts.signal) && { cancelled: true }), durationMs: this.#clock.monotonic() - startedAt,
+        error: classified.message, method, outcome: "failure", requestId, url });
 
       throw classified;
     }
