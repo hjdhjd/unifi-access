@@ -571,14 +571,7 @@ function clearSecrets(context: ScrubContext, value: unknown): unknown {
 
   if(isPlainObject(value)) {
 
-    const cleared: Record<string, unknown> = {};
-
-    for(const [ name, inner ] of Object.entries(value)) {
-
-      cleared[scrubKey(context, name)] = clearSecrets(context, inner);
-    }
-
-    return cleared;
+    return Object.fromEntries(Object.entries(value).map(([ name, inner ]) => [ scrubKey(context, name), clearSecrets(context, inner) ]));
   }
 
   return value;
@@ -673,16 +666,11 @@ function scrubValue(value: unknown, context: ScrubContext, key: string | undefin
     return value.map((element) => scrubValue(element, context, key));
   }
 
+  // The copy is built from its entries rather than assigned member by member, so every key the document carries lands as an own entry of the copy. Parsed JSON
+  // gives a key named `__proto__` as an own member, and an assignment would hand it to the inherited setter, dropping the member and swapping the copy's prototype.
   if(isPlainObject(value)) {
 
-    const scrubbed: Record<string, unknown> = {};
-
-    for(const [ name, inner ] of Object.entries(value)) {
-
-      scrubbed[scrubKey(context, name)] = scrubValue(inner, context, memberKeyFor(value, name));
-    }
-
-    return scrubbed;
+    return Object.fromEntries(Object.entries(value).map(([ name, inner ]) => [ scrubKey(context, name), scrubValue(inner, context, memberKeyFor(value, name)) ]));
   }
 
   return value;

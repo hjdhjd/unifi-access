@@ -805,6 +805,19 @@ describe("the capture scrub", () => {
     assert.match(shaped.value, /^[0-9A-F]{12}$/, "the shape backstop still reaches a payload that carries identity");
   });
 
+  test("a key named __proto__ survives the scrub as an own member, scrubbed like any other, at every depth", () => {
+
+    // Parsed from JSON text, as a capture is, so `__proto__` is an own key at both depths: once holding a record, and once inside a secret container.
+    const result = scrubbed(JSON.parse("{\"__proto__\":{\"ip\":\"10.13.0.42\"},\"headers\":{\"__proto__\":\"hunter2\"}}")) as { headers: object };
+    const member = Object.getOwnPropertyDescriptor(result, "__proto__")?.value as { ip?: string } | undefined;
+    const secret = Object.getOwnPropertyDescriptor(result.headers, "__proto__")?.value as string | undefined;
+
+    assert.match(member?.ip ?? "", /^192\.0\.2\.\d+$/, "the member is kept, and the address inside it is replaced");
+    assert.match(secret ?? "", /^REDACTED-/, "the secret container keeps the member and clears it");
+    assert.equal(Object.getPrototypeOf(result), Object.prototype, "the copy's prototype stays ordinary");
+    assert.equal(Object.getPrototypeOf(result.headers), Object.prototype);
+  });
+
   test("the input document is not modified", () => {
 
     // A reference-identity check alone would pass an implementation that edited a nested object in place, so the whole document is compared against a snapshot of

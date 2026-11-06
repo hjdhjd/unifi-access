@@ -99,8 +99,9 @@ const addHandler = async (ctx: CommandContext): Promise<void> => {
     throw new CliError("Specify the events to deliver with --events. Run \"ufa webhook add --help\" for usage.", { exitCode: 2 });
   }
 
-  // Each --header splits on the first colon, because a header value - an Authorization bearer above all - may itself carry colons.
-  const headers: Record<string, string> = {};
+  // Each --header splits on the first colon, because a header value - an Authorization bearer above all - may itself carry colons. The map is built from the pairs
+  // rather than assigned key by key, so every name the operator types lands as an own entry, one spelled `__proto__` included.
+  const pairs: [ string, string ][] = [];
 
   for(const header of values.header ?? []) {
 
@@ -113,8 +114,10 @@ const addHandler = async (ctx: CommandContext): Promise<void> => {
       throw new CliError("The --header value must be a KEY:VALUE pair, but received \"" + header + "\".", { exitCode: 2 });
     }
 
-    headers[key] = value;
+    pairs.push([ key, value ]);
   }
+
+  const headers: Record<string, string> = Object.fromEntries(pairs);
 
   await using client = await openOfficialClient(ctx, OPERATION, { debug: values.debug === true });
 

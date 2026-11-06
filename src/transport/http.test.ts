@@ -301,6 +301,28 @@ describe("Transport", () => {
       });
     });
 
+    test("a header named __proto__ reaches the request error as an own entry", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+
+      // Parsed from JSON text, so the header map carries `__proto__` as an own member, which is how undici delivers a header by that name.
+      const headers = JSON.parse("{\"__proto__\":\"planted\",\"x-trace\":\"abc\"}") as Record<string, string>;
+
+      pool.intercept({ method: "GET", path: "/c" }).reply(500, "boom", { headers });
+
+      const response = await transport.send(url(host, "/c"));
+
+      assert.throws(() => response.ensureOk(), (error: unknown) => {
+
+        assert.ok(error instanceof AccessRequestError);
+        assert.equal(Object.getOwnPropertyDescriptor(error.headers, "__proto__")?.value, "planted");
+        assert.equal(Object.getPrototypeOf(error.headers), Object.prototype, "the header record's prototype stays ordinary");
+        assert.equal(error.headers?.["x-trace"], "abc");
+
+        return true;
+      });
+    });
+
     test("ensureOk returns the response unchanged on 2xx", async () => {
 
       const { host, pool, transport } = makeMockTransport();

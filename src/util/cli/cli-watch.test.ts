@@ -307,6 +307,14 @@ describe("the watch events command", () => {
     assert.deepEqual(await runEvents(["--fields=event,data.__proto__,data.constructor,toString"], [RING]), ["{\"event\":\"access.remote_view\"}"]);
   });
 
+  test("a field the packet carries as its own __proto__ member is projected like any other", async () => {
+
+    // Parsed JSON gives a member named `__proto__` as an own key, and the spread keeps it one, so the packet carries it as the wire would deliver it.
+    const planted: AccessEventPacket = { ...RING, ...(JSON.parse("{\"__proto__\":{\"planted\":true}}") as object) };
+
+    assert.deepEqual(await runEvents(["--fields=event,__proto__"], [planted]), ["{\"event\":\"access.remote_view\",\"__proto__\":{\"planted\":true}}"]);
+  });
+
   test("the JSON rendering preserves each packet's own field order", async () => {
 
     const lines = await runEvents(["--json"], [RING]);

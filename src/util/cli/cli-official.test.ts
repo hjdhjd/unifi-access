@@ -525,6 +525,19 @@ describe("the webhook group", () => {
     assert.match(lines.join(""), /minted-secret/, "the controller-minted secret renders from the created record");
   });
 
+  test("a header named __proto__ is sent as an own entry of the header map", async () => {
+
+    const { calls, client } = makeFakeClient({ official: {} });
+    const { ctx } = makeCommandContext({ args: [ "add", "alerts", "https://example.net/hook", "--events", "a", "--header", "__proto__:planted" ], calls, client });
+
+    await webhook.run(ctx);
+
+    const headers = (calls.official.find((call) => call.method === "webhooks.createEndpoint")?.args[0] as { headers?: object } | undefined)?.headers;
+
+    assert.equal(Object.getOwnPropertyDescriptor(headers, "__proto__")?.value, "planted");
+    assert.equal(Object.getPrototypeOf(headers), Object.prototype, "the header map's prototype stays ordinary");
+  });
+
   test("a header without both halves is refused", async () => {
 
     const { calls, client } = makeFakeClient({ official: {} });

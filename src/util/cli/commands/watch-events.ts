@@ -115,20 +115,12 @@ function selectFormat(values: { compact?: boolean; fields?: string; json?: boole
 }
 
 // Project the requested paths out of a packet, dropping the ones it does not carry, and render the result as one line of JSON. Paths resolve through the same resolver
-// the filters use, so `--fields=data.device_type` selects exactly what `data.device_type==UAH` matched on.
+// the filters use, so `--fields=data.device_type` selects exactly what `data.device_type==UAH` matched on. The projection is built from its entries rather than
+// assigned path by path, so a path the packet does carry lands as an own entry whatever it is spelled, `__proto__` included.
 function renderFields(output: Output, packet: AccessEventPacket, fields: string[]): void {
 
-  const projected: Record<string, unknown> = {};
-
-  for(const field of fields) {
-
-    const value = resolveValueAtPath(packet, field);
-
-    if(value !== undefined) {
-
-      projected[field] = value;
-    }
-  }
+  const projected: Record<string, unknown> = Object.fromEntries(fields.map((field): [ string, unknown ] => [ field, resolveValueAtPath(packet, field) ])
+    .filter(([ , value ]) => value !== undefined));
 
   output.line(JSON.stringify(projected));
 }
