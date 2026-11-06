@@ -187,6 +187,18 @@ describe("the group dispatcher", () => {
 
     await assert.rejects(async () => group.run(ctx), { exitCode: 2, message: /alpha, beta/, name: "CliError" });
   });
+
+  test("a subcommand named after what every object inherits is the same usage error", async () => {
+
+    for(const sub of [ "__proto__", "constructor", "toString" ]) {
+
+      const { ctx } = makeCommandContext({ args: [sub] });
+
+      // Sequential by intent: each inherited name is asserted on its own invocation.
+      // eslint-disable-next-line no-await-in-loop
+      await assert.rejects(async () => group.run(ctx), { exitCode: 2, message: /alpha, beta/, name: "CliError" }, sub);
+    }
+  });
 });
 
 describe("the duration grammar", () => {
@@ -1343,16 +1355,22 @@ describe("the entry point", () => {
     assert.equal(process.listenerCount("SIGINT"), before, "the signal listeners are detached when the command returns");
   });
 
-  test("an unknown command is a usage error", async () => {
+  test("an unknown command is a usage error, a verb named after what every object inherits among them", async () => {
 
     const entry = await loadEntry();
     const argv = process.argv;
 
-    process.argv = [ "node", "ufa", "nonsense" ];
-
     try {
 
-      await assert.rejects(async () => entry.main(), { exitCode: 2, name: "CliError" });
+      for(const verb of [ "nonsense", "__proto__", "constructor", "toString" ]) {
+
+        process.argv = [ "node", "ufa", verb ];
+
+        // Sequential by intent: each verb is asserted on its own invocation of the one entry point.
+        // eslint-disable-next-line no-await-in-loop
+        await assert.rejects(async () => entry.main(), { exitCode: 2, message: "Unknown command \"" + verb + "\". Run \"ufa --help\" for usage.", name: "CliError" },
+          verb);
+      }
     } finally {
 
       process.argv = argv;

@@ -648,23 +648,28 @@ describe("the door lock-rule command", () => {
     assert.match(rendered(lines)[0] ?? "", /^1F - Loading Dock \(door-1\) - lock rule set to a 45 minute custom hold\.$/);
   });
 
-  test("a token that is neither a verb nor a duration names both forms", async () => {
+  test("a token that is neither a verb nor a duration names both forms, a name every object inherits among them", async () => {
 
-    const { calls, client } = makeFakeClient(HUB_SPEC);
-    const { ctx } = makeCommandContext({ args: [ "lock-rule", "Acme Name 6", "sideways" ], calls, client });
+    for(const token of [ "sideways", "constructor", "toString" ]) {
 
-    await assert.rejects(async () => door.run(ctx), (error: unknown) => {
+      const { calls, client } = makeFakeClient(HUB_SPEC);
+      const { ctx } = makeCommandContext({ args: [ "lock-rule", "Acme Name 6", token ], calls, client });
 
-      assert.ok(error instanceof CliError);
-      assert.equal(error.exitCode, 2);
-      assert.match(error.message, /keep-lock/);
-      assert.match(error.message, /30m/);
+      // Sequential by intent: each token is asserted on its own invocation.
+      // eslint-disable-next-line no-await-in-loop
+      await assert.rejects(async () => door.run(ctx), (error: unknown) => {
 
-      return true;
-    });
+        assert.ok(error instanceof CliError, token);
+        assert.equal(error.exitCode, 2, token);
+        assert.match(error.message, /keep-lock/, token);
+        assert.match(error.message, /30m/, token);
 
-    assert.equal(calls.opens.length, 0);
-    assert.equal(calls.credentialLoads, 0);
+        return true;
+      }, token);
+
+      assert.equal(calls.opens.length, 0, token);
+      assert.equal(calls.credentialLoads, 0, token);
+    }
   });
 
   test("each official-only verb surfaces the routing service's own capability refusal on a credential-only client", async () => {

@@ -6,14 +6,15 @@
  */
 import type { AccessDoorStateEntry, AccessEventPacket } from "../../index.ts";
 import { CliError, compileEventFilters, packetSubjectId } from "./shared.ts";
+import { EAH_ID, ULTRA_ID, captured, findPacket } from "../../protocol/capture.helpers.ts";
 import type { FakeClientSpec, FakeDoorSpec } from "./cli.helpers.ts";
 import { accessEventPacketsDoorStateFixture, accessEventPacketsInteractiveFixture } from "../../protocol/events.fixtures.ts";
 import { asAccessClient, makeCommandContext, makeFakeClient, rendered } from "./cli.helpers.ts";
 import { describe, test } from "node:test";
+import { accessBootstrapEahFixture } from "../../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
 import { buildDeviceResolution } from "./lookup.ts";
 import { expectAt } from "homebridge-plugin-utils/testing";
-import { findPacket } from "../../protocol/capture.helpers.ts";
 import { watch } from "./commands/watch.ts";
 import { watchEvents } from "./commands/watch-events.ts";
 import { watchRaw } from "./commands/watch-raw.ts";
@@ -159,12 +160,31 @@ describe("the filter engine", () => {
     assert.equal(await matched([ "event", "access.nothing" ], corpus), 0);
   });
 
-  test("the hub and reader shortcuts match by device type in both directions", async () => {
+  test("the hub and reader shortcuts match by the role the packet's device carries, for a captured reader and every hub type", async () => {
 
-    assert.equal(await matched(["--readers"], [RING]), 0);
-    assert.equal(await matched(["--hubs"], [DOOR_STATE_DEVICE]), 0);
-    assert.equal(await matched(["--readers"], [{ ...RING, data: { ...RING.data, "device_type": "UA-Reader" } }]), 1);
-    assert.equal(await matched(["--hubs"], [{ ...RING, data: { ...RING.data, "device_type": "UAH" } }]), 1);
+    /* Every device is a captured record, so each role is the one the controller states in the record's own capabilities: a UA G2 Pro reader, a UA Hub, a UA Hub
+     * Door Mini, a UA Ultra that carries both roles, and an Enterprise Access Hub. No capture holds an unlock from the last two, so the captured remote unlock is
+     * addressed to each of them, which is the identity that packet's classification attributes it by.
+     */
+    const devices = [ captured(READER_ID), captured(HUB_ID), captured(DOOR_MINI_ID), captured(ULTRA_ID), captured(EAH_ID, accessBootstrapEahFixture) ]
+      .map((record) => ({ config: { ...record }, id: record.unique_id, name: record.name }));
+    const table: [ string, AccessEventPacket, boolean, boolean ][] = [
+      [ "a ring from the reader", RING, false, true ],
+      [ "an unlock by the UA Hub", REMOTE_UNLOCK, true, false ],
+      [ "a door-state report from the UA Hub Door Mini", DOOR_STATE_DEVICE, true, false ],
+      [ "an unlock by the UA Ultra", { ...REMOTE_UNLOCK, "event_object_id": ULTRA_ID }, true, true ],
+      [ "an unlock by the Enterprise Access Hub", { ...REMOTE_UNLOCK, "event_object_id": EAH_ID }, true, false ],
+      [ "a door-state report about a door", DOOR_STATE_LOCATION, false, false ]
+    ];
+
+    for(const [ label, packet, hub, reader ] of table) {
+
+      // Sequential by intent: each specimen runs its own two invocations against the same captured inventory.
+      /* eslint-disable no-await-in-loop */
+      assert.equal(await matched(["--hubs"], [packet], { devices }), hub ? 1 : 0, label + " under --hubs");
+      assert.equal(await matched(["--readers"], [packet], { devices }), reader ? 1 : 0, label + " under --readers");
+      /* eslint-enable no-await-in-loop */
+    }
   });
 
   test("the ring shortcut matches rings and nothing else", async () => {
@@ -280,6 +300,11 @@ describe("the watch events command", () => {
     const lines = await runEvents(["--fields=event,data.device_id,data.nothing"], [RING]);
 
     assert.deepEqual(lines, ["{\"event\":\"access.remote_view\",\"data.device_id\":\"" + READER_ID + "\"}"]);
+  });
+
+  test("a field naming what every object inherits projects nothing, like any absent path", async () => {
+
+    assert.deepEqual(await runEvents(["--fields=event,data.__proto__,data.constructor,toString"], [RING]), ["{\"event\":\"access.remote_view\"}"]);
   });
 
   test("the JSON rendering preserves each packet's own field order", async () => {

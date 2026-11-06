@@ -276,7 +276,7 @@ const LOCK_RULE_USAGE = [
 // Narrow a rule token to the kebab vocabulary's own keys, so the verb read is an exactly-typed property access.
 function isLockRuleVerb(value: string): value is keyof typeof LOCK_RULE_VERBS {
 
-  return value in LOCK_RULE_VERBS;
+  return Object.hasOwn(LOCK_RULE_VERBS, value);
 }
 
 // Parse the rule argument: a kebab-spelled verb from the one vocabulary, or a duration reaching the custom rule. A token that is neither is named against both forms.

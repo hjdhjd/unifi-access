@@ -147,7 +147,9 @@ export function groupCommand(opts: { commands: Record<string, CommandSpec>; grou
         return;
       }
 
-      const command = opts.commands[sub];
+      // Only the table's own entries dispatch: a plain lookup also finds what every object inherits, so a subcommand named `constructor` or `toString` would reach a
+      // property that is no command at all.
+      const command = Object.hasOwn(opts.commands, sub) ? opts.commands[sub] : undefined;
 
       if(command === undefined) {
 
@@ -327,7 +329,7 @@ const DURATION_UNITS = { h: 3600000, m: 60000, ms: 1, s: 1000 } as const;
 // Narrow a captured unit suffix to the table's own keys, so the factor read is an exactly-typed property access.
 function isDurationUnit(value: string | undefined): value is keyof typeof DURATION_UNITS {
 
-  return (value !== undefined) && (value in DURATION_UNITS);
+  return (value !== undefined) && Object.hasOwn(DURATION_UNITS, value);
 }
 
 /**
@@ -433,8 +435,8 @@ export function parseApiOverride(value: string | undefined): AccessApiOverride |
 export type EventPredicate = (packet: AccessEventPacket) => boolean;
 
 /**
- * The filter shortcuts, as parsed from the command line. Each is the flag form of a filter the property grammar can also express the long way, and each composes with
- * everything else by AND.
+ * The filter shortcuts, as parsed from the command line. `--device` is the flag form of the `device` term, and the others ask what the property grammar cannot: the
+ * role the device a packet is about carries, or the kind the classifier gave the packet. Each composes with everything else by AND.
  *
  * @category CLI
  */
@@ -451,13 +453,10 @@ export interface EventShortcuts {
 // expression is written against, so an existing expression keeps working.
 const FILTER_PATTERN = /^([a-zA-Z0-9_.]+)(==|!=|~|!~|>=|<=|>|<|=)(.+)$/;
 
-// The device types the hardware shortcuts select, as the controller spells them on the wire.
-const HUB_DEVICE_TYPE = "UAH";
-const READER_DEVICE_TYPE = "UA-Reader";
-
 /**
  * Resolve a dot-path to a value within a notification packet. A path beginning with `data.` or `meta.` resolves inside that member; every other path resolves from the
- * packet root. An absent path, or a path that tries to descend through a non-object, yields `undefined`.
+ * packet root. An absent path, or a path that tries to descend through a non-object, yields `undefined`, and a segment reads only a member the value holds itself, so
+ * a path naming what every object inherits - `constructor` or `__proto__` - is an absent path like any other.
  *
  * This is the one path resolver in the CLI: the filter engine asks it for the value to compare, and `--fields` asks it for the value to project, so the two cannot
  * disagree about what `data.device_type` means.
@@ -489,7 +488,7 @@ export function resolveValueAtPath(packet: AccessEventPacket, path: string): unk
       return undefined;
     }
 
-    current = (current as Record<string, unknown>)[part];
+    current = Object.hasOwn(current, part) ? (current as Record<string, unknown>)[part] : undefined;
   }
 
   return current;
@@ -585,15 +584,19 @@ export function compileEventFilters(opts: { resolve: DeviceResolution; shortcuts
     predicates.push(compilePropertyFilter("device", "==", device, opts.resolve));
   }
 
-  // The hardware shortcuts are the device-type equality the property grammar can also express, compiled through the same path so there is one comparison rule.
+  /* The hardware shortcuts ask the device a packet is about which role it carries, read by the library's own capability test rather than by a device type: a role
+   * cuts across models, so any one type misses every other model that drives a door or reads a credential, and a model this library has never seen is still read
+   * correctly. The roles come from the resolution snapshot, so a packet about something the snapshot holds no device for - a door, or hardware adopted mid-run -
+   * matches neither shortcut.
+   */
   if(opts.shortcuts.hubs === true) {
 
-    predicates.push(compilePropertyFilter("data.device_type", "==", HUB_DEVICE_TYPE, opts.resolve));
+    predicates.push((packet) => opts.resolve.isHub(packetSubjectId(packet)));
   }
 
   if(opts.shortcuts.readers === true) {
 
-    predicates.push(compilePropertyFilter("data.device_type", "==", READER_DEVICE_TYPE, opts.resolve));
+    predicates.push((packet) => opts.resolve.isReader(packetSubjectId(packet)));
   }
 
   /* The activity shortcuts test the classified kind rather than a wire name. The classifier is where the vocabulary lives, so every wire name it already normalizes

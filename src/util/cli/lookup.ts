@@ -2,17 +2,24 @@
  *
  * lookup.ts: Finding things in a connected client by what the operator typed - the one home for resolving a device, a door, or an official record by id or name.
  */
+import { AccessApiError, isHub, isReader } from "../../index.ts";
 import type { AccessClient, AccessDevice, AccessHub, AccessStateDoor } from "../../index.ts";
-import { AccessApiError } from "../../index.ts";
 import { CliError } from "./shared.ts";
 
 /**
- * A name-resolution snapshot, taken once at the start of an invocation and read from there on. The filter engine holds one so that matching a packet against a device
- * name costs a map read rather than a walk of the device inventory, and so that every packet in a run is matched against one consistent view of the controller.
+ * A name and role resolution snapshot, taken once at the start of an invocation and read from there on. The filter engine holds one so that matching a packet against
+ * a device name or a device role costs a map read rather than a walk of the device inventory, and so that every packet in a run is matched against one consistent view
+ * of the controller.
  *
  * @category CLI
  */
 export interface DeviceResolution {
+
+  /** Whether the device with this identifier carries the hub role, by the library's own capability reading. `false` when the snapshot holds no such device. */
+  isHub(id: string): boolean;
+
+  /** Whether the device with this identifier carries the reader role, by the library's own capability reading. `false` when the snapshot holds no such device. */
+  isReader(id: string): boolean;
 
   /** The display name of the device with this identifier, or `undefined` when the snapshot holds no such device. */
   name(id: string): string | undefined;
@@ -63,7 +70,8 @@ export function hubHandle(client: AccessClient, id: string): AccessHub | undefin
 
 /**
  * Build the {@link DeviceResolution} snapshot for this invocation from the client's current inventory. Names are indexed case-insensitively, and a device whose display
- * name is empty is indexed by identifier alone - there is no name to match it by.
+ * name is empty is indexed by identifier alone - there is no name to match it by. Roles are indexed by identifier case-insensitively, the rule the `device` filter
+ * compares a packet's subject by, and read through the library's own `isHub` and `isReader`, so a role reads the same here as everywhere else in the library.
  *
  * The display name comes from each handle's own `name` getter rather than from a rule restated here, so the CLI and the library agree on which of a device's two name
  * fields wins.
@@ -78,6 +86,8 @@ export function buildDeviceResolution(client: AccessClient): DeviceResolution {
 
   const namesById = new Map<string, string>();
   const idsByName = new Map<string, string>();
+  const hubIds = new Set<string>();
+  const readerIds = new Set<string>();
 
   for(const device of allTargets(client)) {
 
@@ -89,10 +99,22 @@ export function buildDeviceResolution(client: AccessClient): DeviceResolution {
 
       idsByName.set(name.toLowerCase(), device.id);
     }
+
+    if(isHub(device.config)) {
+
+      hubIds.add(device.id.toLowerCase());
+    }
+
+    if(isReader(device.config)) {
+
+      readerIds.add(device.id.toLowerCase());
+    }
   }
 
   return {
 
+    isHub: (id: string): boolean => hubIds.has(id.toLowerCase()),
+    isReader: (id: string): boolean => readerIds.has(id.toLowerCase()),
     name: (id: string): string | undefined => namesById.get(id),
     resolve: (token: string): string | undefined => namesById.has(token) ? token : idsByName.get(token.toLowerCase())
   };

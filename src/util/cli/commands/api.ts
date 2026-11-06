@@ -44,7 +44,7 @@ const USAGE = [
 // Narrow the verb positional to the method vocabulary's own keys.
 function isApiVerb(value: string): value is keyof typeof METHODS {
 
-  return value in METHODS;
+  return Object.hasOwn(METHODS, value);
 }
 
 // Print what a request answered with: the payload, plus its pagination when the endpoint paginates - the pagination would be silently lost if only the payload

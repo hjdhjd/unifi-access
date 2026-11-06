@@ -656,6 +656,7 @@ describe("the api hatch", () => {
       { args: ["get"], sentence: "Specify a verb (get, post, put, delete) and a path. Run \"ufa api --help\" for usage." },
       { args: [ "get", "doors" ], sentence: "The path must start with \"/\", below the official API's application prefix, but received \"doors\"." },
       { args: [ "fetch", "/doors" ], sentence: "The verb must be one of: delete, get, post, put, but received \"fetch\"." },
+      { args: [ "constructor", "/doors" ], sentence: "The verb must be one of: delete, get, post, put, but received \"constructor\"." },
       { args: [ "get", "/doors", "--json", "{}" ], sentence: "A get carries no body, so --json applies to mutations only." },
       { args: [ "get", "/doors", "--print" ], sentence: "A get always prints its result, so --print applies to mutations only." },
       { args: [ "put", "/doors", "--out", "f" ], sentence: "The --out byte sink applies to gets only." },
