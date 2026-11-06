@@ -9,7 +9,8 @@ import type { AccessBootstrapConfig, AccessEventPacket, DeepWirePartial } from "
 import { DEVICE_FIELD_EXCLUSIONS, DEVICE_FIELD_MAP, DEVICE_FIELD_PROJECTIONS, DEVICE_NOTIFICATION_MEMBERS, DOOR_STATE_FACT_GUARDS, LOCATION_FIELD_EXCLUSIONS,
   LOCATION_FIELD_MAP, LOCATION_NOTIFICATION_MEMBERS, ORIGINAL_DEVICE_FIELD_EXCLUSIONS, ORIGINAL_LOCATION_FIELD_EXCLUSIONS, classifyPacket,
   isAccessEventPacket } from "./events.ts";
-import { DOORBELL_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID, capturedPackets, classifyAs, findPacket } from "./capture.helpers.ts";
+import { DOORBELL_ID, DOOR_HUB, DOOR_MINI, DOOR_ULTRA, FLOOR_2026, MINI_ID, READER_ID, UAH_ID, ULTRA_ID, capturedPackets, classifyAs,
+  findPacket } from "./capture.helpers.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { isPlainObject } from "./plain-object.ts";
@@ -204,7 +205,7 @@ describe("v2 device payload translation", () => {
     assert.equal(payload.guid, "00000000-0000-0000-0000-000000000007");
     assert.equal(payload.hw_type, "");
     assert.equal(payload.ip, "192.0.2.2");
-    assert.equal(payload.location_id, "00000000-0000-0000-0000-000000000006");
+    assert.equal(payload.location_id, DOOR_HUB);
   });
 
   test("drops the pre-translation wire names once they are renamed", () => {
@@ -335,17 +336,17 @@ describe("v2 location payload translation", () => {
     const { payload } = event;
 
     assert.deepEqual(Object.keys(payload).sort(), LOCATION_ADMITTED);
-    assert.equal(event.id, "00000000-0000-0000-0000-000000000006");
+    assert.equal(event.id, DOOR_HUB);
   });
 
   test("carries each admitted field under its canonical name", () => {
 
     const { payload } = classifyAs(packet, "locationChanged");
 
-    assert.equal(payload.unique_id, "00000000-0000-0000-0000-000000000006");
+    assert.equal(payload.unique_id, DOOR_HUB);
     assert.equal(payload.location_type, "door");
     assert.equal(payload.name, "Test Name 10");
-    assert.equal(payload.up_id, "00000000-0000-0000-0000-000000000001");
+    assert.equal(payload.up_id, FLOOR_2026);
 
     // The wire sends this as null, which the payload type admits and the merge later skips as not-carried.
     assert.equal(payload.extras, null);
@@ -591,13 +592,13 @@ describe("the original dialect's admission", () => {
 
   test("a location update writes the declared members it carries and takes its identity from the envelope", () => {
 
-    const packet = findPacket((entry) => (entry.event === "access.data.location.update") && (entry.event_object_id === "00000000-0000-0000-0000-000000000006"),
+    const packet = findPacket((entry) => (entry.event === "access.data.location.update") && (entry.event_object_id === DOOR_HUB),
       "the legacy door update");
     const wire = present(packet.data, "the legacy door record");
     const { id, payload } = classifyAs(packet, "locationChanged");
 
-    assert.equal(id, "00000000-0000-0000-0000-000000000006");
-    assert.equal(payload.unique_id, "00000000-0000-0000-0000-000000000006");
+    assert.equal(id, DOOR_HUB);
+    assert.equal(payload.unique_id, DOOR_HUB);
     assert.equal(payload.full_name, "Test Name 11");
     assert.deepEqual(Object.keys(payload).sort(), LOCATION_NOTIFICATION_MEMBERS.filter((member) => Object.hasOwn(wire, member)).sort());
 
@@ -669,7 +670,7 @@ describe("the doorbell and unlock specimens", () => {
      * is modeled because the library's own earlier consumers filtered on it, and its identity space is unverified against the wire: that is precisely why the
      * classifier carries the envelope identifier through as-is rather than resolving it against anything.
      */
-    const synthetic: AccessEventPacket = { "data": null, "event": "access.door.unlock", "event_object_id": "00000000-0000-0000-0000-000000000006",
+    const synthetic: AccessEventPacket = { "data": null, "event": "access.door.unlock", "event_object_id": DOOR_HUB,
       "receiver_id": "", "save_to_history": false };
     const event = classifyPacket(synthetic);
 
@@ -740,7 +741,7 @@ describe("the tamper alert", () => {
 
     // The rest of the payload is carried exactly as the wire delivered it, which is what makes the guard's one identity check the whole of its contract.
     assert.deepEqual(Object.keys(event.payload).sort(), TAMPER_ALERT_FIELDS);
-    assert.equal(event.payload.door_id, "00000000-0000-0000-0000-000000000002");
+    assert.equal(event.payload.door_id, DOOR_ULTRA);
     assert.deepEqual(event.payload.notify_user_ids, ["00000000-0000-0000-0000-00000000000b"]);
   });
 
@@ -767,7 +768,7 @@ describe("the interactive capture specimens", () => {
     assert.deepEqual(Object.keys(event.payload).sort(), DOORBELL_RING_FIELDS);
 
     // Reading optional members off the typed payload is what proves they are reachable through the type, which a key-list comparison alone does not show.
-    assert.equal(event.payload.door_id, "00000000-0000-0000-0000-000000000006");
+    assert.equal(event.payload.door_id, DOOR_HUB);
     assert.equal(event.payload.create_time, 1786729371);
   });
 
@@ -796,7 +797,7 @@ describe("the interactive capture specimens", () => {
 
     // The envelope names the hub that performed the unlock while the payload carries the door's own location record, which is why the two identifiers differ.
     assert.equal(event.id, UAH_ID);
-    assert.equal(packet.data?.["unique_id"], "00000000-0000-0000-0000-000000000006");
+    assert.equal(packet.data?.["unique_id"], DOOR_HUB);
   });
 
   test("the allowlist holds against state carriers that have no bootstrap counterpart", () => {
@@ -832,14 +833,11 @@ describe("the interactive capture specimens", () => {
 
     // The door state the same packet carried reaches the event rather than being dropped alongside the fields the allowlist excludes.
     assert.equal(event.states.length, 1);
-    assert.equal(event.states[0].location_id, "00000000-0000-0000-0000-000000000006", "the entry names the door this hub drives");
+    assert.equal(event.states[0].location_id, DOOR_HUB, "the entry names the door this hub drives");
   });
 });
 
 describe("door-state classification", () => {
-
-  // The door the Door Mini drives, named once so every assertion below cites the specific door rather than re-deriving identity from the packet it is checking.
-  const DOOR_MINI_DOOR = "00000000-0000-0000-0000-00000000000e";
 
   // A device-carrier specimen and its door-state array, for the synthetic near-miss cases below. Each case rebuilds the array rather than editing the fixture, so
   // the corpus stays the corpus.
@@ -870,7 +868,7 @@ describe("door-state classification", () => {
     // A report carrying no null member is admitted as the very object the packet delivered: the copy that leaves null members out is made only when there is
     // one to leave out, and everything else is stored as delivered, the way every other wire record is.
     assert.equal(Object.is(entry, (packet.data?.["location_states"] as unknown[])[0]), true, "a null-free entry passes through as itself");
-    assert.equal(entry.location_id, DOOR_MINI_DOOR);
+    assert.equal(entry.location_id, DOOR_MINI);
     assert.equal(entry.lock, "locked");
     assert.equal(entry.dps, "close");
     assert.equal(entry.dps_connected, true);
@@ -886,7 +884,7 @@ describe("door-state classification", () => {
 
   test("a location update carrying door state takes its door identity from the envelope and carries the location facet", () => {
 
-    const packet = findPacket((entry) => (entry.event === "access.data.v2.location.update") && (entry.meta?.id === DOOR_MINI_DOOR) &&
+    const packet = findPacket((entry) => (entry.event === "access.data.v2.location.update") && (entry.meta?.id === DOOR_MINI) &&
       ((entry.data?.["state"] as { alarms?: unknown[] } | undefined)?.alarms !== undefined), "the Door Mini door update reporting a force-unlock alarm");
     const event = classifyPacket(packet);
 
@@ -897,13 +895,13 @@ describe("door-state classification", () => {
 
     // The state member itself names no door - the envelope does - so this is where the two are joined.
     assert.equal(Object.hasOwn(packet.data?.["state"] as object, "location_id"), false, "the state member carries no door identity of its own");
-    assert.equal(entry.location_id, DOOR_MINI_DOOR);
+    assert.equal(entry.location_id, DOOR_MINI);
     assert.equal(entry.dps, "open");
     assert.deepEqual(entry.alarms, [{ type: "force_unlock" }]);
 
     // The location carrier contributes the location facet and only that one.
-    assert.equal(event.location?.id, DOOR_MINI_DOOR);
-    assert.equal(event.location.payload.unique_id, DOOR_MINI_DOOR);
+    assert.equal(event.location?.id, DOOR_MINI);
+    assert.equal(event.location.payload.unique_id, DOOR_MINI);
     assert.equal(event.location.payload.name, "Test Name 22");
     assert.equal(event.location.payload.location_type, "door");
     assert.equal(event.device, undefined);
@@ -934,7 +932,7 @@ describe("door-state classification", () => {
 
     assert.equal(event?.kind, "doorStateChanged");
     assert.equal(event.states.length, 1, "the entry naming no door is dropped while its sibling is admitted");
-    assert.equal(event.states[0].location_id, DOOR_MINI_DOOR);
+    assert.equal(event.states[0].location_id, DOOR_MINI);
     assert.equal(event.device?.id, MINI_ID, "the packet's device facet is carried regardless of which entries were dropped");
   });
 
@@ -1015,7 +1013,7 @@ describe("door-state classification", () => {
 
     // The reducer replaces a door's held entry with the one admitted, so admitting this would erase what the door last said on the strength of a payload that said
     // nothing at all.
-    assert.equal(classifyPacket(withStates([{ "location_id": DOOR_MINI_DOOR }]))?.kind, "deviceChanged");
+    assert.equal(classifyPacket(withStates([{ "location_id": DOOR_MINI }]))?.kind, "deviceChanged");
   });
 
   test("a member of the wrong shape rejects the entry whether or not the others are present", () => {
@@ -1031,7 +1029,7 @@ describe("door-state classification", () => {
       assert.equal(classifyPacket(withStates([malformed]))?.kind, "deviceChanged", member + " of the wrong shape rejects the whole entry");
     }
 
-    assert.equal(classifyPacket(withStates([{ "dps": 7, "location_id": DOOR_MINI_DOOR }]))?.kind, "deviceChanged",
+    assert.equal(classifyPacket(withStates([{ "dps": 7, "location_id": DOOR_MINI }]))?.kind, "deviceChanged",
       "the same holds for an entry whose one fact is malformed");
   });
 

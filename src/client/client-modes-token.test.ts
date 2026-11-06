@@ -3,9 +3,9 @@
  * client-modes-token.test.ts: Tests for what a client that connects with a token alone can reach - which endpoints it touches, what it seeds door state from,
  * which of its accessors answer, and what it tears down.
  */
-import { DEVICES_PATH, DOORS_PATH, DOOR_HUB, DOOR_MINI, DOOR_ULTRA, HOST, connectCapturing, connectCapturingWithDispatch, devicesBody, doorsBody, identityEnterpriseBody,
-  interceptOfficialPass, mockController, officialDoor } from "./client-modes.helpers.ts";
-import { EAH_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
+import { DEVICES_PATH, DOORS_PATH, HOST, connectCapturing, connectCapturingWithDispatch, devicesBody, doorsBody, identityEnterpriseBody, interceptOfficialPass,
+  mockController, officialDoor } from "./client-modes.helpers.ts";
+import { DOOR_HUB, DOOR_MINI, DOOR_ULTRA, EAH_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
 import { TestClock, capturingLog, logCount, present, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import { describe, test } from "node:test";

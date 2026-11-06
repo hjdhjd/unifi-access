@@ -11,6 +11,7 @@
 import type { AccessBootstrapConfig, AccessDeviceConfig, AccessDeviceEntryConfig, AccessEventPacket } from "../types/index.ts";
 import { accessEventPackets2024Fixture, accessEventPacketsDoorStateFixture, accessEventPacketsFixture, accessEventPacketsHistoricalFixture,
   accessEventPacketsInteractiveFixture, accessEventPacketsOfficialSocketFixture, accessEventPacketsTamperFixture } from "./events.fixtures.ts";
+import type { AccessPortBinding } from "./port-bindings.ts";
 import type { AccessTypedEvent } from "./events.ts";
 import { accessBootstrap2026Fixture } from "./topology.fixtures.ts";
 import assert from "node:assert/strict";
@@ -18,8 +19,8 @@ import { classifyPacket } from "./events.ts";
 import { topologyDevices } from "../testing.helpers.ts";
 
 /* The real hardware the committed captures carry, by identity, named once here for every suite: a UA Ultra, a UA Hub with its UA G2 Pro and UA G2 Mini readers,
- * a UA Hub Door Mini, the Enterprise Access Hub of the second document and a UA G2 Pro reader of that document, and the camera-class doorbell, a UVC G6 Pro Entry,
- * under the identity the notification corpus reports it by, which no topology document carries.
+ * a UA Hub Door Mini, the Enterprise Access Hub of the second document with readers of that document - the garage door's own UA Hub and its reader among them -
+ * and the camera-class doorbell, a UVC G6 Pro Entry, under the identity the notification corpus reports it by, which no topology document carries.
  */
 export const ULTRA_ID = "aabbcc000000";
 export const UAH_ID = "aabbcc000001";
@@ -28,7 +29,47 @@ export const G2_MINI_ID = "aabbcc000003";
 export const MINI_ID = "aabbcc000004";
 export const EAH_ID = "aabbcc000005";
 export const EAH_READER_ID = "aabbcc000006";
+export const EAH_GARAGE_HUB_ID = "aabbcc000008";
+export const EAH_GARAGE_READER_ID = "aabbcc000009";
+export const EAH_NORTHEAST_READER_ID = "aabbcc00000a";
+export const EAH_NORTHWEST_READER_ID = "aabbcc00000c";
 export const DOORBELL_ID = "00000000000000000000000c";
+
+/* The captured topology by identity, named once here beside the hardware for every suite: the 2026 document's root and floor and the door each of its hubs drives,
+ * and the 2024 document's root, the doors of the Enterprise Access Hub that the suites name - the garage door among them, the one door there with a hub attached to
+ * the door itself - and two of that hub's ports.
+ */
+export const ROOT_2026 = "00000000-0000-0000-0000-000000000000";
+export const FLOOR_2026 = "00000000-0000-0000-0000-000000000001";
+export const DOOR_ULTRA = "00000000-0000-0000-0000-000000000002";
+export const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
+export const DOOR_MINI = "00000000-0000-0000-0000-00000000000e";
+export const EAH_ROOT = "00000000-0000-0000-0000-000000000011";
+export const EAH_DOOR_2 = "00000000-0000-0000-0000-000000000013";
+export const EAH_DOOR_FRONT = "00000000-0000-0000-0000-000000000017";
+export const EAH_DOOR_GARAGE = "00000000-0000-0000-0000-000000000024";
+export const EAH_DOOR_NORTHEAST = "00000000-0000-0000-0000-000000000025";
+export const EAH_DOOR_NORTHWEST = "00000000-0000-0000-0000-000000000027";
+export const EAH_PORT_2 = "00000000-0000-0000-0000-00000000002a";
+export const EAH_PORT_3 = "00000000-0000-0000-0000-00000000002b";
+
+// The UA Ultra's one binding, as the 2026 document delivers it: its single port, the door that port serves, and the name the controller wrote beside it.
+export const ULTRA_BINDING: AccessPortBinding = { doorId: DOOR_ULTRA, name: "Test Name 4", port: "port1" };
+
+/* The Enterprise Access Hub's eight bindings, in the document's own delivery order: the door each port is bound to, the port, and the name the controller wrote
+ * beside it. The ports are deliberately out of numeric order because the controller delivered them that way, and delivered order is what every read answers in.
+ */
+export const EAH_BINDINGS: readonly AccessPortBinding[] = [
+
+  { doorId: EAH_DOOR_2, name: "Test Name 29", port: "port2" },
+  { doorId: EAH_DOOR_NORTHWEST, name: "Test Name 54", port: "port6" },
+  { doorId: "00000000-0000-0000-0000-000000000014", name: "Test Name 31", port: "port3" },
+  { doorId: "00000000-0000-0000-0000-000000000016", name: "Test Name 35", port: "port8" },
+  { doorId: "00000000-0000-0000-0000-000000000028", name: "Test Name 58", port: "port1" },
+  { doorId: "00000000-0000-0000-0000-000000000015", name: "Test Name 33", port: "port4" },
+  { doorId: EAH_DOOR_NORTHEAST, name: "Test Name 50", port: "port7" },
+  { doorId: EAH_DOOR_FRONT, name: "Test Name 37", port: "port5" }
+];
 
 // The port configuration entry a hub names an assignable input terminal's duty in, and the extension it travels on. Both are spelled here rather than imported so
 // that the tests do not agree with the implementation by construction: a helper reaching for the implementation's own names would answer with them whatever they

@@ -6,7 +6,8 @@
  */
 import { AccessApiError, AccessBootstrapError, AccessNetworkError, AccessProtocolError } from "../errors.ts";
 import type { AccessConnectionTransitionPayload, AccessStoreDispatchPayload } from "../diagnostics.ts";
-import { CONTROLLER_PATH, DOOR_HUB, HOST, LOGIN_PATH, SELF_PATH, TOPOLOGY_PATH, mockController } from "./client-modes.helpers.ts";
+import { CONTROLLER_PATH, HOST, LOGIN_PATH, SELF_PATH, TOPOLOGY_PATH, mockController } from "./client-modes.helpers.ts";
+import { DOOR_HUB, UAH_ID } from "../protocol/capture.helpers.ts";
 import type { Interceptable, MockAgent } from "undici";
 import { TestClock, capturingLog, expectAt, present, settle, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
@@ -16,7 +17,6 @@ import { AccessClient } from "./client.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
-import { UAH_ID } from "../protocol/capture.helpers.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { subscribeTo } from "../testing.helpers.ts";

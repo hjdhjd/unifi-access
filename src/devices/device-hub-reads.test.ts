@@ -4,10 +4,10 @@
  * it reports, and the port bindings it carries. Each of these is a read of controller state through the projection, so a handle whose record has left the state
  * fails loudly rather than answering from a captured value.
  */
-import { DOOR_HUB, DOOR_MINI_DOOR, EAH_DOOR_2, EAH_PORT_2, EAH_PORT_3, ULTRA_BINDING, deviceFixture, doorStateEvent, wirePacket } from "./device.helpers.ts";
-import { EAH_ID, MINI_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
+import { DOOR_HUB, DOOR_MINI, EAH_DOOR_2, EAH_ID, EAH_PORT_2, EAH_PORT_3, MINI_ID, UAH_ID, ULTRA_BINDING, ULTRA_ID } from "../protocol/capture.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
+import { deviceFixture, doorStateEvent, wirePacket } from "./device.helpers.ts";
 import { accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import assert from "node:assert/strict";
 import { classifyPacket } from "../protocol/events.ts";
@@ -35,17 +35,17 @@ describe("the door record through a hub", () => {
     assert.equal(hubDoor?.unique_id, DOOR_HUB);
     assert.equal(hubDoor.name, "Test Name 10");
     assert.equal(hubDoor.full_name, "Test Name 11");
-    assert.equal(miniDoor?.unique_id, DOOR_MINI_DOOR);
+    assert.equal(miniDoor?.unique_id, DOOR_MINI);
     assert.equal(miniDoor.name, "Test Name 22");
     assert.equal(miniDoor.full_name, "Test Name 23");
 
     // An enumerating census that no longer names one hub's door takes it out of the collection, which is the state a handle whose door was never censused is
     // in: the handle is still there and the record behind it is not.
     store.applyCensus({ devices: [], doorStates: [],
-      doors: accessOfficialDoorsFixture.filter((entry) => entry.id === DOOR_MINI_DOOR).map(officialDoorRecord) }, { complete: true });
+      doors: accessOfficialDoorsFixture.filter((entry) => entry.id === DOOR_MINI).map(officialDoorRecord) }, { complete: true });
 
     assert.equal(hub.door, undefined, "the door the census dropped reads as absent rather than as some other door");
-    assert.equal(mini.door?.unique_id, DOOR_MINI_DOOR, "while the door it did name is untouched");
+    assert.equal(mini.door?.unique_id, DOOR_MINI, "while the door it did name is untouched");
   });
 });
 
@@ -72,9 +72,9 @@ describe("door state through a hub", () => {
     // per-handle rather than incidental.
     const mini = present(registry.hub(MINI_ID), "the Door Mini");
 
-    assert.equal(mini.config.location_id, DOOR_MINI_DOOR);
+    assert.equal(mini.config.location_id, DOOR_MINI);
     assert.equal(mini.doorState?.lock, "locked", "the other hub's door still shows what its own hardware established");
-    assert.equal(mini.doorState.location_id, DOOR_MINI_DOOR);
+    assert.equal(mini.doorState.location_id, DOOR_MINI);
   });
 
   test("an entry whose optional member is malformed leaves the previously stored one standing", () => {

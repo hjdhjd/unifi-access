@@ -6,7 +6,7 @@
  */
 import type { AccessDoorStateEntry, AccessEventPacket } from "../../index.ts";
 import { CliError, compileEventFilters, packetSubjectId } from "./shared.ts";
-import { EAH_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID, captured, findPacket } from "../../protocol/capture.helpers.ts";
+import { DOOR_MINI, EAH_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID, captured, findPacket } from "../../protocol/capture.helpers.ts";
 import type { FakeClientSpec, FakeDoorSpec } from "./cli.helpers.ts";
 import { accessEventPacketsDoorStateFixture, accessEventPacketsInteractiveFixture } from "../../protocol/events.fixtures.ts";
 import { asAccessClient, makeCommandContext, makeFakeClient, rendered } from "./cli.helpers.ts";
@@ -32,9 +32,6 @@ const DOOR_STATE_DEVICE = findPacket((packet) => packet.event === "access.data.v
 const DOOR_STATE_LOCATION = findPacket((packet) => packet.event === "access.data.v2.location.update", "a door-state location update",
   { corpus: accessEventPacketsDoorStateFixture });
 
-// The door the door-state specimens report on, read off the corpus. The hardware those specimens carry is named by the capture helpers.
-const DOOR_MINI_DOOR_ID = "00000000-0000-0000-0000-00000000000e";
-
 /* The one wire name in the unlock vocabulary that no capture in hand contains. The library's own classifier models it because earlier consumers filtered on it, and
  * its own suite asserts it with a synthetic packet for exactly this reason (src/protocol/events.test.ts). We follow that precedent here: the captured remote-unlock
  * specimen carries the shortcut's positive case, and this stands in for the second name the same classified kind admits.
@@ -43,7 +40,7 @@ const SYNTHETIC_DOOR_UNLOCK: AccessEventPacket = {
 
   "data": null,
   "event": "access.door.unlock",
-  "event_object_id": DOOR_MINI_DOOR_ID,
+  "event_object_id": DOOR_MINI,
   "receiver_id": "",
   "save_to_history": true
 };
@@ -234,11 +231,11 @@ describe("the filter engine", () => {
     // from there.
     assert.notEqual(DOOR_STATE_DEVICE.event_object_id, MINI_ID);
     assert.equal(packetSubjectId(DOOR_STATE_DEVICE), MINI_ID);
-    assert.notEqual(DOOR_STATE_LOCATION.event_object_id, DOOR_MINI_DOOR_ID);
-    assert.equal(packetSubjectId(DOOR_STATE_LOCATION), DOOR_MINI_DOOR_ID);
+    assert.notEqual(DOOR_STATE_LOCATION.event_object_id, DOOR_MINI);
+    assert.equal(packetSubjectId(DOOR_STATE_LOCATION), DOOR_MINI);
 
     assert.equal(await matched(["--device=" + MINI_ID], [DOOR_STATE_DEVICE]), 1);
-    assert.equal(await matched(["--device=" + DOOR_MINI_DOOR_ID], [DOOR_STATE_LOCATION]), 1);
+    assert.equal(await matched(["--device=" + DOOR_MINI], [DOOR_STATE_LOCATION]), 1);
   });
 
   test("a cancellation and an unmodeled packet fall back to the envelope identifier", async () => {

@@ -4,7 +4,7 @@
  * each one produces: which members it carries, which it leaves absent, and that the identity it hands the state is the identity the topology addresses the same
  * hardware by. That last group runs both fixture corpora against each other, which is the only way to establish that the two censuses describe one controller.
  */
-import { MINI_ID, READER_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
+import { DOOR_HUB, FLOOR_2026, MINI_ID, READER_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import { describe, test } from "node:test";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "./census.ts";
@@ -14,10 +14,6 @@ import type { AccessOfficialDoor } from "../official/spaces.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
 import { topologyDevices } from "../testing.helpers.ts";
-
-// Named entries from the captured listing: the door and the floor its groups are keyed by.
-const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
-const FLOOR = "00000000-0000-0000-0000-000000000001";
 
 // Every device the captured listing carried, flattened out of its per-door groups the way the seed flattens them.
 const listedDevices = accessOfficialDevicesFixture.flat();
@@ -180,7 +176,7 @@ describe("officialDoorRecord", () => {
       "location_type": "door",
       "name": "Test Name 10",
       "unique_id": DOOR_HUB,
-      "up_id": FLOOR
+      "up_id": FLOOR_2026
     });
   });
 

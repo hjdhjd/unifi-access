@@ -10,10 +10,10 @@
  * The method fallback inside the interceptor's reply callback has no absent direction to drive: undici hands that callback a method on every dispatch, so the
  * empty-string arm cannot be reached from a test and is recorded here rather than asserted vacuously.
  */
-import { DOOR_HUB, REFUSED, SUCCESS, deviceFixture, doorStateEvent, intercept, wirePacket } from "./device.helpers.ts";
+import { DOOR_HUB, UAH_ID } from "../protocol/capture.helpers.ts";
+import { REFUSED, SUCCESS, deviceFixture, doorStateEvent, intercept, wirePacket } from "./device.helpers.ts";
 import { describe, test } from "node:test";
 import type { AccessEventPacket } from "../types/index.ts";
-import { UAH_ID } from "../protocol/capture.helpers.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
 import { classifyPacket } from "../protocol/events.ts";

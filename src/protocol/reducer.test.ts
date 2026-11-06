@@ -9,7 +9,8 @@ import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig,
 import type { AccessState, AccessStateDevice, AccessStateDoor } from "./reducer.ts";
 import type { AccessTypedEvent, LOCATION_NOTIFICATION_MEMBERS } from "./events.ts";
 import { DEVICE_NOTIFICATION_MEMBERS, classifyPacket } from "./events.ts";
-import { DOORBELL_ID, EAH_ID, EAH_READER_ID, G2_MINI_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID, classify, documentWith, findPacket, withDuty } from "./capture.helpers.ts";
+import { DOORBELL_ID, DOOR_HUB, DOOR_MINI, DOOR_ULTRA, EAH_DOOR_GARAGE, EAH_ID, EAH_READER_ID, EAH_ROOT, FLOOR_2026, G2_MINI_ID, MINI_ID, READER_ID, ROOT_2026, UAH_ID,
+  ULTRA_ID, classify, documentWith, findPacket, withDuty } from "./capture.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture, accessControllerInfoFixture } from "./topology.fixtures.ts";
 import { accessEventPacketsDoorStateFixture, accessEventPacketsFixture, accessEventPacketsTamperFixture } from "./events.fixtures.ts";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
@@ -24,21 +25,6 @@ import { isDeepStrictEqual } from "node:util";
 import { isPlainObject } from "./plain-object.ts";
 import { present } from "homebridge-plugin-utils/testing";
 import { topologyDevices } from "../testing.helpers.ts";
-
-// Named entries from the real topology documents, so assertions cite a specific record rather than a count re-derived from the same fixture.
-const ROOT_2026 = "00000000-0000-0000-0000-000000000000";
-const FLOOR_2026 = "00000000-0000-0000-0000-000000000001";
-const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
-const EAH_ROOT = "00000000-0000-0000-0000-000000000011";
-
-// The one door in the 2024 document with a hub attached to the door itself, rather than to the building or nothing at all.
-const EAH_HUB_DOOR = "00000000-0000-0000-0000-000000000024";
-
-// The door the Door Mini drives, the hardware the door-state capture window worked through.
-const DOOR_MINI_DOOR = "00000000-0000-0000-0000-00000000000e";
-
-// The UA Ultra's door, the one whose hardware reports no wiring pair at all.
-const DOOR_ULTRA = "00000000-0000-0000-0000-000000000002";
 
 // The identity carried by the synthesized record that arrives without a capabilities array. No captured document holds a record in that shape, so the tests for the
 // admission normalization build one, and it takes an identity of its own so it can never be confused with a device a fixture supplied.
@@ -160,7 +146,7 @@ describe("applyBootstrap flattening", () => {
     assert.ok(state.floors.has(FLOOR_2026), "the 2026 floor is flattened into the floors map");
     assert.equal(state.floors.get(FLOOR_2026)?.name, "Test Name 2");
 
-    for(const id of [ "00000000-0000-0000-0000-000000000002", DOOR_HUB, "00000000-0000-0000-0000-00000000000e" ]) {
+    for(const id of [ DOOR_ULTRA, DOOR_HUB, DOOR_MINI ]) {
 
       assert.ok(state.doors.has(id), "the doors map should hold " + id);
     }
@@ -233,7 +219,7 @@ describe("applyBootstrap door-state seeding", () => {
 
     assert.deepEqual(state.doorStates.get(DOOR_ULTRA), { "dps": "open", "dps_connected": true, "location_id": DOOR_ULTRA, "lock": "locked" });
     assert.deepEqual(state.doorStates.get(DOOR_HUB), { "dps": "none", "dps_connected": false, "location_id": DOOR_HUB, "lock": "locked" });
-    assert.deepEqual(state.doorStates.get(DOOR_MINI_DOOR), { "dps": "none", "dps_connected": false, "location_id": DOOR_MINI_DOOR, "lock": "locked" });
+    assert.deepEqual(state.doorStates.get(DOOR_MINI), { "dps": "none", "dps_connected": false, "location_id": DOOR_MINI, "lock": "locked" });
     assert.equal(state.doorStates.size, 3);
   });
 
@@ -255,12 +241,12 @@ describe("applyBootstrap door-state seeding", () => {
     /* The rule the seed lives by. A door that reported `close` over the wire keeps that reading through every later refresh, even though the same document's flags
      * would derive an unconnected sensor for it - a live reading always outranks an interpretation of hardware.
      */
-    const reported = reduce(stateFrom(accessBootstrap2026Fixture), syntheticDoorState(DOOR_MINI_DOOR));
-    const entry = reported.doorStates.get(DOOR_MINI_DOOR);
+    const reported = reduce(stateFrom(accessBootstrap2026Fixture), syntheticDoorState(DOOR_MINI));
+    const entry = reported.doorStates.get(DOOR_MINI);
     const refreshed = reduce(reported, bootstrapEvent(structuredClone(accessBootstrap2026Fixture)));
 
-    assert.equal(refreshed.doorStates.get(DOOR_MINI_DOOR)?.dps, "close");
-    assert.equal(Object.is(refreshed.doorStates.get(DOOR_MINI_DOOR), entry), true, "the reported entry keeps its exact reference across a refresh");
+    assert.equal(refreshed.doorStates.get(DOOR_MINI)?.dps, "close");
+    assert.equal(Object.is(refreshed.doorStates.get(DOOR_MINI), entry), true, "the reported entry keeps its exact reference across a refresh");
   });
 
   test("mints no new map when a refresh seeds nothing", () => {
@@ -282,8 +268,8 @@ describe("applyBootstrap door-state seeding", () => {
     const eah = stateFrom(accessBootstrapEahFixture);
 
     assert.equal(eah.doors.size, 9);
-    assert.deepEqual([...eah.doorStates.keys()], [EAH_HUB_DOOR], "only the door with a hub of its own establishes anything");
-    assert.deepEqual(eah.doorStates.get(EAH_HUB_DOOR), { "dps": "none", "dps_connected": false, "location_id": EAH_HUB_DOOR, "lock": "locked" });
+    assert.deepEqual([...eah.doorStates.keys()], [EAH_DOOR_GARAGE], "only the door with a hub of its own establishes anything");
+    assert.deepEqual(eah.doorStates.get(EAH_DOOR_GARAGE), { "dps": "none", "dps_connected": false, "location_id": EAH_DOOR_GARAGE, "lock": "locked" });
 
     const readersOnly = structuredClone(accessBootstrap2026Fixture);
     const floor = present(readersOnly.floors?.[0], "the first floor");
@@ -299,15 +285,15 @@ describe("applyBootstrap door-state seeding", () => {
     const withoutMini = structuredClone(accessBootstrap2026Fixture);
     const floor = present(withoutMini.floors?.[0], "the first floor");
 
-    floor.doors = (floor.doors ?? []).filter((door) => door.unique_id !== DOOR_MINI_DOOR);
+    floor.doors = (floor.doors ?? []).filter((door) => door.unique_id !== DOOR_MINI);
 
     const state = stateFrom(withoutMini);
 
-    assert.equal(state.doorStates.has(DOOR_MINI_DOOR), false);
+    assert.equal(state.doorStates.has(DOOR_MINI), false);
 
     const restored = reduce(state, bootstrapEvent(structuredClone(accessBootstrap2026Fixture)));
 
-    assert.equal(restored.doorStates.get(DOOR_MINI_DOOR)?.dps, "none");
+    assert.equal(restored.doorStates.get(DOOR_MINI)?.dps, "none");
   });
 });
 
@@ -1488,14 +1474,14 @@ describe("doorStateChanged", () => {
     assert.equal(empty.controller, null);
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const seeded = present(state.doorStates.get(DOOR_MINI_DOOR), "the Door Mini's seeded door state");
+    const seeded = present(state.doorStates.get(DOOR_MINI), "the Door Mini's seeded door state");
 
     // What the document's own hardware flags established for this door: an unwired sensor and a locked relay, and nothing about the members only a report carries.
     assert.equal(seeded.dps, "none");
     assert.equal(Object.hasOwn(seeded, "emergency"), false, "a seeded entry states only what its source answered");
 
     const next = reduce(state, classifyDoorState((entry) => entry.states[0].dps === "close"));
-    const stored = next.doorStates.get(DOOR_MINI_DOOR);
+    const stored = next.doorStates.get(DOOR_MINI);
 
     // The report replaces it wholesale, which is how a live reading always wins over an interpretation of hardware flags.
     assert.ok(stored, "the reported door carries the wire's entry");
@@ -1513,7 +1499,7 @@ describe("doorStateChanged", () => {
 
     assert.equal(Object.is(again, state), true, "a door reporting what it already reported changes nothing");
     assert.equal(Object.is(again.doorStates, state.doorStates), true);
-    assert.equal(Object.is(again.doorStates.get(DOOR_MINI_DOOR), state.doorStates.get(DOOR_MINI_DOOR)), true);
+    assert.equal(Object.is(again.doorStates.get(DOOR_MINI), state.doorStates.get(DOOR_MINI)), true);
   });
 
   test("a later report replaces the entry wholesale, so an omitted optional reads as cleared", () => {
@@ -1524,10 +1510,10 @@ describe("doorStateChanged", () => {
      */
     const alarmed = reduce(stateFrom(accessBootstrap2026Fixture), classifyDoorState((entry) => entry.states[0].alarms !== undefined));
 
-    assert.deepEqual(alarmed.doorStates.get(DOOR_MINI_DOOR)?.alarms, [{ type: "force_unlock" }]);
+    assert.deepEqual(alarmed.doorStates.get(DOOR_MINI)?.alarms, [{ type: "force_unlock" }]);
 
     const cleared = reduce(alarmed, classifyDoorState((entry) => (entry.states[0].alarms === undefined) && (entry.states[0].lock === "unlocked")));
-    const stored = present(cleared.doorStates.get(DOOR_MINI_DOOR), "the Door Mini's cleared door state");
+    const stored = present(cleared.doorStates.get(DOOR_MINI), "the Door Mini's cleared door state");
 
     assert.equal(stored.alarms, undefined, "the omitted optional reads as cleared rather than as unmentioned");
     assert.equal(stored.lock, "unlocked", "and the rest of the entry advanced");
@@ -1540,13 +1526,13 @@ describe("doorStateChanged", () => {
      */
     const reported = reduce(stateFrom(accessBootstrap2026Fixture), classifyDoorState((entry) => entry.states[0].dps === "close"));
 
-    assert.ok(reported.doorStates.get(DOOR_MINI_DOOR)?.emergency, "the full report established the members only a report carries");
+    assert.ok(reported.doorStates.get(DOOR_MINI)?.emergency, "the full report established the members only a report carries");
 
     const sparse: AccessTypedEvent = { device: { id: MINI_ID, payload: {} }, eventName: "access.data.v2.device.update", kind: "doorStateChanged",
-      states: [{ "location_id": DOOR_MINI_DOOR, "lock": "unlocked" }] };
-    const stored = reduce(reported, sparse).doorStates.get(DOOR_MINI_DOOR);
+      states: [{ "location_id": DOOR_MINI, "lock": "unlocked" }] };
+    const stored = reduce(reported, sparse).doorStates.get(DOOR_MINI);
 
-    assert.deepEqual(stored, { "location_id": DOOR_MINI_DOOR, "lock": "unlocked" });
+    assert.deepEqual(stored, { "location_id": DOOR_MINI, "lock": "unlocked" });
   });
 
   test("the device facet advances the device record it names", () => {
@@ -1574,18 +1560,18 @@ describe("doorStateChanged", () => {
   test("the location facet advances the door record it names", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = present(state.doors.get(DOOR_MINI_DOOR), "the Door Mini's stored door");
+    const stored = present(state.doors.get(DOOR_MINI), "the Door Mini's stored door");
 
     const event = classifyDoorState((entry) => entry.location !== undefined);
 
     assert.equal(event.kind, "doorStateChanged");
     assert.ok(event.location, "this specimen is the location carrier");
 
-    const merged = present(reduce(state, event).doors.get(DOOR_MINI_DOOR), "the Door Mini's merged door");
+    const merged = present(reduce(state, event).doors.get(DOOR_MINI), "the Door Mini's merged door");
 
     assert.equal(merged.name, "Test Name 22");
     assert.equal(merged.location_type, "door");
-    assert.equal(merged.unique_id, DOOR_MINI_DOOR);
+    assert.equal(merged.unique_id, DOOR_MINI);
     assert.equal(merged.full_name, stored.full_name, "a field the facet never mentions is untouched");
     assert.equal(Object.hasOwn(merged, "device_groups"), false, "and the pruned collection is not re-introduced");
   });
@@ -1595,7 +1581,7 @@ describe("doorStateChanged", () => {
     /* Two doors reporting state. Both reports carry an empty device facet, which merges nothing, so the only thing this state differs from the document by is the
      * door state itself - which is what lets the no-drift assertion below be about pruning rather than about the facet's own merge being reverted.
      */
-    const state = reduce(reduce(stateFrom(accessBootstrap2026Fixture), syntheticDoorState(DOOR_MINI_DOOR)), syntheticDoorState(DOOR_HUB));
+    const state = reduce(reduce(stateFrom(accessBootstrap2026Fixture), syntheticDoorState(DOOR_MINI)), syntheticDoorState(DOOR_HUB));
 
     // Three doors on this document, each carrying an entry: two that reported and one the hardware flags alone established.
     assert.equal(state.doorStates.size, 3);
@@ -1612,11 +1598,11 @@ describe("doorStateChanged", () => {
     const reduced = structuredClone(accessBootstrap2026Fixture);
     const floor = present(reduced.floors?.[0], "the first floor");
 
-    floor.doors = (floor.doors ?? []).filter((door) => door.unique_id !== DOOR_MINI_DOOR);
+    floor.doors = (floor.doors ?? []).filter((door) => door.unique_id !== DOOR_MINI);
 
     const pruned = reduce(state, bootstrapEvent(reduced));
 
-    assert.equal(pruned.doorStates.has(DOOR_MINI_DOOR), false, "the departed door's state left with it");
+    assert.equal(pruned.doorStates.has(DOOR_MINI), false, "the departed door's state left with it");
     assert.equal(pruned.doorStates.size, 2);
     assert.equal(Object.is(pruned.doorStates.get(DOOR_HUB), survivor), true, "the surviving entry keeps its exact reference");
   });

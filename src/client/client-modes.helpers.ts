@@ -13,6 +13,7 @@ import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../off
 import { AccessClient } from "./client.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { ConnectOptions } from "./client.ts";
+import { FLOOR_2026 } from "../protocol/capture.helpers.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import type { Nullable } from "../types/index.ts";
 import { MockAgent as UndiciMockAgent } from "undici";
@@ -29,12 +30,6 @@ export const SELF_PATH = "/api/users/self";
 export const CONTROLLER_PATH = "/proxy/access/api/v2/access/info";
 export const TOPOLOGY_PATH = "/proxy/access/api/v2/devices/topology4";
 
-// Named entries from the 2026 topology document, which is what the credential path seeds from - and, under the same identities, from the official listings the
-// token path seeds from.
-export const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
-export const DOOR_MINI = "00000000-0000-0000-0000-00000000000e";
-export const DOOR_ULTRA = "00000000-0000-0000-0000-000000000002";
-
 export const controllerBody = (): string => JSON.stringify({ code: 200, codeS: "SUCCESS", data: accessControllerInfoFixture, error: "", msg: "" });
 export const topologyBody = (): string => JSON.stringify({ code: 200, codeS: "SUCCESS", data: [accessBootstrap2026Fixture], error: "", msg: "" });
 export const selfBody = (): string => JSON.stringify({ scopes: [ "edit:access.device", "view:access.device" ] });
@@ -44,7 +39,7 @@ export const selfBody = (): string => JSON.stringify({ scopes: [ "edit:access.de
  */
 export const officialDoor = (options: { id: string; lock?: string; position: string | null }): Record<string, unknown> => ({
 
-  "door_lock_relay_status": options.lock ?? "lock", "door_position_status": options.position, "extras": {}, "floor_id": "00000000-0000-0000-0000-000000000001",
+  "door_lock_relay_status": options.lock ?? "lock", "door_position_status": options.position, "extras": {}, "floor_id": FLOOR_2026,
   "full_name": "Acme HQ - 1F - " + options.id, "id": options.id, "is_bind_hub": true, "name": options.id, "type": "door"
 });
 

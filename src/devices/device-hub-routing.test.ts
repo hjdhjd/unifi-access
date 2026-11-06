@@ -7,8 +7,8 @@
  */
 import { AccessApiError, AccessCapabilityError, AccessDeclinedError } from "../errors.ts";
 import type { AccessOfficialAccessMethods, AccessOfficialDeviceSettings, AccessOfficialDeviceSettingsUpdate } from "../official/devices.ts";
-import { DOORBELL_ID, UAH_ID } from "../protocol/capture.helpers.ts";
-import { DOOR_HUB, DOOR_MINI_DOOR, cameraBootstrap, deviceFixture, intercept } from "./device.helpers.ts";
+import { DOORBELL_ID, DOOR_HUB, DOOR_MINI, UAH_ID } from "../protocol/capture.helpers.ts";
+import { cameraBootstrap, deviceFixture, intercept } from "./device.helpers.ts";
 import { describe, test } from "node:test";
 import { expectAt, present, silentLog } from "homebridge-plugin-utils/testing";
 import { ACCESS_METHODS } from "../protocol/vocabulary.ts";
@@ -286,11 +286,11 @@ describe("the hub commands under routing", () => {
     const fixture = routedFixture();
     const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
-    assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
-    await hub.unlock({ actor: { id: "a1", name: "Nightly Automation" }, doorId: DOOR_MINI_DOOR, entryMethod: "out" });
+    assert.notEqual(DOOR_MINI, hub.doorId, "the target names a different door from the one this handle resolves for itself");
+    await hub.unlock({ actor: { id: "a1", name: "Nightly Automation" }, doorId: DOOR_MINI, entryMethod: "out" });
 
     assert.deepEqual(fixture.official.unlocks,
-      [{ call: {}, id: DOOR_MINI_DOOR, opts: { actor: { id: "a1", name: "Nightly Automation" }, entryMethod: "out" } }]);
+      [{ call: {}, id: DOOR_MINI, opts: { actor: { id: "a1", name: "Nightly Automation" }, entryMethod: "out" } }]);
     assert.equal(fixture.captured.length, 0, "nothing went out on the direct path");
   });
 
@@ -299,10 +299,10 @@ describe("the hub commands under routing", () => {
     const fixture = routedFixture({ override: "official-only" });
     const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
-    assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
-    await hub.close({ doorId: DOOR_MINI_DOOR });
+    assert.notEqual(DOOR_MINI, hub.doorId, "the target names a different door from the one this handle resolves for itself");
+    await hub.close({ doorId: DOOR_MINI });
 
-    assert.deepEqual(fixture.official.unlocks, [{ call: {}, id: DOOR_MINI_DOOR, opts: { controlCmd: "close" } }]);
+    assert.deepEqual(fixture.official.unlocks, [{ call: {}, id: DOOR_MINI, opts: { controlCmd: "close" } }]);
     assert.equal(fixture.captured.length, 0, "nothing went out on the direct path");
   });
 
@@ -311,10 +311,10 @@ describe("the hub commands under routing", () => {
     const fixture = routedFixture();
     const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
-    assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
-    await hub.stop({ doorId: DOOR_MINI_DOOR });
+    assert.notEqual(DOOR_MINI, hub.doorId, "the target names a different door from the one this handle resolves for itself");
+    await hub.stop({ doorId: DOOR_MINI });
 
-    assert.deepEqual(fixture.official.unlocks, [{ call: {}, id: DOOR_MINI_DOOR, opts: { controlCmd: "stop" } }]);
+    assert.deepEqual(fixture.official.unlocks, [{ call: {}, id: DOOR_MINI, opts: { controlCmd: "stop" } }]);
     assert.equal(fixture.captured.length, 0, "a stop reaches the official path or nothing at all");
   });
 
@@ -326,13 +326,13 @@ describe("the hub commands under routing", () => {
     const fixture = routedFixture();
     const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
-    assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
+    assert.notEqual(DOOR_MINI, hub.doorId, "the target names a different door from the one this handle resolves for itself");
 
-    await hub.setLockRule({ interval: 2, type: "custom" }, { doorId: DOOR_MINI_DOOR });
-    await hub.setLockRule({ type: "lock_now" }, { doorId: DOOR_MINI_DOOR });
+    await hub.setLockRule({ interval: 2, type: "custom" }, { doorId: DOOR_MINI });
+    await hub.setLockRule({ type: "lock_now" }, { doorId: DOOR_MINI });
 
     assert.deepEqual(fixture.official.lockRules,
-      [ { call: {}, id: DOOR_MINI_DOOR, rule: { interval: 2, type: "custom" } }, { call: {}, id: DOOR_MINI_DOOR, rule: { type: "lock_now" } } ]);
+      [ { call: {}, id: DOOR_MINI, rule: { interval: 2, type: "custom" } }, { call: {}, id: DOOR_MINI, rule: { type: "lock_now" } } ]);
     assert.equal(fixture.captured.length, 0, "and the device-keyed direct resource was never reached");
   });
 

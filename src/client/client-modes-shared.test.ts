@@ -4,14 +4,14 @@
  */
 import { AccessAbortedError, AccessConfigurationError } from "../errors.ts";
 import type { AccessConnectionTransitionPayload, AccessEventsClosedPayload, AccessHttpRequestStartPayload, AccessStoreDispatchPayload } from "../diagnostics.ts";
-import { DEVICES_PATH, DOORS_PATH, DOOR_HUB, DOOR_MINI, HOST, TOPOLOGY_PATH, connectCapturing, devicesBody, doorsBody, interceptCredentialPass, interceptOfficialPass,
-  mockController, officialDoor, topologyBody } from "./client-modes.helpers.ts";
+import { DEVICES_PATH, DOORS_PATH, HOST, TOPOLOGY_PATH, connectCapturing, devicesBody, doorsBody, interceptCredentialPass, interceptOfficialPass, mockController,
+  officialDoor, topologyBody } from "./client-modes.helpers.ts";
+import { DOOR_HUB, DOOR_MINI, READER_ID } from "../protocol/capture.helpers.ts";
 import { TestClock, capturingLog, present, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { AccessClient } from "./client.ts";
 import type { ConnectOptions } from "./client.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
-import { READER_ID } from "../protocol/capture.helpers.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { subscribeTo } from "../testing.helpers.ts";

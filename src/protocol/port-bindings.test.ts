@@ -5,32 +5,14 @@
  * actually issues; and every absence assertion asks whether the member is there at all rather than comparing it to undefined, because absent and present-but-undefined
  * are what the record shape keeps apart.
  */
-import type { AccessPortBinding, AccessPortBindingSource } from "./port-bindings.ts";
-import { EAH_ID, READER_ID, UAH_ID, ULTRA_ID, captured } from "./capture.helpers.ts";
+import { EAH_BINDINGS, EAH_ID, READER_ID, UAH_ID, ULTRA_BINDING, ULTRA_ID, captured } from "./capture.helpers.ts";
 import { describe, test } from "node:test";
 import { firstPortBinding, portExtensionsOf, readPortBindings } from "./port-bindings.ts";
 import type { AccessDeviceConfig } from "../types/index.ts";
+import type { AccessPortBindingSource } from "./port-bindings.ts";
 import { accessBootstrapEahFixture } from "./topology.fixtures.ts";
 import assert from "node:assert/strict";
 import { expectAt } from "homebridge-plugin-utils/testing";
-
-// The UA Ultra's one binding, as the 2026 document delivers it: its single port, the door that port serves, and the name the controller wrote beside it.
-const ULTRA_BINDING: AccessPortBinding = { doorId: "00000000-0000-0000-0000-000000000002", name: "Test Name 4", port: "port1" };
-
-/* The Enterprise Access Hub's eight bindings, in the document's own delivery order. The ports are deliberately out of numeric order because the controller
- * delivered them that way, and delivered order is what every read here answers in.
- */
-const EAH_BINDINGS: readonly AccessPortBinding[] = [
-
-  { doorId: "00000000-0000-0000-0000-000000000013", name: "Test Name 29", port: "port2" },
-  { doorId: "00000000-0000-0000-0000-000000000027", name: "Test Name 54", port: "port6" },
-  { doorId: "00000000-0000-0000-0000-000000000014", name: "Test Name 31", port: "port3" },
-  { doorId: "00000000-0000-0000-0000-000000000016", name: "Test Name 35", port: "port8" },
-  { doorId: "00000000-0000-0000-0000-000000000028", name: "Test Name 58", port: "port1" },
-  { doorId: "00000000-0000-0000-0000-000000000015", name: "Test Name 33", port: "port4" },
-  { doorId: "00000000-0000-0000-0000-000000000025", name: "Test Name 50", port: "port7" },
-  { doorId: "00000000-0000-0000-0000-000000000017", name: "Test Name 37", port: "port5" }
-];
 
 /* The port extensions of one captured UA Gate update, reduced to the rows the keys are read from, every identity a stand-in. The first port names its relay before its
  * sensor and the second the other way round, as the controller delivered them, so a read going by position would fail here.

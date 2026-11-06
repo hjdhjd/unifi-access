@@ -13,12 +13,13 @@
  *
  * No real socket anywhere in this file: net connect is disabled on every agent the rig builds, so a request that escaped the mock would fail rather than leave.
  */
-import { CONTROLLER_PATH, DEVICES_PATH, DOORS_PATH, DOOR_MINI, HOST, LOGIN_PATH, SELF_PATH, TOPOLOGY_PATH, connectCapturing, connectCapturingWithDispatch,
-  devicesBody, doorsBody, interceptCredentialPass, interceptOfficialPass, mockController, officialDoor } from "./client-modes.helpers.ts";
+import { CONTROLLER_PATH, DEVICES_PATH, DOORS_PATH, HOST, LOGIN_PATH, SELF_PATH, TOPOLOGY_PATH, connectCapturing, connectCapturingWithDispatch, devicesBody, doorsBody,
+  interceptCredentialPass, interceptOfficialPass, mockController, officialDoor } from "./client-modes.helpers.ts";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import { capturingLog, logCount } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { mockErrors, request } from "undici";
+import { DOOR_MINI } from "../protocol/capture.helpers.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";

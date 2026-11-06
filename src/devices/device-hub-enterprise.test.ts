@@ -3,10 +3,10 @@
  * device-hub-enterprise.test.ts: Tests for the Enterprise Access Hub port matrix - each port surfacing as its own handle while the whole-hub record stays out of
  * the hub views, the door a given port addresses, and the uplink each synthesized port and the hardware carrying it report.
  */
-import { EAH_DOOR_2, EAH_PORT_2, EAH_PORT_3, deviceFixture, doorStateEvent, intercept } from "./device.helpers.ts";
-import { EAH_ID, MINI_ID, READER_ID, UAH_ID } from "../protocol/capture.helpers.ts";
+import { EAH_DOOR_2, EAH_GARAGE_HUB_ID, EAH_ID, EAH_PORT_2, EAH_PORT_3, MINI_ID, READER_ID, UAH_ID } from "../protocol/capture.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
+import { deviceFixture, doorStateEvent, intercept } from "./device.helpers.ts";
 import { expectAt, present, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 
@@ -106,7 +106,7 @@ describe("the Enterprise Access Hub port matrix", () => {
     await settle();
 
     // A device that is not this port's hub changes: the port's own record is rebuilt from an unchanged hub record, so its observer must stay asleep.
-    store.dispatch({ eventName: "access.data.device.update", id: "aabbcc000008", kind: "deviceChanged", payload: { "ip": "172.16.9.9" } });
+    store.dispatch({ eventName: "access.data.device.update", id: EAH_GARAGE_HUB_ID, kind: "deviceChanged", payload: { "ip": "172.16.9.9" } });
     await settle();
     assert.equal(seen.length, 0, "an unrelated device must not wake a port handle");
 

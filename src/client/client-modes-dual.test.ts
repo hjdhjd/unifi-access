@@ -3,11 +3,11 @@
  * client-modes-dual.test.ts: Tests for what a client holding both credentials and a token can reach - which endpoints each half touches, which surface answers a
  * given read, and what it tears down.
  */
-import { CONTROLLER_PATH, DEVICES_PATH, DOORS_PATH, DOOR_HUB, DOOR_MINI, TOPOLOGY_PATH, connectCapturing, connectCapturingWithDispatch, controllerBody, devicesBody,
-  doorsBody, identityEnterpriseBody, interceptCredentialPass, mockController, officialDoor, topologyBody } from "./client-modes.helpers.ts";
+import { CONTROLLER_PATH, DEVICES_PATH, DOORS_PATH, TOPOLOGY_PATH, connectCapturing, connectCapturingWithDispatch, controllerBody, devicesBody, doorsBody,
+  identityEnterpriseBody, interceptCredentialPass, mockController, officialDoor, topologyBody } from "./client-modes.helpers.ts";
+import { DOOR_HUB, DOOR_MINI, UAH_ID } from "../protocol/capture.helpers.ts";
 import { capturingLog, loggedAt, present } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
-import { UAH_ID } from "../protocol/capture.helpers.ts";
 import assert from "node:assert/strict";
 
 describe("a dual-mode client", () => {

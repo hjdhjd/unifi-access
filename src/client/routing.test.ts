@@ -9,8 +9,8 @@ import { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizatio
 import type { AccessCapabilities, AccessOfficialRoutingSurface } from "./routing.ts";
 import type { AccessOfficialAccessMethods, AccessOfficialDeviceSettings, AccessOfficialDeviceSettingsUpdate } from "../official/devices.ts";
 import type { CapturingLog, TestLogEntry } from "homebridge-plugin-utils/testing";
+import { DOOR_HUB, DOOR_MINI, MINI_ID, UAH_ID } from "../protocol/capture.helpers.ts";
 import { HOST, officialPath } from "../official/domain.helpers.ts";
-import { MINI_ID, UAH_ID } from "../protocol/capture.helpers.ts";
 import { TestClock, capturingLog, loggedAt, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { officialEndpoint, officialHost } from "../official/endpoints.ts";
@@ -24,8 +24,6 @@ import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
 import { refuseRefresh } from "../testing.helpers.ts";
-
-const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
 
 // The transport's own sentence for each refusal of the token, which the closure's warning carries as it stands.
 const TOKEN_REJECTED = "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.";
@@ -612,7 +610,7 @@ describe("the per-device firmware floor", () => {
     } });
 
     await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "hub"), doorId: DOOR_HUB });
-    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "mini"), doorId: "00000000-0000-0000-0000-00000000000e" });
+    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "mini"), doorId: DOOR_MINI });
 
     assert.equal(attempts, 2, "one device's floor says nothing about another's");
   });
@@ -677,7 +675,7 @@ describe("the session revocation latch", () => {
     } });
 
     await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
-    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: DOOR_MINI });
 
     // Unlike the floor, this is about the session rather than a device, so it holds for every device from the moment it is seen.
     assert.equal(attempts, 1);
@@ -703,7 +701,7 @@ describe("the session revocation latch", () => {
     } });
 
     await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
-    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: DOOR_MINI });
 
     assert.equal(attempts, 1, "the rejected token is asked once, and the latch answers every command after it");
     assert.deepEqual(calls.direct, [ "first", "second" ], "each unlock completed on the direct path");
@@ -729,7 +727,7 @@ describe("the session revocation latch", () => {
     } });
 
     await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
-    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: DOOR_MINI });
 
     assert.equal(attempts, 1, "the refused permission is asked once, and the latch answers every door command after it");
     assert.deepEqual(calls.direct, [ "first", "second" ], "each unlock completed on the direct path");
@@ -759,7 +757,7 @@ describe("the session revocation latch", () => {
       // eslint-disable-next-line no-await-in-loop
       await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
       // eslint-disable-next-line no-await-in-loop
-      await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+      await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: DOOR_MINI });
 
       assert.equal(attempts, 1, code + ": the refused token is asked once, and the latch answers every command after it");
       assert.deepEqual(calls.direct, [ "first", "second" ], code + ": each unlock completed on the direct path");
@@ -783,7 +781,7 @@ describe("the session revocation latch", () => {
     } });
 
     await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
-    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: DOOR_MINI });
 
     assert.equal(attempts, 1, "the refused permission is asked once, and the latch answers every door command after it");
     assert.deepEqual(calls.direct, [ "first", "second" ], "each unlock completed on the direct path");
@@ -814,7 +812,7 @@ describe("the session revocation latch", () => {
 
       // eslint-disable-next-line no-await-in-loop
       await Promise.all([ service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB }),
-        service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" }) ]);
+        service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: DOOR_MINI }) ]);
 
       assert.equal(attempts, 2, refusal.label + ": each command reached the official path before any refusal arrived");
       assert.deepEqual(calls.direct, [ "first", "second" ], refusal.label + ": each command completed on the direct path");
@@ -842,7 +840,7 @@ describe("the session revocation latch", () => {
 
       // eslint-disable-next-line no-await-in-loop
       await Promise.all([ service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB }),
-        service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" }) ]);
+        service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: DOOR_MINI }) ]);
 
       assert.equal(attempts, 2, refusal.name + ": each command reached the official path before any refusal arrived");
       assert.deepEqual(calls.direct, [ "first", "second" ], refusal.name + ": each command completed on the direct path");

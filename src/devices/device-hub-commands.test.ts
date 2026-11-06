@@ -4,8 +4,8 @@
  * reads before resolving. Every command test asserts the wire shape through an intercepted request rather than through the projection's own return value, so what
  * is being checked is what the controller would actually receive.
  */
-import { DOOR_HUB, DOOR_MINI_DOOR, REFUSED, deviceFixture, intercept } from "./device.helpers.ts";
-import { READER_ID, UAH_ID } from "../protocol/capture.helpers.ts";
+import { DOOR_HUB, DOOR_MINI, READER_ID, UAH_ID } from "../protocol/capture.helpers.ts";
+import { REFUSED, deviceFixture, intercept } from "./device.helpers.ts";
 import { describe, test } from "node:test";
 import { AccessProtocolError } from "../errors.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
@@ -278,14 +278,14 @@ describe("the hub commands", () => {
      */
     const fixture = deviceFixture(accessBootstrap2026Fixture);
 
-    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_MINI_DOOR + "/unlock" });
+    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_MINI + "/unlock" });
 
     const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
-    assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
-    await hub.unlock({ doorId: DOOR_MINI_DOOR });
+    assert.notEqual(DOOR_MINI, hub.doorId, "the target names a different door from the one this handle resolves for itself");
+    await hub.unlock({ doorId: DOOR_MINI });
 
-    assert.equal(fixture.captured[0]?.path, "/proxy/access/api/v2/location/" + DOOR_MINI_DOOR + "/unlock");
+    assert.equal(fixture.captured[0]?.path, "/proxy/access/api/v2/location/" + DOOR_MINI + "/unlock");
     assert.equal(String(fixture.captured[0].body), "{}", "and the unlock's own body is what it always is");
   });
 
@@ -293,14 +293,14 @@ describe("the hub commands", () => {
 
     const fixture = deviceFixture(accessBootstrap2026Fixture);
 
-    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_MINI_DOOR + "/unlock?control_cmd=close" });
+    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_MINI + "/unlock?control_cmd=close" });
 
     const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
-    assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
-    await hub.close({ doorId: DOOR_MINI_DOOR });
+    assert.notEqual(DOOR_MINI, hub.doorId, "the target names a different door from the one this handle resolves for itself");
+    await hub.close({ doorId: DOOR_MINI });
 
-    assert.equal(fixture.captured[0]?.path, "/proxy/access/api/v2/location/" + DOOR_MINI_DOOR + "/unlock?control_cmd=close");
+    assert.equal(fixture.captured[0]?.path, "/proxy/access/api/v2/location/" + DOOR_MINI + "/unlock?control_cmd=close");
     assert.equal(fixture.captured[0].body, undefined, "and the body-absent shape of a close is untouched by naming a door");
   });
 
@@ -330,8 +330,8 @@ describe("the hub commands", () => {
     const fixture = deviceFixture(accessBootstrap2026Fixture);
     const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
-    assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
-    await assert.rejects(async () => hub.setLockRule({ interval: 2, type: "custom" }, { doorId: DOOR_MINI_DOOR }), {
+    assert.notEqual(DOOR_MINI, hub.doorId, "the target names a different door from the one this handle resolves for itself");
+    await assert.rejects(async () => hub.setLockRule({ interval: 2, type: "custom" }, { doorId: DOOR_MINI }), {
 
       // The refusal names the door the rule was aimed at.
       message: /the custom lock rule for door "Test Name 23"/,
@@ -352,10 +352,10 @@ describe("the hub commands", () => {
     fixture.store.dispatch({ eventName: "access.data.v2.device.delete", id: UAH_ID, kind: "deviceRemoved" });
 
     const commands: { issue: () => Promise<void>; verb: string }[] = [
-      { issue: async (): Promise<void> => hub.unlock({ doorId: DOOR_MINI_DOOR }), verb: "unlock" },
-      { issue: async (): Promise<void> => hub.close({ doorId: DOOR_MINI_DOOR }), verb: "close" },
-      { issue: async (): Promise<void> => hub.stop({ doorId: DOOR_MINI_DOOR }), verb: "stop" },
-      { issue: async (): Promise<void> => hub.setLockRule({ type: "reset" }, { doorId: DOOR_MINI_DOOR }), verb: "setLockRule" }
+      { issue: async (): Promise<void> => hub.unlock({ doorId: DOOR_MINI }), verb: "unlock" },
+      { issue: async (): Promise<void> => hub.close({ doorId: DOOR_MINI }), verb: "close" },
+      { issue: async (): Promise<void> => hub.stop({ doorId: DOOR_MINI }), verb: "stop" },
+      { issue: async (): Promise<void> => hub.setLockRule({ type: "reset" }, { doorId: DOOR_MINI }), verb: "setLockRule" }
     ];
 
     for(const command of commands) {
@@ -365,7 +365,7 @@ describe("the hub commands", () => {
     }
 
     // A caller's own bad argument still comes first of all, ahead of that read: a malformed interval is a TypeError whether or not the record is still there.
-    await assert.rejects(async () => hub.setLockRule({ interval: 0.5, type: "custom" }, { doorId: DOOR_MINI_DOOR }), TypeError);
+    await assert.rejects(async () => hub.setLockRule({ interval: 0.5, type: "custom" }, { doorId: DOOR_MINI }), TypeError);
 
     assert.equal(fixture.captured.length, 0, "and none of it reached a transport");
   });

@@ -6,7 +6,9 @@
  */
 import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload, AccessDeviceEntryConfig } from "../types/index.ts";
 import type { AccessState, AccessStateDevice } from "../protocol/reducer.ts";
-import { DOORBELL_ID, EAH_ID, EAH_READER_ID, G2_MINI_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID, classify, findPacket } from "../protocol/capture.helpers.ts";
+import { DOORBELL_ID, DOOR_HUB, DOOR_MINI, DOOR_ULTRA, EAH_BINDINGS, EAH_DOOR_2, EAH_DOOR_FRONT, EAH_DOOR_GARAGE, EAH_DOOR_NORTHEAST, EAH_DOOR_NORTHWEST,
+  EAH_GARAGE_HUB_ID, EAH_GARAGE_READER_ID, EAH_ID, EAH_NORTHEAST_READER_ID, EAH_NORTHWEST_READER_ID, EAH_PORT_2, EAH_PORT_3, EAH_READER_ID, EAH_ROOT, FLOOR_2026,
+  G2_MINI_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID, classify, findPacket } from "../protocol/capture.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { applyBootstrap, createInitialState, reduce } from "../protocol/reducer.ts";
 import { deviceAccessMethodStates as barrelDeviceAccessMethodStates, deviceDisplayName as barrelDeviceDisplayName, isCamera as barrelIsCamera,
@@ -20,33 +22,11 @@ import { deviceAccessMethodStates, deviceDisplayName, isCamera, isEnterpriseHubR
   selectController, selectControllerName, selectControllerUptime, selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState,
   terminalInput } from "./selectors.ts";
 import { ACCESS_TERMINAL_INPUTS } from "../protocol/terminal-inputs.ts";
-import type { AccessPortBinding } from "../protocol/port-bindings.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
 import { cameraBootstrap } from "../devices/device.helpers.ts";
 import { present } from "homebridge-plugin-utils/testing";
 import { topologyDevices } from "../testing.helpers.ts";
-
-// Named entries from the 2026 document: the doors named below and the floor they sit on.
-const DOOR_ULTRA = "00000000-0000-0000-0000-000000000002";
-const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
-const DOOR_HUB_MINI = "00000000-0000-0000-0000-00000000000e";
-const FLOOR_2026 = "00000000-0000-0000-0000-000000000001";
-
-// Named entries from the EAH document: the doors named below, on one floor, with an Enterprise Access Hub the building hosts directly and one door served by its own hub.
-const EAH_ROOT = "00000000-0000-0000-0000-000000000011";
-const EAH_DOOR_2 = "00000000-0000-0000-0000-000000000013";
-const EAH_DOOR_GARAGE = "00000000-0000-0000-0000-000000000024";
-const EAH_DOOR_FRONT = "00000000-0000-0000-0000-000000000017";
-const EAH_DOOR_NORTHEAST = "00000000-0000-0000-0000-000000000025";
-const EAH_DOOR_NORTHWEST = "00000000-0000-0000-0000-000000000027";
-const EAH_GARAGE_HUB = "aabbcc000008";
-const EAH_GARAGE_READER = "aabbcc000009";
-const EAH_NORTHEAST_READER = "aabbcc00000a";
-const EAH_NORTHWEST_READER = "aabbcc00000c";
-
-// The port-2 extension of the Enterprise Access Hub, the named access point the per-field mapping is asserted against.
-const EAH_PORT_2_EXTENSION = "00000000-0000-0000-0000-00000000002a";
 
 // A second Enterprise Access Hub and its one port, synthesized for the isolation case: no captured topology carries two of them, and the question of whether one
 // hub's expansion is cached independently of another's needs two.
@@ -54,22 +34,9 @@ const SECOND_EAH_HUB = "02ffee00b004";
 const SECOND_EAH_PORT = "00000000-0000-4000-8000-000000000002";
 
 // Every extension identity the hub carries, in the order the document lists them, which is the order the expansion produces.
-const EAH_EXTENSIONS = [ "00000000-0000-0000-0000-00000000002a", "00000000-0000-0000-0000-00000000002b", "00000000-0000-0000-0000-00000000002c",
+const EAH_EXTENSIONS = [ EAH_PORT_2, EAH_PORT_3, "00000000-0000-0000-0000-00000000002c",
   "00000000-0000-0000-0000-00000000002d", "00000000-0000-0000-0000-00000000002e", "00000000-0000-0000-0000-00000000002f",
   "00000000-0000-0000-0000-000000000030", "00000000-0000-0000-0000-000000000031" ];
-
-// The door each of those ports is bound to, with the port it belongs to and the name the controller wrote beside it, in that same delivered order.
-const EAH_BINDINGS: readonly AccessPortBinding[] = [
-
-  { doorId: EAH_DOOR_2, name: "Test Name 29", port: "port2" },
-  { doorId: EAH_DOOR_NORTHWEST, name: "Test Name 54", port: "port6" },
-  { doorId: "00000000-0000-0000-0000-000000000014", name: "Test Name 31", port: "port3" },
-  { doorId: "00000000-0000-0000-0000-000000000016", name: "Test Name 35", port: "port8" },
-  { doorId: "00000000-0000-0000-0000-000000000028", name: "Test Name 58", port: "port1" },
-  { doorId: "00000000-0000-0000-0000-000000000015", name: "Test Name 33", port: "port4" },
-  { doorId: EAH_DOOR_NORTHEAST, name: "Test Name 50", port: "port7" },
-  { doorId: EAH_DOOR_FRONT, name: "Test Name 37", port: "port5" }
-];
 
 // The identity carried by the record that arrives without a capabilities array. No captured document holds a record in that shape, so it is synthesized below under
 // an identity of its own, where it can never be confused with a device a fixture supplied.
@@ -633,9 +600,9 @@ describe("selectDevicesByType", () => {
     const byType = selectDevicesByType(stateFrom(accessBootstrapEahFixture));
 
     assert.deepEqual(idsOf(byType.get("UAH-Ent")), [EAH_ID]);
-    assert.deepEqual(idsOf(byType.get("UAH")), [EAH_GARAGE_HUB]);
-    assert.deepEqual(idsOf(byType.get("UA-G2-PRO")), [ EAH_READER_ID, EAH_NORTHEAST_READER ]);
-    assert.deepEqual(idsOf(byType.get("UA-G2-MINI")), [ EAH_GARAGE_READER, EAH_NORTHWEST_READER ]);
+    assert.deepEqual(idsOf(byType.get("UAH")), [EAH_GARAGE_HUB_ID]);
+    assert.deepEqual(idsOf(byType.get("UA-G2-PRO")), [ EAH_READER_ID, EAH_NORTHEAST_READER_ID ]);
+    assert.deepEqual(idsOf(byType.get("UA-G2-MINI")), [ EAH_GARAGE_READER_ID, EAH_NORTHWEST_READER_ID ]);
   });
 
   test("returns the same reference on repeat reads and across a change it does not depend on", () => {
@@ -673,7 +640,7 @@ describe("selectHubs", () => {
 
   test("selects both of the EAH document's hubs and neither of its readers", () => {
 
-    assert.deepEqual(idsOf(selectHubs(stateFrom(accessBootstrapEahFixture))), [ EAH_ID, EAH_GARAGE_HUB ]);
+    assert.deepEqual(idsOf(selectHubs(stateFrom(accessBootstrapEahFixture))), [ EAH_ID, EAH_GARAGE_HUB_ID ]);
   });
 
   test("memoizes on the devices map", () => {
@@ -696,10 +663,10 @@ describe("selectDoorDevices", () => {
 
     const byDoor = selectDoorDevices(stateFrom(accessBootstrap2026Fixture));
 
-    assert.deepEqual([...byDoor.keys()], [ DOOR_ULTRA, DOOR_HUB, DOOR_HUB_MINI ]);
+    assert.deepEqual([...byDoor.keys()], [ DOOR_ULTRA, DOOR_HUB, DOOR_MINI ]);
     assert.deepEqual(idsOf(byDoor.get(DOOR_ULTRA)), [ULTRA_ID]);
     assert.deepEqual(idsOf(byDoor.get(DOOR_HUB)), [ UAH_ID, READER_ID, G2_MINI_ID ]);
-    assert.deepEqual(idsOf(byDoor.get(DOOR_HUB_MINI)), [MINI_ID]);
+    assert.deepEqual(idsOf(byDoor.get(DOOR_MINI)), [MINI_ID]);
   });
 
   test("lists every EAH door, leaves the hardware-less ones empty, and excludes the building-hosted hub", () => {
@@ -710,9 +677,9 @@ describe("selectDoorDevices", () => {
     assert.equal(byDoor.size, state.doors.size, "every door in the state is a key");
     assert.equal(byDoor.size, 9);
     assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_FRONT)), [EAH_READER_ID]);
-    assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_GARAGE)), [ EAH_GARAGE_HUB, EAH_GARAGE_READER ]);
-    assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_NORTHEAST)), [EAH_NORTHEAST_READER]);
-    assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_NORTHWEST)), [EAH_NORTHWEST_READER]);
+    assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_GARAGE)), [ EAH_GARAGE_HUB_ID, EAH_GARAGE_READER_ID ]);
+    assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_NORTHEAST)), [EAH_NORTHEAST_READER_ID]);
+    assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_NORTHWEST)), [EAH_NORTHWEST_READER_ID]);
     assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_2)), [], "a door with no hardware maps to an empty array rather than being absent");
 
     // The Enterprise Access Hub is hosted by the building, so it belongs to no door and appears in no entry.
@@ -837,7 +804,7 @@ describe("selectAccessPoints", () => {
   test("maps the port-2 access point field by field", () => {
 
     const points = selectAccessPoints(stateFrom(accessBootstrapEahFixture));
-    const port2 = points.find((point) => point.unique_id === EAH_PORT_2_EXTENSION);
+    const port2 = points.find((point) => point.unique_id === EAH_PORT_2);
     const hub = stateFrom(accessBootstrapEahFixture).devices.get(EAH_ID);
 
     assert.ok(port2 && hub, "the port-2 access point and its hub should both be present");
@@ -939,7 +906,7 @@ describe("selectAccessPoints", () => {
     const { display_model: _stripped, ...bare } = hub;
     const stripped = { ...bootstrap, "device_groups": [[bare as AccessDeviceConfig]] };
     const points = selectAccessPoints(applyBootstrap(createInitialState(), stripped));
-    const port2 = points.find((point) => point.unique_id === EAH_PORT_2_EXTENSION);
+    const port2 = points.find((point) => point.unique_id === EAH_PORT_2);
 
     assert.ok(port2, "the port is still expanded");
     assert.equal(Object.hasOwn(port2, "display_model"), false, "a label composed around an unestablished member is not a label");
@@ -995,14 +962,14 @@ describe("selectAccessPoints", () => {
      */
     const state = stateFrom(accessBootstrapEahFixture);
     const before = selectAccessPoints(state);
-    const port2 = before.find((point) => point.unique_id === EAH_PORT_2_EXTENSION);
+    const port2 = before.find((point) => point.unique_id === EAH_PORT_2);
 
     // A reader that has nothing to do with the Enterprise Access Hub changes.
     const touched = reduce(state, deviceChange(EAH_READER_ID, { "ip": "172.16.9.9" }));
     const after = selectAccessPoints(touched);
 
     assert.ok(!Object.is(touched.devices, state.devices), "the unrelated device really did change");
-    assert.ok(Object.is(after.find((point) => point.unique_id === EAH_PORT_2_EXTENSION), port2),
+    assert.ok(Object.is(after.find((point) => point.unique_id === EAH_PORT_2), port2),
       "the port object survives an unrelated device's change by reference");
   });
 
@@ -1026,7 +993,7 @@ describe("selectAccessPoints", () => {
     const state = applyBootstrap(createInitialState(), bootstrap);
     const before = selectAccessPoints(state);
     const siblingBefore = before.find((point) => point.unique_id === SECOND_EAH_PORT);
-    const firstBefore = before.find((point) => point.unique_id === EAH_PORT_2_EXTENSION);
+    const firstBefore = before.find((point) => point.unique_id === EAH_PORT_2);
 
     assert.ok(siblingBefore && firstBefore, "both hubs expanded");
 
@@ -1034,8 +1001,8 @@ describe("selectAccessPoints", () => {
     const touched = reduce(state, deviceChange(EAH_ID, { "ip": "172.16.9.8" }));
     const after = selectAccessPoints(touched);
 
-    assert.ok(!Object.is(after.find((point) => point.unique_id === EAH_PORT_2_EXTENSION), firstBefore), "the changed hub's ports are rebuilt from its new record");
-    assert.equal(after.find((point) => point.unique_id === EAH_PORT_2_EXTENSION)?.ip, "172.16.9.8");
+    assert.ok(!Object.is(after.find((point) => point.unique_id === EAH_PORT_2), firstBefore), "the changed hub's ports are rebuilt from its new record");
+    assert.equal(after.find((point) => point.unique_id === EAH_PORT_2)?.ip, "172.16.9.8");
     assert.ok(Object.is(after.find((point) => point.unique_id === SECOND_EAH_PORT), siblingBefore), "the untouched hub's ports keep their references");
   });
 });
@@ -1065,7 +1032,7 @@ describe("selectDoorStates", () => {
 
     assert.ok(Object.is(before, selectDoorStates(state)), "repeat reads of an unchanged state return the identical map");
 
-    const renamed = reduce(state, locationChange(DOOR_HUB_MINI, "Renamed"));
+    const renamed = reduce(state, locationChange(DOOR_MINI, "Renamed"));
 
     assert.ok(!Object.is(renamed, state), "the rename is a real state change");
     assert.ok(Object.is(before, selectDoorStates(renamed)), "a change that touched no door state leaves the map reference alone");

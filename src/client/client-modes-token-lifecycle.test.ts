@@ -3,7 +3,8 @@
  * client-modes-token-lifecycle.test.ts: Tests for the lifecycle signals a token-only client raises and for the census it re-seeds from when its connection
  * recovers.
  */
-import { DOORS_PATH, DOOR_HUB, DOOR_MINI, HOST, connectCapturing, doorsBody, interceptOfficialPass, mockController, officialDoor } from "./client-modes.helpers.ts";
+import { DOORS_PATH, HOST, connectCapturing, doorsBody, interceptOfficialPass, mockController, officialDoor } from "./client-modes.helpers.ts";
+import { DOOR_HUB, DOOR_MINI } from "../protocol/capture.helpers.ts";
 import { capturingLog, present, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { ACCESS_API_ERROR_LIMIT } from "../settings.ts";

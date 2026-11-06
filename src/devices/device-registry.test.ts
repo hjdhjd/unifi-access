@@ -5,8 +5,7 @@
  * The census rows drive the tier over a store seeded from the official listings rather than from a topology document, in a context holding no transport at all,
  * so a read that reached for the wire would fail loudly rather than pass unnoticed.
  */
-import { DOOR_HUB, deviceFixture } from "./device.helpers.ts";
-import { MINI_ID, READER_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
+import { DOOR_HUB, MINI_ID, READER_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
 import { TestClock, present, silentLog } from "homebridge-plugin-utils/testing";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import { describe, test } from "node:test";
@@ -18,6 +17,7 @@ import { AccessRoutingService } from "../client/routing.ts";
 import { StateStore } from "../state/store.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
+import { deviceFixture } from "./device.helpers.ts";
 import { refuseRefresh } from "../testing.helpers.ts";
 
 describe("the registry's three views", () => {

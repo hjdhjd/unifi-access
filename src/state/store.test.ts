@@ -8,9 +8,9 @@ import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig,
 import type { AccessRefreshDocuments, StateStoreOptions } from "./store.ts";
 import type { AccessState, AccessStateDevice } from "../protocol/reducer.ts";
 import type { CapturingLog, TestLogEntry } from "homebridge-plugin-utils/testing";
+import { DOOR_HUB, FLOOR_2026, UAH_ID, classify, findPacket } from "../protocol/capture.helpers.ts";
 import { StateStore, createStateStore } from "./store.ts";
 import { TestClock, capturingLog, loggedAt, present, settle, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
-import { UAH_ID, classify, findPacket } from "../protocol/capture.helpers.ts";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
 import { refuseRefresh, topologyDevices } from "../testing.helpers.ts";
@@ -18,8 +18,7 @@ import type { AccessTypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
 import { selectHubs } from "./selectors.ts";
 
-// Named entries from the 2026 topology document, so an assertion cites a specific record rather than a number re-derived from the same fixture.
-const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
+// The 2026 topology document's device count, so an assertion cites the document rather than a number re-derived from the same fixture.
 const DEVICE_COUNT_2026 = 5;
 
 // The identity carried by the record that arrives without a capabilities array. No captured document holds a record in that shape, so it is synthesized below under
@@ -715,7 +714,7 @@ describe("StateStore", () => {
       const devices = [{ "alias": "Test alias 13", "capabilities": ["is_hub"], "connected_uah_id": "", "device_type": "UAH", "is_adopted": true, "is_connected": true,
         "is_managed": true, "is_online": true, "location_id": DOOR_HUB, "name": "Test Name 76", "unique_id": UAH_ID }];
       const doors = [{ "full_name": "Test Name 11", "location_type": "door", "name": "Test Name 10", "unique_id": DOOR_HUB,
-        "up_id": "00000000-0000-0000-0000-000000000001" }];
+        "up_id": FLOOR_2026 }];
 
       store.applyCensus({ devices, doorStates: [{ "location_id": DOOR_HUB, "lock": "locked" }], doors });
 
@@ -736,7 +735,7 @@ describe("StateStore", () => {
 
       // A complete census naming one door is what licenses the removal of the other two, which is how the flag's effect is observed rather than merely asserted on.
       store.applyCensus({ devices: [], doorStates: [], doors: [{ "full_name": "Test Name 11", "location_type": "door", "name": "Test Name 10",
-        "unique_id": DOOR_HUB, "up_id": "00000000-0000-0000-0000-000000000001" }] }, { complete: true });
+        "unique_id": DOOR_HUB, "up_id": FLOOR_2026 }] }, { complete: true });
 
       assert.equal(seen.at(-1)?.kind, "censusApplied");
       assert.equal((seen.at(-1) as { complete: boolean }).complete, true);
@@ -809,7 +808,7 @@ describe("StateStore", () => {
       const devices = [{ "alias": "Test alias 13", "capabilities": ["is_hub"], "connected_uah_id": "", "device_type": "UAH", "is_adopted": true,
         "is_connected": true, "is_managed": true, "is_online": true, "location_id": DOOR_HUB, "name": "Test Name 76", "unique_id": UAH_ID }];
       const doors = [{ "full_name": "Test Name 11", "location_type": "door", "name": "Test Name 10", "unique_id": DOOR_HUB,
-        "up_id": "00000000-0000-0000-0000-000000000001" }];
+        "up_id": FLOOR_2026 }];
 
       store.applyCensus({ devices, doorStates: [{ "location_id": DOOR_HUB, "lock": "locked" }], doors });
 

@@ -13,7 +13,6 @@ import { DOORBELL_ID, UAH_ID } from "../protocol/capture.helpers.ts";
 import { TestClock, present, silentLog } from "homebridge-plugin-utils/testing";
 import type { AccessDeviceContext } from "./context.ts";
 import { AccessDeviceRegistry } from "./registry.ts";
-import type { AccessPortBinding } from "../protocol/port-bindings.ts";
 import { AccessRoutingService } from "../client/routing.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
 import type { MockTransport } from "../transport/mock-controller.helpers.ts";
@@ -22,18 +21,6 @@ import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import { accessEventPacketsFixture } from "../protocol/events.fixtures.ts";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
 import { refuseRefresh } from "../testing.helpers.ts";
-
-// Named entries from the 2026 document: the door the single-door hub drives, and the door the UA Hub Door Mini drives.
-export const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
-export const DOOR_MINI_DOOR = "00000000-0000-0000-0000-00000000000e";
-
-// The one binding the single port of the same document's UA Ultra carries, the one device in it whose hardware detects tampering.
-export const ULTRA_BINDING: AccessPortBinding = { doorId: "00000000-0000-0000-0000-000000000002", name: "Test Name 4", port: "port1" };
-
-// Named entries from the 2024 document: two ports of the building-hosted Enterprise Access Hub, and the doors those ports serve.
-export const EAH_PORT_2 = "00000000-0000-0000-0000-00000000002a";
-export const EAH_PORT_3 = "00000000-0000-0000-0000-00000000002b";
-export const EAH_DOOR_2 = "00000000-0000-0000-0000-000000000013";
 
 /* The 2026 document with the captured camera-class record added. No captured topology holds camera-class hardware - the record survives only in the device-update
  * packets the corpus caught - and the store admits only devices a topology document gave it, so the packet's record is seated at root level, as hardware the
