@@ -1071,7 +1071,7 @@ describe("ConnectionMonitor", () => {
       const rig = await harness();
 
       await using monitor = rig.monitor;
-      const { clock, control, streams } = rig;
+      const { control, streams } = rig;
 
       await monitor.opened;
       await settle();
@@ -1081,32 +1081,8 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await settle();
 
-      /* Read the schedule behaviorally: for each expected delay, advancing by one less than it must not release the attempt, and advancing the last millisecond
-       * must. That reads the schedule out of the constants rather than restating it, and it fails loudly if a delay changes.
-       */
-      const expected = [ ...ACCESS_RECOVERY_BACKOFF_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS ];
-      let attempts = control.verifyCalls();
-
-      for(const delay of expected) {
-
-        if(delay > 0) {
-
-          clock.advance(delay - 1);
-
-          // eslint-disable-next-line no-await-in-loop
-          await settle();
-
-          assert.equal(control.verifyCalls(), attempts, "no attempt is made before its scheduled delay of " + String(delay) + " has elapsed");
-        }
-
-        clock.advance(delay > 0 ? 1 : 0);
-
-        // eslint-disable-next-line no-await-in-loop
-        await settle();
-
-        assert.equal(control.verifyCalls(), attempts + 1, "the attempt runs once its delay of " + String(delay) + " has elapsed");
-        attempts += 1;
-      }
+      await assertRecoveryDelays({ delays: [ ...ACCESS_RECOVERY_BACKOFF_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS, ACCESS_RECOVERY_STEADY_INTERVAL_MS ],
+        label: "the staged backoff into the steady floor", rig });
     });
 
     test("a refused identity or privilege, in every spelling, walks the refusal schedule out to its floor", async () => {
