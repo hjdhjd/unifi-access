@@ -4,6 +4,9 @@ dist
 # Ignore npmrc.
 .npmrc
 
+# Ignore the ufa CLI's credentials file.
+ufa.json
+
 # Ignore macOS attribute files.
 .DS_Store
 
