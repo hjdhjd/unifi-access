@@ -17,13 +17,18 @@ import assert from "node:assert/strict";
 import { classifyPacket } from "./events.ts";
 import { topologyDevices } from "../testing.helpers.ts";
 
-// The real hardware the committed captures carry, by identity: a UA Ultra, a UA Hub and one of its readers, a UA Hub Door Mini, and the Enterprise Access Hub of
-// the second document.
+/* The real hardware the committed captures carry, by identity, named once here for every suite: a UA Ultra, a UA Hub with its UA G2 Pro and UA G2 Mini readers,
+ * a UA Hub Door Mini, the Enterprise Access Hub of the second document and a UA G2 Pro reader of that document, and the camera-class doorbell, a UVC G6 Pro Entry,
+ * under the identity the notification corpus reports it by, which no topology document carries.
+ */
 export const ULTRA_ID = "aabbcc000000";
 export const UAH_ID = "aabbcc000001";
 export const READER_ID = "aabbcc000002";
+export const G2_MINI_ID = "aabbcc000003";
 export const MINI_ID = "aabbcc000004";
 export const EAH_ID = "aabbcc000005";
+export const EAH_READER_ID = "aabbcc000006";
+export const DOORBELL_ID = "00000000000000000000000c";
 
 // The port configuration entry a hub names an assignable input terminal's duty in, and the extension it travels on. Both are spelled here rather than imported so
 // that the tests do not agree with the implementation by construction: a helper reaching for the implementation's own names would answer with them whatever they

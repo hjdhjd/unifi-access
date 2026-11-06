@@ -4,13 +4,14 @@
  */
 import { AccessAbortedError, AccessConfigurationError } from "../errors.ts";
 import type { AccessConnectionTransitionPayload, AccessEventsClosedPayload, AccessHttpRequestStartPayload, AccessStoreDispatchPayload } from "../diagnostics.ts";
-import { DEVICES_PATH, DOORS_PATH, DOOR_HUB, DOOR_MINI, HOST, READER_PRO, TOPOLOGY_PATH, connectCapturing, devicesBody, doorsBody, interceptCredentialPass,
-  interceptOfficialPass, mockController, officialDoor, topologyBody } from "./client-modes.helpers.ts";
+import { DEVICES_PATH, DOORS_PATH, DOOR_HUB, DOOR_MINI, HOST, TOPOLOGY_PATH, connectCapturing, devicesBody, doorsBody, interceptCredentialPass, interceptOfficialPass,
+  mockController, officialDoor, topologyBody } from "./client-modes.helpers.ts";
 import { TestClock, capturingLog, present, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { AccessClient } from "./client.ts";
 import type { ConnectOptions } from "./client.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
+import { READER_ID } from "../protocol/capture.helpers.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { subscribeTo } from "../testing.helpers.ts";
@@ -312,13 +313,13 @@ describe("the controller address", () => {
 
     // The URLs a connect never composes: the on-demand topology fetch, the device commands built on the projection's context, and the recovery probe.
     pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());
-    pool.intercept({ method: "PUT", path: "/proxy/access/api/v2/device/" + READER_PRO + "/restart" }).reply(200, COMMAND_SUCCESS);
-    pool.intercept({ method: "PUT", path: "/proxy/access/api/v2/device/" + READER_PRO + "/settings" }).reply(200, COMMAND_SUCCESS);
+    pool.intercept({ method: "PUT", path: "/proxy/access/api/v2/device/" + READER_ID + "/restart" }).reply(200, COMMAND_SUCCESS);
+    pool.intercept({ method: "PUT", path: "/proxy/access/api/v2/device/" + READER_ID + "/settings" }).reply(200, COMMAND_SUCCESS);
     pool.intercept({ method: "GET", path: TOPOLOGY_PATH }).reply(200, topologyBody());
 
     await client.fetchBootstrap();
-    await present(client.device(READER_PRO), "the reader").restart();
-    await present(client.device(READER_PRO), "the reader").setAccessMethod("nfc", false);
+    await present(client.device(READER_ID), "the reader").restart();
+    await present(client.device(READER_ID), "the reader").setAccessMethod("nfc", false);
     await client.connection.verify();
 
     agent.assertNoPendingInterceptors();

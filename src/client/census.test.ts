@@ -4,6 +4,7 @@
  * each one produces: which members it carries, which it leaves absent, and that the identity it hands the state is the identity the topology addresses the same
  * hardware by. That last group runs both fixture corpora against each other, which is the only way to establish that the two censuses describe one controller.
  */
+import { MINI_ID, READER_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import { describe, test } from "node:test";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "./census.ts";
@@ -14,11 +15,7 @@ import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
 import { topologyDevices } from "../testing.helpers.ts";
 
-// Named entries from the captured listing: the hub that describes itself, the reader attached to it, and the doors the groups are keyed by.
-const ULTRA = "aabbcc000000";
-const HUB = "aabbcc000001";
-const READER_PRO = "aabbcc000002";
-const DOOR_MINI_HW = "aabbcc000004";
+// Named entries from the captured listing: the door and the floor its groups are keyed by.
 const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
 const FLOOR = "00000000-0000-0000-0000-000000000001";
 
@@ -54,10 +51,10 @@ describe("officialDeviceRecord", () => {
     /* The whole key set rather than a few members, because what this projection leaves ABSENT is as much of its contract as what it carries: a consumer's fallback
      * handling rests on a member being missing rather than on it being present and empty.
      */
-    assert.deepEqual(officialDeviceRecord(listed(HUB)), {
+    assert.deepEqual(officialDeviceRecord(listed(UAH_ID)), {
 
       "alias": "Test alias 13",
-      "capabilities": listed(HUB).capabilities,
+      "capabilities": listed(UAH_ID).capabilities,
       "connected_uah_id": "",
       "device_type": "UAH",
       "is_adopted": true,
@@ -67,17 +64,17 @@ describe("officialDeviceRecord", () => {
       "location_id": DOOR_HUB,
       "mac": "AABBCC000001",
       "name": "Test Name 76",
-      "unique_id": HUB
+      "unique_id": UAH_ID
     });
   });
 
   test("projects a reader the same way, carrying the hub it names and its own empty alias", () => {
 
-    assert.deepEqual(officialDeviceRecord(listed(READER_PRO)), {
+    assert.deepEqual(officialDeviceRecord(listed(READER_ID)), {
 
       "alias": "",
-      "capabilities": listed(READER_PRO).capabilities,
-      "connected_uah_id": HUB,
+      "capabilities": listed(READER_ID).capabilities,
+      "connected_uah_id": UAH_ID,
       "device_type": "UA-G2-PRO",
       "is_adopted": true,
       "is_connected": true,
@@ -86,7 +83,7 @@ describe("officialDeviceRecord", () => {
       "location_id": DOOR_HUB,
       "mac": "AABBCC000002",
       "name": "Test Name 68",
-      "unique_id": READER_PRO
+      "unique_id": READER_ID
     });
   });
 
@@ -95,15 +92,15 @@ describe("officialDeviceRecord", () => {
     /* The token-mode contract in one place: the listing establishes what a device's hardware can do, and nothing about what it currently reports. So the
      * capability predicate answers over a projected record exactly as it does over a topology one, while the reading it gates stays honestly unestablished.
      */
-    assert.equal(isTamperCapable(officialDeviceRecord(listed(ULTRA))), true);
-    assert.equal(isTamperCapable(officialDeviceRecord(listed(HUB))), false, "the listed UAH carries no tamper capability");
-    assert.equal(tamperState(officialDeviceRecord(listed(ULTRA))), undefined, "a listing carries no configuration rows, so nothing establishes a reading");
+    assert.equal(isTamperCapable(officialDeviceRecord(listed(ULTRA_ID))), true);
+    assert.equal(isTamperCapable(officialDeviceRecord(listed(UAH_ID))), false, "the listed UAH carries no tamper capability");
+    assert.equal(tamperState(officialDeviceRecord(listed(ULTRA_ID))), undefined, "a listing carries no configuration rows, so nothing establishes a reading");
   });
 
   test("copies the capabilities array rather than sharing the listing's own", () => {
 
     // The listing's array is read-only where the stored member is not, so a shared reference would let a consumer mutate the record the listing handed over.
-    const source = listed(HUB);
+    const source = listed(UAH_ID);
     const projected = officialDeviceRecord(source);
 
     assert.deepEqual(projected.capabilities, source.capabilities);
@@ -115,10 +112,10 @@ describe("officialDeviceRecord", () => {
     /* Both shapes the rule tells apart. A presence-only check passes the second and fails only the first, so asserting the key-absent case alone would leave a
      * regression to a `in` test invisible.
      */
-    const { capabilities: _stripped, ...keyAbsent } = listed(HUB);
+    const { capabilities: _stripped, ...keyAbsent } = listed(UAH_ID);
 
     assert.deepEqual(officialDeviceRecord(keyAbsent as AccessOfficialDevice).capabilities, [], "a record with no capabilities key at all");
-    assert.deepEqual(officialDeviceRecord({ ...listed(HUB), "capabilities": null } as unknown as AccessOfficialDevice).capabilities, [],
+    assert.deepEqual(officialDeviceRecord({ ...listed(UAH_ID), "capabilities": null } as unknown as AccessOfficialDevice).capabilities, [],
       "a record whose capabilities member is present but is not an array");
   });
 
@@ -128,15 +125,15 @@ describe("officialDeviceRecord", () => {
      * and the record then carries no `mac` key at all rather than an empty string or a mangled one.
      */
     const rows: { id: string; mac?: string }[] = [
-      { id: HUB, mac: "AABBCC000001" },
-      { id: DOOR_MINI_HW, mac: "AABBCC000004" },
+      { id: UAH_ID, mac: "AABBCC000001" },
+      { id: MINI_ID, mac: "AABBCC000004" },
       { id: "aa:bb:cc:00:00:01", mac: "AABBCC000001" },
       { id: "00000000-0000-0000-0000-000000000031" }
     ];
 
     for(const row of rows) {
 
-      const projected = officialDeviceRecord({ ...listed(HUB), "id": row.id });
+      const projected = officialDeviceRecord({ ...listed(UAH_ID), "id": row.id });
 
       assert.equal(projected.unique_id, row.id);
 
@@ -155,16 +152,16 @@ describe("officialDeviceRecord", () => {
 
     // The controller re-cases a device's address between reads of the topology, so an identifier arriving in uppercase is the possibility the shape test has to
     // admit. The identity itself is carried as the listing spelled it: only the address folds, because only the address is what a consumer keys on.
-    const projected = officialDeviceRecord({ ...listed(HUB), "id": HUB.toUpperCase() });
+    const projected = officialDeviceRecord({ ...listed(UAH_ID), "id": UAH_ID.toUpperCase() });
 
-    assert.equal(projected.mac, officialDeviceRecord(listed(HUB)).mac);
+    assert.equal(projected.mac, officialDeviceRecord(listed(UAH_ID)).mac);
     assert.equal(projected.mac, "AABBCC000001");
-    assert.equal(projected.unique_id, HUB.toUpperCase());
+    assert.equal(projected.unique_id, UAH_ID.toUpperCase());
   });
 
   test("leaves every member the listing does not carry absent rather than inventing one", () => {
 
-    const projected = officialDeviceRecord(listed(HUB));
+    const projected = officialDeviceRecord(listed(UAH_ID));
 
     for(const member of [ "configs", "display_model", "door", "extensions", "firmware", "floor", "images", "ip", "location", "model", "start_time", "version" ]) {
 

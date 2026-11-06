@@ -4,7 +4,8 @@
  * reads before resolving. Every command test asserts the wire shape through an intercepted request rather than through the projection's own return value, so what
  * is being checked is what the controller would actually receive.
  */
-import { DOOR_HUB, DOOR_MINI_DOOR, HUB, READER, REFUSED, deviceFixture, intercept } from "./device.helpers.ts";
+import { DOOR_HUB, DOOR_MINI_DOOR, REFUSED, deviceFixture, intercept } from "./device.helpers.ts";
+import { READER_ID, UAH_ID } from "../protocol/capture.helpers.ts";
 import { describe, test } from "node:test";
 import { AccessProtocolError } from "../errors.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
@@ -19,7 +20,7 @@ describe("the hub commands", () => {
 
     intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.unlock();
 
@@ -35,7 +36,7 @@ describe("the hub commands", () => {
 
     intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock?control_cmd=close" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.close();
 
@@ -49,14 +50,14 @@ describe("the hub commands", () => {
   test("each lock rule sends its own payload to the rule resource", async () => {
 
     const fixture = deviceFixture(accessBootstrap2026Fixture);
-    const path = "/proxy/access/api/v2/device/" + HUB + "/lock_rule?get_result=true";
+    const path = "/proxy/access/api/v2/device/" + UAH_ID + "/lock_rule?get_result=true";
 
     for(let i = 0; i < 3; i++) {
 
       intercept(fixture, { method: "PUT", path });
     }
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.setLockRule({ type: "reset" });
     await hub.setLockRule({ type: "keep_unlock" });
@@ -72,7 +73,7 @@ describe("the hub commands", () => {
   test("a custom rule whose interval is not a positive whole number is refused before anything is sent", async () => {
 
     const fixture = deviceFixture(accessBootstrap2026Fixture);
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     // A caller's own bad argument is a programming error, so it raises the language's own type rather than the library's request error, which exists to carry a
     // status the controller answered with. No request is registered, so a dispatched one would fail the mock agent's own net-connect guard.
@@ -90,7 +91,7 @@ describe("the hub commands", () => {
 
     intercept(fixture, { body: REFUSED, method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     /* What reaches the caller is what the controller said: its own result code as the vocabulary string rather than the number beside it, its own message with
      * the wire's trailing space removed, and the structured diagnostic it sent alongside, byte for byte.
@@ -114,7 +115,7 @@ describe("the hub commands", () => {
     intercept(fixture, { body: JSON.stringify({ "code": -3, "codeS": "CODE_SYSTEM_ERROR" }), method: "PUT",
       path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await assert.rejects(() => hub.unlock(), {
 
@@ -134,7 +135,7 @@ describe("the hub commands", () => {
      */
     intercept(fixture, { body: "{}", method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await assert.rejects(() => hub.unlock(), AccessProtocolError);
   });
@@ -147,7 +148,7 @@ describe("the hub commands", () => {
     intercept(fixture, { body: JSON.stringify({ "code": "CODE_SYSTEM_ERROR", "msg": "Server system error." }), method: "PUT",
       path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await assert.rejects(() => hub.unlock(), { code: "CODE_SYSTEM_ERROR", message: "Server system error.", name: "AccessApiError" });
   });
@@ -162,7 +163,7 @@ describe("the hub commands", () => {
      */
     intercept(fixture, { body: "", method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await assert.rejects(() => hub.unlock(), AccessProtocolError);
   });
@@ -175,9 +176,9 @@ describe("the hub commands", () => {
     const fixture = deviceFixture(accessBootstrap2026Fixture);
 
     intercept(fixture, { body: REFUSED, method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock?control_cmd=close" });
-    intercept(fixture, { body: REFUSED, method: "PUT", path: "/proxy/access/api/v2/device/" + HUB + "/lock_rule?get_result=true" });
+    intercept(fixture, { body: REFUSED, method: "PUT", path: "/proxy/access/api/v2/device/" + UAH_ID + "/lock_rule?get_result=true" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     for(const command of [ (): Promise<void> => hub.close(), (): Promise<void> => hub.setLockRule({ type: "reset" }) ]) {
 
@@ -193,9 +194,9 @@ describe("the hub commands", () => {
 
     intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock" });
     intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock?control_cmd=close" });
-    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + HUB + "/lock_rule?get_result=true" });
+    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + UAH_ID + "/lock_rule?get_result=true" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.unlock();
     await hub.close();
@@ -211,9 +212,9 @@ describe("the hub commands", () => {
      */
     const fixture = deviceFixture(accessBootstrap2026Fixture);
 
-    intercept(fixture, { body: REFUSED, method: "PUT", path: "/proxy/access/api/v2/device/" + HUB + "/configs" });
+    intercept(fixture, { body: REFUSED, method: "PUT", path: "/proxy/access/api/v2/device/" + UAH_ID + "/configs" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     const echoed = await hub.updateDevice({ "alias": "Echoed" });
 
@@ -228,13 +229,13 @@ describe("the hub commands", () => {
     const fixture = deviceFixture(accessBootstrap2026Fixture);
 
     intercept(fixture, { body: JSON.stringify({ "code": 1, "codeS": "SUCCESS", "data": "success", "error": "", "msg": "success" }), method: "PUT",
-      path: "/proxy/access/api/v2/device/" + READER + "/restart" });
+      path: "/proxy/access/api/v2/device/" + READER_ID + "/restart" });
 
-    const reader = present(fixture.registry.device(READER), "the reader");
+    const reader = present(fixture.registry.device(READER_ID), "the reader");
 
     await reader.restart();
 
-    assert.equal(fixture.captured[0]?.path, "/proxy/access/api/v2/device/" + READER + "/restart");
+    assert.equal(fixture.captured[0]?.path, "/proxy/access/api/v2/device/" + READER_ID + "/restart");
   });
 
   test("restart throws when the envelope refuses inside a 200, carrying the controller's own words", async () => {
@@ -243,9 +244,9 @@ describe("the hub commands", () => {
     // the device were rebooting.
     const fixture = deviceFixture(accessBootstrap2026Fixture);
 
-    intercept(fixture, { body: REFUSED, method: "PUT", path: "/proxy/access/api/v2/device/" + READER + "/restart" });
+    intercept(fixture, { body: REFUSED, method: "PUT", path: "/proxy/access/api/v2/device/" + READER_ID + "/restart" });
 
-    const reader = present(fixture.registry.device(READER), "the reader");
+    const reader = present(fixture.registry.device(READER_ID), "the reader");
 
     await assert.rejects(async () => reader.restart(), {
 
@@ -262,9 +263,9 @@ describe("the hub commands", () => {
 
     // Each command supplies its own fallback, so a silent refusal still says which operation was refused rather than reporting a generic one.
     intercept(fixture, { body: JSON.stringify({ "code": -3, "codeS": "CODE_SYSTEM_ERROR" }), method: "PUT",
-      path: "/proxy/access/api/v2/device/" + READER + "/restart" });
+      path: "/proxy/access/api/v2/device/" + READER_ID + "/restart" });
 
-    const reader = present(fixture.registry.device(READER), "the reader");
+    const reader = present(fixture.registry.device(READER_ID), "the reader");
 
     await assert.rejects(async () => reader.restart(), { detail: undefined, message: "The UniFi Access controller refused the device restart.", name: "AccessApiError" });
   });
@@ -279,7 +280,7 @@ describe("the hub commands", () => {
 
     intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_MINI_DOOR + "/unlock" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
     await hub.unlock({ doorId: DOOR_MINI_DOOR });
@@ -294,7 +295,7 @@ describe("the hub commands", () => {
 
     intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_MINI_DOOR + "/unlock?control_cmd=close" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
     await hub.close({ doorId: DOOR_MINI_DOOR });
@@ -309,11 +310,11 @@ describe("the hub commands", () => {
      * target was named at all, so a caller spelling out the door this handle would have chosen reaches the same device-keyed resource with the same bytes.
      */
     const fixture = deviceFixture(accessBootstrap2026Fixture);
-    const path = "/proxy/access/api/v2/device/" + HUB + "/lock_rule?get_result=true";
+    const path = "/proxy/access/api/v2/device/" + UAH_ID + "/lock_rule?get_result=true";
 
     intercept(fixture, { method: "PUT", path });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.setLockRule({ interval: 2, type: "custom" }, { doorId: hub.doorId });
 
@@ -327,7 +328,7 @@ describe("the hub commands", () => {
      * aimed elsewhere therefore has no direct expression to fall back on, and a client holding nothing else refuses it rather than writing it to the wrong door.
      */
     const fixture = deviceFixture(accessBootstrap2026Fixture);
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
     await assert.rejects(async () => hub.setLockRule({ interval: 2, type: "custom" }, { doorId: DOOR_MINI_DOOR }), {
@@ -346,9 +347,9 @@ describe("the hub commands", () => {
      * not be able to route around it, so each verb is issued with one after the device is gone.
      */
     const fixture = deviceFixture(accessBootstrap2026Fixture);
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
-    fixture.store.dispatch({ eventName: "access.data.v2.device.delete", id: HUB, kind: "deviceRemoved" });
+    fixture.store.dispatch({ eventName: "access.data.v2.device.delete", id: UAH_ID, kind: "deviceRemoved" });
 
     const commands: { issue: () => Promise<void>; verb: string }[] = [
       { issue: async (): Promise<void> => hub.unlock({ doorId: DOOR_MINI_DOOR }), verb: "unlock" },

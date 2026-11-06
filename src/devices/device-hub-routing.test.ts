@@ -7,7 +7,8 @@
  */
 import { AccessApiError, AccessCapabilityError, AccessDeclinedError } from "../errors.ts";
 import type { AccessOfficialAccessMethods, AccessOfficialDeviceSettings, AccessOfficialDeviceSettingsUpdate } from "../official/devices.ts";
-import { CAMERA, DOOR_HUB, DOOR_MINI_DOOR, HUB, cameraBootstrap, deviceFixture, intercept } from "./device.helpers.ts";
+import { DOORBELL_ID, UAH_ID } from "../protocol/capture.helpers.ts";
+import { DOOR_HUB, DOOR_MINI_DOOR, cameraBootstrap, deviceFixture, intercept } from "./device.helpers.ts";
 import { describe, test } from "node:test";
 import { expectAt, present, silentLog } from "homebridge-plugin-utils/testing";
 import { ACCESS_METHODS } from "../protocol/vocabulary.ts";
@@ -114,7 +115,7 @@ describe("the hub commands under routing", () => {
   test("sends a plain unlock down the official path, addressed by door", async () => {
 
     const fixture = routedFixture();
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.unlock();
 
@@ -125,7 +126,7 @@ describe("the hub commands under routing", () => {
   test("carries an actor onto the official call", async () => {
 
     const fixture = routedFixture();
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.unlock({ actor: { id: "a1", name: "Nightly Automation" } });
 
@@ -141,7 +142,7 @@ describe("the hub commands under routing", () => {
 
     intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.unlock();
 
@@ -154,7 +155,7 @@ describe("the hub commands under routing", () => {
   test("routes each lock rule by what its own path can express", async () => {
 
     const fixture = routedFixture();
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.setLockRule({ interval: 2, type: "custom" });
     await hub.setLockRule({ type: "lock_now" });
@@ -168,21 +169,21 @@ describe("the hub commands under routing", () => {
 
     const fixture = routedFixture({ refuse: () => new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) });
 
-    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + HUB + "/lock_rule?get_result=true" });
+    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + UAH_ID + "/lock_rule?get_result=true" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.setLockRule({ interval: 2, type: "custom" });
 
     // The direct wire shape is unchanged by routing: the same device-keyed resource and the same body the direct-path rows assert.
-    assert.equal(fixture.captured[0]?.path, "/proxy/access/api/v2/device/" + HUB + "/lock_rule?get_result=true");
+    assert.equal(fixture.captured[0]?.path, "/proxy/access/api/v2/device/" + UAH_ID + "/lock_rule?get_result=true");
     assert.equal(String(fixture.captured[0].body), JSON.stringify({ interval: 2, type: "custom" }));
   });
 
   test("refuses an official-only rule outright when the device is floor-refused and no direct expression exists", async () => {
 
     const fixture = routedFixture({ refuse: () => new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) });
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await assert.rejects(async () => hub.setLockRule({ type: "lock_now" }), AccessCapabilityError);
     assert.equal(fixture.captured.length, 0, "and nothing reached the direct path, which cannot express it");
@@ -194,7 +195,7 @@ describe("the hub commands under routing", () => {
 
     intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/location/" + DOOR_HUB + "/unlock?control_cmd=close" });
 
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.close();
 
@@ -208,7 +209,7 @@ describe("the hub commands under routing", () => {
 
     // The override reaches the projections whole: a command that channel cannot express is refused where it is issued, before the direct transport sees it.
     const fixture = routedFixture({ override: "official-only" });
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     const commands: { issue: () => Promise<unknown>; operation: RegExp }[] = [
       { issue: async (): Promise<unknown> => hub.restart(), operation: /a restart for device "Test alias 13"/ },
@@ -235,7 +236,7 @@ describe("the hub commands under routing", () => {
 
     // The override leaves no direct expression, and the published API's own control command is what carries the close instead.
     const fixture = routedFixture({ override: "official-only" });
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.close();
 
@@ -246,7 +247,7 @@ describe("the hub commands under routing", () => {
   test("halts a gate with the stop control command, which has no direct expression at all", async () => {
 
     const fixture = routedFixture();
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.stop();
 
@@ -257,7 +258,7 @@ describe("the hub commands under routing", () => {
   test("carries an entry direction onto the official call", async () => {
 
     const fixture = routedFixture();
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await hub.unlock({ entryMethod: "out" });
 
@@ -269,7 +270,7 @@ describe("the hub commands under routing", () => {
 
     // The caller's own bad argument is caught ahead of the routing decision, so a malformed rule reaches neither path.
     const fixture = routedFixture();
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     await assert.rejects(async () => hub.setLockRule({ interval: 0.5, type: "custom" }), TypeError);
 
@@ -283,7 +284,7 @@ describe("the hub commands under routing", () => {
      * threaded one of them through at the cost of another shows here rather than in the rows that exercise each alone.
      */
     const fixture = routedFixture();
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
     await hub.unlock({ actor: { id: "a1", name: "Nightly Automation" }, doorId: DOOR_MINI_DOOR, entryMethod: "out" });
@@ -296,7 +297,7 @@ describe("the hub commands under routing", () => {
   test("closes a named door through the official gate control command on a client with no direct path", async () => {
 
     const fixture = routedFixture({ override: "official-only" });
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
     await hub.close({ doorId: DOOR_MINI_DOOR });
@@ -308,7 +309,7 @@ describe("the hub commands under routing", () => {
   test("halts a named door's gate with the stop control command", async () => {
 
     const fixture = routedFixture();
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
     await hub.stop({ doorId: DOOR_MINI_DOOR });
@@ -323,7 +324,7 @@ describe("the hub commands under routing", () => {
      * the direct endpoint speaks. Both rules here take the official path, addressed by the door the caller named.
      */
     const fixture = routedFixture();
-    const hub = present(fixture.registry.hub(HUB), "the hub");
+    const hub = present(fixture.registry.hub(UAH_ID), "the hub");
 
     assert.notEqual(DOOR_MINI_DOOR, hub.doorId, "the target names a different door from the one this handle resolves for itself");
 
@@ -348,11 +349,11 @@ describe("the hub commands under routing", () => {
         const fixture = routedFixture();
 
         // eslint-disable-next-line no-await-in-loop
-        await present(fixture.registry.device(HUB), "the hub").setAccessMethod(method, false);
+        await present(fixture.registry.device(UAH_ID), "the hub").setAccessMethod(method, false);
 
-        assert.deepEqual(fixture.official.settingsWrites, [{ id: HUB, opts: { "access_methods": Object.fromEntries(officialKeys[method].map((key) => [ key,
+        assert.deepEqual(fixture.official.settingsWrites, [{ id: UAH_ID, opts: { "access_methods": Object.fromEntries(officialKeys[method].map((key) => [ key,
           { enabled: "no" } ])) } }], method + " writes its own official keys");
-        assert.deepEqual(fixture.official.settingsReads, [HUB], method + " was read back");
+        assert.deepEqual(fixture.official.settingsReads, [UAH_ID], method + " was read back");
         assert.equal(fixture.captured.length, 0, method + " held, so nothing went out on the direct path");
       }
     });
@@ -364,16 +365,17 @@ describe("the hub commands under routing", () => {
        */
       const fixture = routedFixture({ bootstrap: cameraBootstrap(), listed: {} });
 
-      intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + CAMERA + "/configs?is_camera=true" });
+      intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + DOORBELL_ID + "/configs?is_camera=true" });
 
-      await present(fixture.registry.device(CAMERA), "the camera-class reader").setAccessMethod("mobile", true);
+      await present(fixture.registry.device(DOORBELL_ID), "the camera-class reader").setAccessMethod("mobile", true);
 
-      assert.deepEqual(fixture.official.settingsWrites, [{ id: CAMERA, opts: { "access_methods": { "bt_button": { enabled: "yes" }, "bt_tap": { enabled: "yes" } } } }]);
-      assert.deepEqual(fixture.official.settingsReads, [CAMERA], "the official path was tried first");
+      assert.deepEqual(fixture.official.settingsWrites,
+        [{ id: DOORBELL_ID, opts: { "access_methods": { "bt_button": { enabled: "yes" }, "bt_tap": { enabled: "yes" } } } }]);
+      assert.deepEqual(fixture.official.settingsReads, [DOORBELL_ID], "the official path was tried first");
 
       const captured = expectAt(fixture.captured, 0, "the direct write");
 
-      assert.equal(captured.path, "/proxy/access/api/v2/device/" + CAMERA + "/configs?is_camera=true");
+      assert.equal(captured.path, "/proxy/access/api/v2/device/" + DOORBELL_ID + "/configs?is_camera=true");
       assert.equal(captured.body, "[{\"key\":\"bt\",\"tag\":\"open_door_mode\",\"value\":\"yes\"},{\"key\":\"bt_button\",\"tag\":\"open_door_mode\",\"value\":\"yes\"}," +
         "{\"key\":\"bt_tap\",\"tag\":\"open_door_mode\",\"value\":\"yes\"}]");
     });
@@ -382,22 +384,22 @@ describe("the hub commands under routing", () => {
 
       const held = routedFixture();
 
-      await present(held.registry.device(HUB), "the hub").setAccessMethod("nfc", false);
+      await present(held.registry.device(UAH_ID), "the hub").setAccessMethod("nfc", false);
 
       assert.equal(held.captured.length, 0, "a held method completes on the official path");
 
       const unlisted = routedFixture({ listed: {} });
 
-      intercept(unlisted, { method: "PUT", path: "/proxy/access/api/v2/device/" + HUB + "/settings" });
+      intercept(unlisted, { method: "PUT", path: "/proxy/access/api/v2/device/" + UAH_ID + "/settings" });
 
-      await present(unlisted.registry.device(HUB), "the hub").setAccessMethod("nfc", false);
+      await present(unlisted.registry.device(UAH_ID), "the hub").setAccessMethod("nfc", false);
 
       assert.equal(expectAt(unlisted.captured, 0, "the direct write").body, "[{\"key\":\"nfc\",\"tag\":\"open_door_mode\",\"value\":\"no\"}]",
         "an unlisted method goes to the direct path");
 
       const declined = routedFixture({ declines: true });
 
-      await assert.rejects(async () => present(declined.registry.device(HUB), "the hub").setAccessMethod("nfc", false), (error: unknown) => {
+      await assert.rejects(async () => present(declined.registry.device(UAH_ID), "the hub").setAccessMethod("nfc", false), (error: unknown) => {
 
         assert.ok(error instanceof AccessDeclinedError);
         assert.equal(error.message, "The UniFi Access controller declined to disable the nfc access method for device \"Test alias 13\": the settings write answered " +
@@ -415,16 +417,16 @@ describe("the hub commands under routing", () => {
 
       const officialOnly = routedFixture({ override: "official-only" });
 
-      await present(officialOnly.registry.device(HUB), "the hub").setAccessMethod("pin", true);
+      await present(officialOnly.registry.device(UAH_ID), "the hub").setAccessMethod("pin", true);
 
-      assert.deepEqual(officialOnly.official.settingsWrites, [{ id: HUB, opts: { "access_methods": { "pin_code": { enabled: "yes" } } } }]);
+      assert.deepEqual(officialOnly.official.settingsWrites, [{ id: UAH_ID, opts: { "access_methods": { "pin_code": { enabled: "yes" } } } }]);
       assert.equal(officialOnly.captured.length, 0, "nothing went out on the direct path");
 
       const directOnly = routedFixture({ override: "direct-only" });
 
-      intercept(directOnly, { method: "PUT", path: "/proxy/access/api/v2/device/" + HUB + "/settings" });
+      intercept(directOnly, { method: "PUT", path: "/proxy/access/api/v2/device/" + UAH_ID + "/settings" });
 
-      await present(directOnly.registry.device(HUB), "the hub").setAccessMethod("pin", true);
+      await present(directOnly.registry.device(UAH_ID), "the hub").setAccessMethod("pin", true);
 
       assert.deepEqual(directOnly.official.settingsWrites, [], "a client held to the direct API never reaches for the official one");
       assert.equal(expectAt(directOnly.captured, 0, "the direct write").body, "[{\"key\":\"pin_code\",\"tag\":\"open_door_mode\",\"value\":\"yes\"}]");
@@ -436,7 +438,7 @@ describe("the hub commands under routing", () => {
     test("threads the caller's signal through the official unlock", async () => {
 
       const fixture = routedFixture();
-      const hub = present(fixture.registry.hub(HUB), "the hub");
+      const hub = present(fixture.registry.hub(UAH_ID), "the hub");
       const controller = new AbortController();
 
       await hub.unlock({ signal: controller.signal });
@@ -451,7 +453,7 @@ describe("the hub commands under routing", () => {
     test("threads the caller's signal through a gate stop", async () => {
 
       const fixture = routedFixture();
-      const hub = present(fixture.registry.hub(HUB), "the hub");
+      const hub = present(fixture.registry.hub(UAH_ID), "the hub");
       const controller = new AbortController();
 
       await hub.stop({ signal: controller.signal });

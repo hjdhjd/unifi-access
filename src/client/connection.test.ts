@@ -22,6 +22,7 @@ import { EventStream } from "../transport/events-stream.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import { StateStore } from "../state/store.ts";
 import type { TestLogEntry } from "homebridge-plugin-utils/testing";
+import { UAH_ID } from "../protocol/capture.helpers.ts";
 import assert from "node:assert/strict";
 import { errors } from "undici";
 
@@ -127,9 +128,9 @@ function deviceFrame(): string {
 
   return JSON.stringify({
 
-    "data": { "unique_id": "aabbcc000001" },
+    "data": { "unique_id": UAH_ID },
     "event": "access.data.device.update",
-    "event_object_id": "aabbcc000001",
+    "event_object_id": UAH_ID,
     "receiver_id": "",
     "save_to_history": false
   });

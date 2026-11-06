@@ -6,7 +6,7 @@
  */
 import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig, AccessDeviceConfigPayload, AccessDeviceEntryConfig } from "../types/index.ts";
 import type { AccessState, AccessStateDevice } from "../protocol/reducer.ts";
-import { CAMERA, cameraBootstrap } from "../devices/device.helpers.ts";
+import { DOORBELL_ID, EAH_ID, EAH_READER_ID, G2_MINI_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID, classify, findPacket } from "../protocol/capture.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
 import { applyBootstrap, createInitialState, reduce } from "../protocol/reducer.ts";
 import { deviceAccessMethodStates as barrelDeviceAccessMethodStates, deviceDisplayName as barrelDeviceDisplayName, isCamera as barrelIsCamera,
@@ -15,7 +15,6 @@ import { deviceAccessMethodStates as barrelDeviceAccessMethodStates, deviceDispl
   selectControllerName as barrelSelectControllerName, selectControllerUptime as barrelSelectControllerUptime, selectDevicesByType as barrelSelectDevicesByType,
   selectDoorDevices as barrelSelectDoorDevices, selectDoorStates as barrelSelectDoorStates, selectHubs as barrelSelectHubs, tamperState as barrelTamperState,
   terminalInput as barrelTerminalInput, ACCESS_TERMINAL_INPUTS as barrelTerminalInputs } from "../index.ts";
-import { classify, findPacket } from "../protocol/capture.helpers.ts";
 import { describe, test } from "node:test";
 import { deviceAccessMethodStates, deviceDisplayName, isCamera, isEnterpriseHubRecord, isHub, isReader, isTamperCapable, portBindings, selectAccessPoints,
   selectController, selectControllerName, selectControllerUptime, selectDevicesByType, selectDoorDevices, selectDoorStates, selectHubs, tamperState,
@@ -24,23 +23,18 @@ import { ACCESS_TERMINAL_INPUTS } from "../protocol/terminal-inputs.ts";
 import type { AccessPortBinding } from "../protocol/port-bindings.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
+import { cameraBootstrap } from "../devices/device.helpers.ts";
 import { present } from "homebridge-plugin-utils/testing";
 import { topologyDevices } from "../testing.helpers.ts";
 
-// Named entries from the 2026 document: the doors and devices named below, all of them door-attached.
+// Named entries from the 2026 document: the doors named below and the floor they sit on.
 const DOOR_ULTRA = "00000000-0000-0000-0000-000000000002";
 const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
 const DOOR_HUB_MINI = "00000000-0000-0000-0000-00000000000e";
 const FLOOR_2026 = "00000000-0000-0000-0000-000000000001";
-const ULTRA = "aabbcc000000";
-const HUB = "aabbcc000001";
-const READER_PRO = "aabbcc000002";
-const READER_MINI = "aabbcc000003";
-const HUB_DOOR_MINI = "aabbcc000004";
 
 // Named entries from the EAH document: the doors named below, on one floor, with an Enterprise Access Hub the building hosts directly and one door served by its own hub.
 const EAH_ROOT = "00000000-0000-0000-0000-000000000011";
-const EAH_HUB = "aabbcc000005";
 const EAH_DOOR_2 = "00000000-0000-0000-0000-000000000013";
 const EAH_DOOR_GARAGE = "00000000-0000-0000-0000-000000000024";
 const EAH_DOOR_FRONT = "00000000-0000-0000-0000-000000000017";
@@ -48,7 +42,6 @@ const EAH_DOOR_NORTHEAST = "00000000-0000-0000-0000-000000000025";
 const EAH_DOOR_NORTHWEST = "00000000-0000-0000-0000-000000000027";
 const EAH_GARAGE_HUB = "aabbcc000008";
 const EAH_GARAGE_READER = "aabbcc000009";
-const EAH_FRONT_READER = "aabbcc000006";
 const EAH_NORTHEAST_READER = "aabbcc00000a";
 const EAH_NORTHWEST_READER = "aabbcc00000c";
 
@@ -112,7 +105,7 @@ const idsOf = (devices: readonly AccessStateDevice[] | undefined): string[] => (
 const controllerEvent = (controller: AccessControllerConfig): AccessTypedEvent => ({ data: controller, kind: "controllerChanged" });
 
 // A door reporting its lock state, with an empty device facet so the report advances door state and nothing else.
-const doorState = (locationId: string, lock: string): AccessTypedEvent => ({ device: { id: HUB, payload: {} }, eventName: "access.data.v2.device.update",
+const doorState = (locationId: string, lock: string): AccessTypedEvent => ({ device: { id: UAH_ID, payload: {} }, eventName: "access.data.v2.device.update",
   kind: "doorStateChanged", states: [{ "dps": "close", "dps_connected": true, "emergency": { "hardware": "none", "software": "none" }, "is_unavailable": false,
     "location_id": locationId, "lock": lock }] });
 
@@ -131,7 +124,7 @@ const TOKEN_CENSUS_RECORD: AccessStateDevice = {
   "is_online": true,
   "location_id": DOOR_ULTRA,
   "name": "Test Name 6",
-  "unique_id": ULTRA
+  "unique_id": ULTRA_ID
 };
 
 // One device out of a state, failing loudly rather than asserting over an absence.
@@ -159,11 +152,11 @@ const rowValue = (device: AccessStateDevice, key: string): string => {
  */
 const fullRowDelivery = (state: AccessState, values: Readonly<Record<string, string>>): AccessTypedEvent => {
 
-  const rows = deviceRecord(state, ULTRA).configs;
+  const rows = deviceRecord(state, ULTRA_ID).configs;
 
   assert.ok(rows, "the document should carry the UA Ultra's configuration rows");
 
-  return deviceChange(ULTRA, { configs: rows.map((row) => ({ ...row, "value": values[row.key] ?? row.value })) });
+  return deviceChange(ULTRA_ID, { configs: rows.map((row) => ({ ...row, "value": values[row.key] ?? row.value })) });
 };
 
 /* The same delivery as the stream hands it over: an original-dialect update restating one stored record whole, with named rows set to named values, classified
@@ -183,8 +176,8 @@ describe("isHub", () => {
   test("reads the controller's own hub capability rather than a model name", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const ultra = state.devices.get(ULTRA);
-    const reader = state.devices.get(READER_PRO);
+    const ultra = state.devices.get(ULTRA_ID);
+    const reader = state.devices.get(READER_ID);
 
     assert.ok(ultra && reader, "the document should carry both devices");
 
@@ -207,8 +200,8 @@ describe("isHub", () => {
      * the other half.
      */
     assert.equal(isHub(admitted), false);
-    assert.deepEqual(idsOf(selectHubs(state)), [ ULTRA, HUB, HUB_DOOR_MINI ], "the hub view answers over the whole map and leaves the record out of it");
-    assert.deepEqual(idsOf(selectDevicesByType(state).get("UA-ULTRA")), [ CAPABILITY_LESS_ID, ULTRA ], "it is still a device, grouped under the type it reported");
+    assert.deepEqual(idsOf(selectHubs(state)), [ ULTRA_ID, UAH_ID, MINI_ID ], "the hub view answers over the whole map and leaves the record out of it");
+    assert.deepEqual(idsOf(selectDevicesByType(state).get("UA-ULTRA")), [ CAPABILITY_LESS_ID, ULTRA_ID ], "it is still a device, grouped under the type it reported");
     assert.deepEqual(admitted.capabilities, [], "what makes all of that total is the array admission supplied");
   });
 });
@@ -218,9 +211,9 @@ describe("isReader", () => {
   test("reads the controller's own reader capability rather than a model name", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const ultra = state.devices.get(ULTRA);
-    const reader = state.devices.get(READER_PRO);
-    const hub = state.devices.get(HUB);
+    const ultra = state.devices.get(ULTRA_ID);
+    const reader = state.devices.get(READER_ID);
+    const hub = state.devices.get(UAH_ID);
 
     assert.ok(ultra && reader && hub, "the document should carry all three devices");
 
@@ -249,7 +242,7 @@ describe("isCamera", () => {
 
   test("reads the controller's own camera flag on the captured camera-class record", () => {
 
-    assert.equal(isCamera(deviceRecord(stateFrom(cameraBootstrap()), CAMERA)), true);
+    assert.equal(isCamera(deviceRecord(stateFrom(cameraBootstrap()), DOORBELL_ID)), true);
   });
 
   test("answers false for every captured reader and hub", () => {
@@ -267,7 +260,7 @@ describe("isCamera", () => {
 
   test("answers false for the camera-class record without its flag, whatever else it carries", () => {
 
-    const { is_camera: _flag, ...unflagged } = deviceRecord(stateFrom(cameraBootstrap()), CAMERA);
+    const { is_camera: _flag, ...unflagged } = deviceRecord(stateFrom(cameraBootstrap()), DOORBELL_ID);
 
     // The record keeps everything a wrong reading could mistake for the flag, so the flag is what decides the answer.
     assert.ok(unflagged.capabilities.includes("identity_is_camera"), "the record still carries the camera capability");
@@ -287,7 +280,7 @@ describe("deviceDisplayName", () => {
 
   test("the alias wins where one is set, and the hardware name answers where it is empty", () => {
 
-    const hub = deviceRecord(stateFrom(accessBootstrap2026Fixture), HUB);
+    const hub = deviceRecord(stateFrom(accessBootstrap2026Fixture), UAH_ID);
 
     assert.equal(hub.alias, "Test alias 13", "the document's hub is the record that carries both an alias and a hardware name");
     assert.equal(hub.name, "Test Name 12");
@@ -304,9 +297,9 @@ describe("isTamperCapable", () => {
   test("reads the controller's own tamper capability rather than any other one the record carries", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const ultra = state.devices.get(ULTRA);
-    const hub = state.devices.get(HUB);
-    const reader = state.devices.get(READER_PRO);
+    const ultra = state.devices.get(ULTRA_ID);
+    const hub = state.devices.get(UAH_ID);
+    const reader = state.devices.get(READER_ID);
 
     assert.ok(ultra && hub && reader, "the document should carry all three devices");
 
@@ -343,7 +336,7 @@ describe("tamperState", () => {
   test("reads the captured document's device as unestablished, because its tampering alert is switched off", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const ultra = present(state.devices.get(ULTRA), "the Ultra");
+    const ultra = present(state.devices.get(ULTRA_ID), "the Ultra");
 
     assert.equal(rowValue(ultra, "tampering"), "false", "the captured document has this device's tampering alert switched off");
     assert.equal(tamperState(ultra), undefined);
@@ -355,15 +348,15 @@ describe("tamperState", () => {
      * what the hardware last had rather than what it has now. Each pairing arrives inside the whole row array, which is the delivery the original dialect sends.
      */
     const state = stateFrom(accessBootstrap2026Fixture);
-    const raised = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "true", "tampering": "true" })), ULTRA);
+    const raised = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "true", "tampering": "true" })), ULTRA_ID);
 
     assert.equal(tamperState(raised), true);
 
-    const cleared = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "false", "tampering": "true" })), ULTRA);
+    const cleared = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "false", "tampering": "true" })), ULTRA_ID);
 
     assert.equal(tamperState(cleared), false);
 
-    const gated = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "true", "tampering": "false" })), ULTRA);
+    const gated = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "true", "tampering": "false" })), ULTRA_ID);
 
     assert.equal(rowValue(gated, "tamper_event"), "true", "the input row itself reads raised");
     assert.equal(tamperState(gated), undefined, "and it is a stale reading while the alert is off");
@@ -372,7 +365,7 @@ describe("tamperState", () => {
      * The clone is walked with the document's own helper rather than indexed, so the removal follows the structure the document actually has.
      */
     const bare = structuredClone(accessBootstrap2026Fixture);
-    const record = topologyDevices(bare).find((device) => device.unique_id === ULTRA);
+    const record = topologyDevices(bare).find((device) => device.unique_id === ULTRA_ID);
 
     assert.ok(record, "the document should carry the UA Ultra");
 
@@ -380,15 +373,15 @@ describe("tamperState", () => {
 
     const bareState = stateFrom(bare);
 
-    assert.equal(deviceRecord(bareState, ULTRA).configs?.some((row) => row.key === "tampering"), false, "the record should carry no setting row at all");
-    assert.equal(tamperState(deviceRecord(reduce(bareState, fullRowDelivery(bareState, { "tamper_event": "true" })), ULTRA)), true,
+    assert.equal(deviceRecord(bareState, ULTRA_ID).configs?.some((row) => row.key === "tampering"), false, "the record should carry no setting row at all");
+    assert.equal(tamperState(deviceRecord(reduce(bareState, fullRowDelivery(bareState, { "tamper_event": "true" })), ULTRA_ID)), true,
       "an absent setting is no evidence of gating, so it gates nothing");
   });
 
   test("reads a record with no such row as unestablished rather than as quiet", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const reader = state.devices.get(READER_PRO);
+    const reader = state.devices.get(READER_ID);
 
     assert.ok(reader?.configs, "the reader should carry configuration rows");
     assert.equal(reader.configs.some((row) => row.key === "tamper_event"), false, "just not this one");
@@ -400,7 +393,7 @@ describe("tamperState", () => {
     // The one place this parts company with a consumer reading anything but "true" as false. No captured value is affected, and guessing at an unobserved
     // spelling would be inventing a verdict rather than reporting one.
     const state = stateFrom(accessBootstrap2026Fixture);
-    const odd = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "maybe", "tampering": "true" })), ULTRA);
+    const odd = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "maybe", "tampering": "true" })), ULTRA_ID);
 
     assert.equal(rowValue(odd, "tamper_event"), "maybe");
     assert.equal(tamperState(odd), undefined);
@@ -411,7 +404,7 @@ describe("tamperState", () => {
     // The setting row is held to the same discipline as the reading it gates: only the spelling the capture established opens the gate, because a value nobody
     // has seen says nothing about whether the hardware is reporting.
     const state = stateFrom(accessBootstrap2026Fixture);
-    const odd = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "true", "tampering": "maybe" })), ULTRA);
+    const odd = deviceRecord(reduce(state, fullRowDelivery(state, { "tamper_event": "true", "tampering": "maybe" })), ULTRA_ID);
 
     assert.equal(rowValue(odd, "tampering"), "maybe");
     assert.equal(tamperState(odd), undefined);
@@ -421,17 +414,17 @@ describe("tamperState", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
     const raised = reduce(state, fullRowDelivery(state, { "tamper_event": "true", "tampering": "true" }));
-    const later = reduce(raised, deviceChange(ULTRA, { "is_online": false }));
+    const later = reduce(raised, deviceChange(ULTRA_ID, { "is_online": false }));
 
-    assert.equal(later.devices.get(ULTRA)?.is_online, false, "the update landed what it did carry");
-    assert.equal(tamperState(deviceRecord(later, ULTRA)), true, "and the reading is still the one the rows establish");
+    assert.equal(later.devices.get(ULTRA_ID)?.is_online, false, "the update landed what it did carry");
+    assert.equal(tamperState(deviceRecord(later, ULTRA_ID)), true, "and the reading is still the one the rows establish");
   });
 
   test("follows an original-dialect update through the classifier", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    assert.equal(tamperState(deviceRecord(reduce(state, originalUpdate(state, ULTRA, { "tamper_event": "true", "tampering": "true" })), ULTRA)), true);
+    assert.equal(tamperState(deviceRecord(reduce(state, originalUpdate(state, ULTRA_ID, { "tamper_event": "true", "tampering": "true" })), ULTRA_ID)), true);
   });
 });
 
@@ -442,25 +435,25 @@ describe("terminalInput", () => {
     const state = stateFrom(accessBootstrap2026Fixture);
 
     // The UA Hub reports all four of its terminals with their wiring pairs dark, which is a hub whose screw terminals have nothing attached to them.
-    assert.deepEqual(terminalInput(deviceRecord(state, HUB), "rex"), { "wired": false });
-    assert.deepEqual(terminalInput(deviceRecord(state, HUB), "rel"), { "wired": false });
+    assert.deepEqual(terminalInput(deviceRecord(state, UAH_ID), "rex"), { "wired": false });
+    assert.deepEqual(terminalInput(deviceRecord(state, UAH_ID), "rel"), { "wired": false });
 
     /* The UA Ultra is what tells the input argument's threading apart from a constant answer: it detects no wiring at all, and its port setting assigns its one
      * terminal to door-position duty, so its two terminals answer differently on the very same record where the UA Hub answers every one of them alike.
      */
-    assert.deepEqual(terminalInput(deviceRecord(state, ULTRA), "dps"), { "state": false, "wired": true });
-    assert.deepEqual(terminalInput(deviceRecord(state, ULTRA), "rex"), { "wired": false });
+    assert.deepEqual(terminalInput(deviceRecord(state, ULTRA_ID), "dps"), { "state": false, "wired": true });
+    assert.deepEqual(terminalInput(deviceRecord(state, ULTRA_ID), "rex"), { "wired": false });
   });
 
   test("follows the Door Mini's captured original-dialect update through the classifier", () => {
 
     // The document has the Door Mini's position sensor dark; the captured update finds a sensor wired to it and reading, in the rows that update carries.
     const state = stateFrom(accessBootstrap2026Fixture);
-    const update = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === HUB_DOOR_MINI),
+    const update = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === MINI_ID),
       "the original-dialect Door Mini update");
 
-    assert.deepEqual(terminalInput(deviceRecord(state, HUB_DOOR_MINI), "dps"), { "wired": false });
-    assert.deepEqual(terminalInput(deviceRecord(reduce(state, classify(update)), HUB_DOOR_MINI), "dps"), { "state": true, "wired": true });
+    assert.deepEqual(terminalInput(deviceRecord(state, MINI_ID), "dps"), { "wired": false });
+    assert.deepEqual(terminalInput(deviceRecord(reduce(state, classify(update)), MINI_ID), "dps"), { "state": true, "wired": true });
   });
 
   test("answers over a record a census with no configuration rows produced", () => {
@@ -482,7 +475,7 @@ describe("portBindings", () => {
     // states it rather than tidying it.
     const state = stateFrom(accessBootstrapEahFixture);
 
-    assert.deepEqual(portBindings(deviceRecord(state, EAH_HUB)), EAH_BINDINGS);
+    assert.deepEqual(portBindings(deviceRecord(state, EAH_ID)), EAH_BINDINGS);
   });
 
   test("answers nothing for a record whose census carried no extensions", () => {
@@ -490,7 +483,7 @@ describe("portBindings", () => {
     // A record the token-only census produced carries no extensions at all, so nothing binds a port there, exactly as nothing establishes a terminal reading. The
     // single-door hub of the topology document answers the same way for a different reason: its census did carry extensions and it has none.
     assert.deepEqual(portBindings(TOKEN_CENSUS_RECORD), []);
-    assert.deepEqual(portBindings(deviceRecord(stateFrom(accessBootstrap2026Fixture), HUB)), [], "and a captured hub that binds its door through no extension");
+    assert.deepEqual(portBindings(deviceRecord(stateFrom(accessBootstrap2026Fixture), UAH_ID)), [], "and a captured hub that binds its door through no extension");
   });
 });
 
@@ -501,25 +494,25 @@ describe("deviceAccessMethodStates", () => {
     const state = stateFrom(accessBootstrap2026Fixture);
 
     // The UA Ultra reports mobile unlock and NFC on and TouchPass off, which is also what its official settings report.
-    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, ULTRA)), { mobile: true, nfc: true, touchPass: false });
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, ULTRA_ID)), { mobile: true, nfc: true, touchPass: false });
 
     /* The G2 Pro reports face unlock and QR codes beside those. It carries a pin row, and pin is absent from the answer because every capture scrubs that row's
      * value to a placeholder outside the pair: the scrub, not the wire, is what leaves it unestablished here.
      */
-    assert.match(rowValue(deviceRecord(state, READER_PRO), "pin_code"), /^REDACTED-/);
-    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, READER_PRO)), { face: true, mobile: true, nfc: true, qr: true, touchPass: false });
+    assert.match(rowValue(deviceRecord(state, READER_ID), "pin_code"), /^REDACTED-/);
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, READER_ID)), { face: true, mobile: true, nfc: true, qr: true, touchPass: false });
 
     // The G2 Mini is the hardware that reports hand wave.
-    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, READER_MINI)), { mobile: true, nfc: true, touchPass: false, wave: true });
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, G2_MINI_ID)), { mobile: true, nfc: true, touchPass: false, wave: true });
   });
 
   test("reads a hub carrying no access-method rows as no method at all, and an Enterprise hub by the rows it does carry", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, HUB)), {});
-    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, HUB_DOOR_MINI)), {});
-    assert.deepEqual(deviceAccessMethodStates(deviceRecord(stateFrom(accessBootstrapEahFixture), EAH_HUB)), { mobile: true, nfc: false },
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, UAH_ID)), {});
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(state, MINI_ID)), {});
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(stateFrom(accessBootstrapEahFixture), EAH_ID)), { mobile: true, nfc: false },
       "the Enterprise hub's own rows switch NFC off");
   });
 
@@ -527,7 +520,7 @@ describe("deviceAccessMethodStates", () => {
 
     // The EAH document's G2 Pro carries the face-unlock capability and no face row, so the absent answer is no row establishing a reading rather than hardware
     // unable to do the method - the meaning absence takes in the official settings reading.
-    const reader = deviceRecord(stateFrom(accessBootstrapEahFixture), EAH_FRONT_READER);
+    const reader = deviceRecord(stateFrom(accessBootstrapEahFixture), EAH_READER_ID);
 
     assert.ok(reader.capabilities.includes("identity_face_unlock"), "the hardware offers face unlock");
     assert.deepEqual(deviceAccessMethodStates(reader), { mobile: true, nfc: true });
@@ -536,7 +529,7 @@ describe("deviceAccessMethodStates", () => {
   test("reads a value outside the pair as unestablished rather than as switched off", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const odd = deviceRecord(reduce(state, fullRowDelivery(state, { "nfc": "maybe" })), ULTRA);
+    const odd = deviceRecord(reduce(state, fullRowDelivery(state, { "nfc": "maybe" })), ULTRA_ID);
 
     assert.equal(rowValue(odd, "nfc"), "maybe");
     assert.deepEqual(deviceAccessMethodStates(odd), { mobile: true, touchPass: false }, "a guessed false would be a verdict the controller never gave");
@@ -546,7 +539,7 @@ describe("deviceAccessMethodStates", () => {
 
     // A row carrying a method's key under another tag is some other setting. It is not read when it stands alone, and it does not shadow the access-method row
     // when it comes first.
-    const row = (key: string, tag: string, value: string): AccessDeviceEntryConfig => ({ "device_id": ULTRA, key, tag, value });
+    const row = (key: string, tag: string, value: string): AccessDeviceEntryConfig => ({ "device_id": ULTRA_ID, key, tag, value });
     const holding = (...configs: AccessDeviceEntryConfig[]): AccessStateDevice => ({ ...TOKEN_CENSUS_RECORD, configs });
 
     assert.deepEqual(deviceAccessMethodStates(holding(row("nfc", "test_only_tag", "yes"), row("qr_code", "open_door_mode", "no"))), { qr: false });
@@ -562,14 +555,14 @@ describe("deviceAccessMethodStates", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    assert.equal(deviceAccessMethodStates(deviceRecord(reduce(state, fullRowDelivery(state, { "nfc": "no" })), ULTRA)).nfc, false);
+    assert.equal(deviceAccessMethodStates(deviceRecord(reduce(state, fullRowDelivery(state, { "nfc": "no" })), ULTRA_ID)).nfc, false);
   });
 
   test("follows an original-dialect update through the classifier, the owner switching QR codes off on a G2 Pro", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    assert.equal(deviceAccessMethodStates(deviceRecord(reduce(state, originalUpdate(state, READER_PRO, { "qr_code": "no" })), READER_PRO)).qr, false);
+    assert.equal(deviceAccessMethodStates(deviceRecord(reduce(state, originalUpdate(state, READER_ID, { "qr_code": "no" })), READER_ID)).qr, false);
   });
 
   test("follows the newer dialect's access-method map, which establishes nothing on a record holding no rows", () => {
@@ -583,12 +576,12 @@ describe("deviceAccessMethodStates", () => {
       meta: { ...present(specimen.meta, "the specimen's metadata"), id } });
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    assert.equal(deviceAccessMethodStates(deviceRecord(state, READER_PRO)).nfc, true);
-    assert.equal(deviceAccessMethodStates(deviceRecord(reduce(state, nfcOff(READER_PRO)), READER_PRO)).nfc, false);
+    assert.equal(deviceAccessMethodStates(deviceRecord(state, READER_ID)).nfc, true);
+    assert.equal(deviceAccessMethodStates(deviceRecord(reduce(state, nfcOff(READER_ID)), READER_ID)).nfc, false);
 
     const token = reduce(createInitialState(), { complete: false, devices: [TOKEN_CENSUS_RECORD], doorStates: [], doors: [], kind: "censusApplied" });
 
-    assert.deepEqual(deviceAccessMethodStates(deviceRecord(reduce(token, nfcOff(ULTRA)), ULTRA)), {});
+    assert.deepEqual(deviceAccessMethodStates(deviceRecord(reduce(token, nfcOff(ULTRA_ID)), ULTRA_ID)), {});
   });
 });
 
@@ -628,20 +621,20 @@ describe("selectDevicesByType", () => {
     const byType = selectDevicesByType(stateFrom(accessBootstrap2026Fixture));
 
     assert.deepEqual([...byType.keys()], [ "UA-ULTRA", "UAH", "UA-G2-PRO", "UA-G2-MINI", "UA-Hub-Door-Mini" ]);
-    assert.deepEqual(idsOf(byType.get("UA-ULTRA")), [ULTRA]);
-    assert.deepEqual(idsOf(byType.get("UAH")), [HUB]);
-    assert.deepEqual(idsOf(byType.get("UA-G2-PRO")), [READER_PRO]);
-    assert.deepEqual(idsOf(byType.get("UA-G2-MINI")), [READER_MINI]);
-    assert.deepEqual(idsOf(byType.get("UA-Hub-Door-Mini")), [HUB_DOOR_MINI]);
+    assert.deepEqual(idsOf(byType.get("UA-ULTRA")), [ULTRA_ID]);
+    assert.deepEqual(idsOf(byType.get("UAH")), [UAH_ID]);
+    assert.deepEqual(idsOf(byType.get("UA-G2-PRO")), [READER_ID]);
+    assert.deepEqual(idsOf(byType.get("UA-G2-MINI")), [G2_MINI_ID]);
+    assert.deepEqual(idsOf(byType.get("UA-Hub-Door-Mini")), [MINI_ID]);
   });
 
   test("groups the EAH document's devices, including the hub the building hosts directly", () => {
 
     const byType = selectDevicesByType(stateFrom(accessBootstrapEahFixture));
 
-    assert.deepEqual(idsOf(byType.get("UAH-Ent")), [EAH_HUB]);
+    assert.deepEqual(idsOf(byType.get("UAH-Ent")), [EAH_ID]);
     assert.deepEqual(idsOf(byType.get("UAH")), [EAH_GARAGE_HUB]);
-    assert.deepEqual(idsOf(byType.get("UA-G2-PRO")), [ EAH_FRONT_READER, EAH_NORTHEAST_READER ]);
+    assert.deepEqual(idsOf(byType.get("UA-G2-PRO")), [ EAH_READER_ID, EAH_NORTHEAST_READER ]);
     assert.deepEqual(idsOf(byType.get("UA-G2-MINI")), [ EAH_GARAGE_READER, EAH_NORTHWEST_READER ]);
   });
 
@@ -663,10 +656,10 @@ describe("selectDevicesByType", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
     const before = selectDevicesByType(state);
-    const relabeled = reduce(state, deviceChange(READER_PRO, { "device_type": "UA-G2-PRO-2" }));
+    const relabeled = reduce(state, deviceChange(READER_ID, { "device_type": "UA-G2-PRO-2" }));
 
     assert.ok(!Object.is(before, selectDevicesByType(relabeled)), "a changed devices map recomputes the view");
-    assert.deepEqual(idsOf(selectDevicesByType(relabeled).get("UA-G2-PRO-2")), [READER_PRO]);
+    assert.deepEqual(idsOf(selectDevicesByType(relabeled).get("UA-G2-PRO-2")), [READER_ID]);
     assert.equal(selectDevicesByType(relabeled).has("UA-G2-PRO"), false, "the emptied bucket is gone rather than left behind");
   });
 });
@@ -675,12 +668,12 @@ describe("selectHubs", () => {
 
   test("selects the 2026 document's hub-capable devices and none of its readers", () => {
 
-    assert.deepEqual(idsOf(selectHubs(stateFrom(accessBootstrap2026Fixture))), [ ULTRA, HUB, HUB_DOOR_MINI ]);
+    assert.deepEqual(idsOf(selectHubs(stateFrom(accessBootstrap2026Fixture))), [ ULTRA_ID, UAH_ID, MINI_ID ]);
   });
 
   test("selects both of the EAH document's hubs and neither of its readers", () => {
 
-    assert.deepEqual(idsOf(selectHubs(stateFrom(accessBootstrapEahFixture))), [ EAH_HUB, EAH_GARAGE_HUB ]);
+    assert.deepEqual(idsOf(selectHubs(stateFrom(accessBootstrapEahFixture))), [ EAH_ID, EAH_GARAGE_HUB ]);
   });
 
   test("memoizes on the devices map", () => {
@@ -704,9 +697,9 @@ describe("selectDoorDevices", () => {
     const byDoor = selectDoorDevices(stateFrom(accessBootstrap2026Fixture));
 
     assert.deepEqual([...byDoor.keys()], [ DOOR_ULTRA, DOOR_HUB, DOOR_HUB_MINI ]);
-    assert.deepEqual(idsOf(byDoor.get(DOOR_ULTRA)), [ULTRA]);
-    assert.deepEqual(idsOf(byDoor.get(DOOR_HUB)), [ HUB, READER_PRO, READER_MINI ]);
-    assert.deepEqual(idsOf(byDoor.get(DOOR_HUB_MINI)), [HUB_DOOR_MINI]);
+    assert.deepEqual(idsOf(byDoor.get(DOOR_ULTRA)), [ULTRA_ID]);
+    assert.deepEqual(idsOf(byDoor.get(DOOR_HUB)), [ UAH_ID, READER_ID, G2_MINI_ID ]);
+    assert.deepEqual(idsOf(byDoor.get(DOOR_HUB_MINI)), [MINI_ID]);
   });
 
   test("lists every EAH door, leaves the hardware-less ones empty, and excludes the building-hosted hub", () => {
@@ -716,7 +709,7 @@ describe("selectDoorDevices", () => {
 
     assert.equal(byDoor.size, state.doors.size, "every door in the state is a key");
     assert.equal(byDoor.size, 9);
-    assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_FRONT)), [EAH_FRONT_READER]);
+    assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_FRONT)), [EAH_READER_ID]);
     assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_GARAGE)), [ EAH_GARAGE_HUB, EAH_GARAGE_READER ]);
     assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_NORTHEAST)), [EAH_NORTHEAST_READER]);
     assert.deepEqual(idsOf(byDoor.get(EAH_DOOR_NORTHWEST)), [EAH_NORTHWEST_READER]);
@@ -725,7 +718,7 @@ describe("selectDoorDevices", () => {
     // The Enterprise Access Hub is hosted by the building, so it belongs to no door and appears in no entry.
     for(const [ door, devices ] of byDoor) {
 
-      assert.ok(!idsOf(devices).includes(EAH_HUB), "the building-hosted hub must not appear under " + door);
+      assert.ok(!idsOf(devices).includes(EAH_ID), "the building-hosted hub must not appear under " + door);
     }
   });
 
@@ -735,8 +728,8 @@ describe("selectDoorDevices", () => {
 
     // Relocating the reader updates its live location_id and leaves the door record embedded in it naming the door it came from - the exact disagreement a join
     // that read the embedded snapshot would resolve the wrong way.
-    const relocated = reduce(state, deviceChange(READER_PRO, { "location_id": DOOR_ULTRA }));
-    const moved = relocated.devices.get(READER_PRO);
+    const relocated = reduce(state, deviceChange(READER_ID, { "location_id": DOOR_ULTRA }));
+    const moved = relocated.devices.get(READER_ID);
 
     assert.ok(moved, "the reader should still be in the devices map");
     assert.equal(moved.location_id, DOOR_ULTRA, "the live field names the new door");
@@ -744,8 +737,8 @@ describe("selectDoorDevices", () => {
 
     const byDoor = selectDoorDevices(relocated);
 
-    assert.deepEqual(idsOf(byDoor.get(DOOR_ULTRA)), [ ULTRA, READER_PRO ], "the device groups under the door its live location names");
-    assert.deepEqual(idsOf(byDoor.get(DOOR_HUB)), [ HUB, READER_MINI ], "and no longer under the door its stale snapshot names");
+    assert.deepEqual(idsOf(byDoor.get(DOOR_ULTRA)), [ ULTRA_ID, READER_ID ], "the device groups under the door its live location names");
+    assert.deepEqual(idsOf(byDoor.get(DOOR_HUB)), [ UAH_ID, G2_MINI_ID ], "and no longer under the door its stale snapshot names");
   });
 
   test("recomputes on a doors-only change and on a devices-only change alike", () => {
@@ -762,7 +755,7 @@ describe("selectDoorDevices", () => {
     assert.ok(!Object.is(first, selectDoorDevices(renamed)), "a doors-only change refreshes the join");
 
     // Devices churn while the doors map stays put: a view keyed on doors alone would answer this from cache.
-    const relocated = reduce(state, deviceChange(READER_PRO, { "location_id": DOOR_ULTRA }));
+    const relocated = reduce(state, deviceChange(READER_ID, { "location_id": DOOR_ULTRA }));
 
     assert.ok(Object.is(relocated.doors, state.doors), "the relocation left the doors map alone");
     assert.ok(!Object.is(first, selectDoorDevices(relocated)), "a devices-only change refreshes the join");
@@ -799,8 +792,8 @@ describe("isEnterpriseHubRecord", () => {
   test("qualifies the hub the building hosts and no other record in a rooted state", () => {
 
     const state = stateFrom(accessBootstrapEahFixture);
-    const hub = present(state.devices.get(EAH_HUB), "the Enterprise hub");
-    const reader = present(state.devices.get(EAH_FRONT_READER), "the front reader");
+    const hub = present(state.devices.get(EAH_ID), "the Enterprise hub");
+    const reader = present(state.devices.get(EAH_READER_ID), "the front reader");
 
     assert.equal(isEnterpriseHubRecord(hub, state), true, "the building-hosted Enterprise hub is what the hub views withhold");
     assert.equal(isEnterpriseHubRecord(reader, state), false, "a reader is neither the type nor the placement");
@@ -812,7 +805,7 @@ describe("isEnterpriseHubRecord", () => {
      * nothing to add and the whole-hub handle resolves correctly.
      */
     const state = stateFrom(accessBootstrapEahFixture);
-    const hub = present(state.devices.get(EAH_HUB), "the Enterprise hub");
+    const hub = present(state.devices.get(EAH_ID), "the Enterprise hub");
 
     assert.equal(isEnterpriseHubRecord({ ...hub, "location_id": EAH_DOOR_2 }, state), false);
   });
@@ -823,7 +816,7 @@ describe("isEnterpriseHubRecord", () => {
      * would resolve its door to the hub's own location and command the wrong resource. Withholding it is the honest answer until a topology places it.
      */
     const unrooted = createInitialState();
-    const hub = present(stateFrom(accessBootstrapEahFixture).devices.get(EAH_HUB), "the Enterprise hub");
+    const hub = present(stateFrom(accessBootstrapEahFixture).devices.get(EAH_ID), "the Enterprise hub");
 
     assert.equal(unrooted.root, null);
     assert.equal(isEnterpriseHubRecord(hub, unrooted), true, "an unplaced Enterprise hub is withheld from the hub views");
@@ -845,7 +838,7 @@ describe("selectAccessPoints", () => {
 
     const points = selectAccessPoints(stateFrom(accessBootstrapEahFixture));
     const port2 = points.find((point) => point.unique_id === EAH_PORT_2_EXTENSION);
-    const hub = stateFrom(accessBootstrapEahFixture).devices.get(EAH_HUB);
+    const hub = stateFrom(accessBootstrapEahFixture).devices.get(EAH_ID);
 
     assert.ok(port2 && hub, "the port-2 access point and its hub should both be present");
 
@@ -865,13 +858,13 @@ describe("selectAccessPoints", () => {
   test("leaves the source records untouched", () => {
 
     const state = stateFrom(accessBootstrapEahFixture);
-    const hub = state.devices.get(EAH_HUB);
+    const hub = state.devices.get(EAH_ID);
 
     assert.ok(hub, "the hub should be in the devices map");
 
     selectAccessPoints(state);
 
-    assert.ok(Object.is(hub, state.devices.get(EAH_HUB)), "the device record is the same object after the view is derived");
+    assert.ok(Object.is(hub, state.devices.get(EAH_ID)), "the device record is the same object after the view is derived");
     assert.equal(hub.extensions?.length, 8, "the hub still carries its own extensions");
     assert.equal(hub.alias, "Test alias 60", "and its own alias");
     assert.equal(hub.location_id, EAH_ROOT, "and its own location");
@@ -897,9 +890,9 @@ describe("selectAccessPoints", () => {
     const hub = bootstrap.device_groups?.[0]?.[0];
 
     assert.ok(hub?.extensions, "the EAH document should host its hub at the building level");
-    assert.equal(hub.unique_id, EAH_HUB);
+    assert.equal(hub.unique_id, EAH_ID);
 
-    hub.extensions.push({ "device_id": EAH_HUB, "extension_name": "intercom_pair", "target_config": [], "target_type": "admin",
+    hub.extensions.push({ "device_id": EAH_ID, "extension_name": "intercom_pair", "target_config": [], "target_type": "admin",
       "unique_id": "00000000-0000-4000-8000-000000000001" });
 
     const points = selectAccessPoints(applyBootstrap(createInitialState(), bootstrap));
@@ -960,11 +953,11 @@ describe("selectAccessPoints", () => {
 
     assert.ok(Object.is(before, selectAccessPoints(state)), "repeat reads of an unchanged state return the identical array");
 
-    const hub = state.devices.get(EAH_HUB);
+    const hub = state.devices.get(EAH_ID);
 
     assert.ok(hub?.extensions, "the hub should carry its extensions");
 
-    const trimmed = reduce(state, deviceChange(EAH_HUB, { "extensions": hub.extensions.slice(0, 7) }));
+    const trimmed = reduce(state, deviceChange(EAH_ID, { "extensions": hub.extensions.slice(0, 7) }));
     const after = selectAccessPoints(trimmed);
 
     assert.ok(!Object.is(before, after), "a device update that changed the extensions refreshes the expansion");
@@ -1005,7 +998,7 @@ describe("selectAccessPoints", () => {
     const port2 = before.find((point) => point.unique_id === EAH_PORT_2_EXTENSION);
 
     // A reader that has nothing to do with the Enterprise Access Hub changes.
-    const touched = reduce(state, deviceChange(EAH_FRONT_READER, { "ip": "172.16.9.9" }));
+    const touched = reduce(state, deviceChange(EAH_READER_ID, { "ip": "172.16.9.9" }));
     const after = selectAccessPoints(touched);
 
     assert.ok(!Object.is(touched.devices, state.devices), "the unrelated device really did change");
@@ -1038,7 +1031,7 @@ describe("selectAccessPoints", () => {
     assert.ok(siblingBefore && firstBefore, "both hubs expanded");
 
     // Change the first hub only.
-    const touched = reduce(state, deviceChange(EAH_HUB, { "ip": "172.16.9.8" }));
+    const touched = reduce(state, deviceChange(EAH_ID, { "ip": "172.16.9.8" }));
     const after = selectAccessPoints(touched);
 
     assert.ok(!Object.is(after.find((point) => point.unique_id === EAH_PORT_2_EXTENSION), firstBefore), "the changed hub's ports are rebuilt from its new record");

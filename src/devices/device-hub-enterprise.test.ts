@@ -3,7 +3,8 @@
  * device-hub-enterprise.test.ts: Tests for the Enterprise Access Hub port matrix - each port surfacing as its own handle while the whole-hub record stays out of
  * the hub views, the door a given port addresses, and the uplink each synthesized port and the hardware carrying it report.
  */
-import { DOOR_MINI, EAH_DOOR_2, EAH_HUB, EAH_PORT_2, EAH_PORT_3, HUB, READER, deviceFixture, doorStateEvent, intercept } from "./device.helpers.ts";
+import { EAH_DOOR_2, EAH_PORT_2, EAH_PORT_3, deviceFixture, doorStateEvent, intercept } from "./device.helpers.ts";
+import { EAH_ID, MINI_ID, READER_ID, UAH_ID } from "../protocol/capture.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
 import { expectAt, present, settle, settleUntil } from "homebridge-plugin-utils/testing";
@@ -17,15 +18,15 @@ describe("the Enterprise Access Hub port matrix", () => {
     const points = registry.accessPoints();
 
     assert.equal(points.length, 8, "one handle per door-serving port");
-    assert.ok(points.every((point) => point.id !== EAH_HUB), "no handle carries the whole hub's identity");
+    assert.ok(points.every((point) => point.id !== EAH_ID), "no handle carries the whole hub's identity");
 
     // The two hub accessors share one predicate, so both must withhold the record - and both are asserted, because a consumer can arrive through either.
-    assert.equal(registry.hub(EAH_HUB), undefined, "the whole-hub record answers no hub handle");
-    assert.ok(!registry.hubs().some((hub) => hub.id === EAH_HUB), "and it is absent from the collection too");
+    assert.equal(registry.hub(EAH_ID), undefined, "the whole-hub record answers no hub handle");
+    assert.ok(!registry.hubs().some((hub) => hub.id === EAH_ID), "and it is absent from the collection too");
 
     // It stays fully reachable for configuration, which is what makes the withholding a routing decision rather than a hidden record.
-    assert.equal(registry.device(EAH_HUB)?.id, EAH_HUB);
-    assert.equal(registry.device(EAH_HUB)?.config.device_type, "UAH-Ent");
+    assert.equal(registry.device(EAH_ID)?.id, EAH_ID);
+    assert.equal(registry.device(EAH_ID)?.config.device_type, "UAH-Ent");
 
     assert.equal(registry.accessPoint(EAH_PORT_2)?.id, EAH_PORT_2);
     assert.equal(registry.accessPoint("no-such-port"), undefined);
@@ -110,7 +111,7 @@ describe("the Enterprise Access Hub port matrix", () => {
     assert.equal(seen.length, 0, "an unrelated device must not wake a port handle");
 
     // Its own hub changing does wake it.
-    store.dispatch({ eventName: "access.data.device.update", id: EAH_HUB, kind: "deviceChanged", payload: { "ip": "172.16.9.8" } });
+    store.dispatch({ eventName: "access.data.device.update", id: EAH_ID, kind: "deviceChanged", payload: { "ip": "172.16.9.8" } });
     await settleUntil(() => seen.length === 1, { description: "port 2's observer to see its own hub's change" });
     assert.deepEqual(seen, ["172.16.9.8"]);
 
@@ -133,7 +134,7 @@ describe("the Enterprise Access Hub port matrix", () => {
     assert.ok(points.every((point) => point.uplinkId === null), "a port is hub hardware wearing a port's identity, so nothing carries it");
 
     // The whole-hub record is the same fact from the other side: the controller writes its uplink as a reference to itself.
-    assert.equal(registry.device(EAH_HUB)?.uplinkId, null);
+    assert.equal(registry.device(EAH_ID)?.uplinkId, null);
   });
 
   test("a device reports the identifier of the hub that carries it", () => {
@@ -141,8 +142,8 @@ describe("the Enterprise Access Hub port matrix", () => {
     const { registry } = deviceFixture(accessBootstrap2026Fixture);
 
     // Captured material rather than a constructed case - the reader on this door genuinely runs its uplink through the hub beside it.
-    assert.equal(registry.device(READER)?.uplinkId, HUB);
-    assert.equal(registry.device(HUB)?.uplinkId, null, "the hub connects in its own right");
+    assert.equal(registry.device(READER_ID)?.uplinkId, UAH_ID);
+    assert.equal(registry.device(UAH_ID)?.uplinkId, null, "the hub connects in its own right");
   });
 
   test("an empty uplink field reads as a device that connects in its own right", () => {
@@ -151,14 +152,14 @@ describe("the Enterprise Access Hub port matrix", () => {
     const group = present(bootstrap.floors?.[0]?.doors?.[1]?.device_groups[0], "the second door's device group");
     const reader = expectAt(group, 1, "the reader");
 
-    assert.equal(reader.unique_id, READER);
+    assert.equal(reader.unique_id, READER_ID);
 
     // The controller spells the same thing two ways, and no capture carries the empty spelling - so this one is constructed.
     group[1] = { ...reader, "connected_uah_id": "" };
 
     const { registry } = deviceFixture(bootstrap);
 
-    assert.equal(registry.device(READER)?.uplinkId, null);
+    assert.equal(registry.device(READER_ID)?.uplinkId, null);
   });
 
   test("a hub-capable device still reports the device that carries it", () => {
@@ -167,15 +168,15 @@ describe("the Enterprise Access Hub port matrix", () => {
     const group = present(bootstrap.floors?.[0]?.doors?.[1]?.device_groups[0], "the second door's device group");
     const hub = expectAt(group, 0, "the hub");
 
-    assert.equal(hub.unique_id, HUB);
+    assert.equal(hub.unique_id, UAH_ID);
     assert.ok(hub.capabilities.includes("is_hub"), "this assertion needs a record the controller marks hub-capable");
 
-    group[0] = { ...hub, "connected_uah_id": DOOR_MINI };
+    group[0] = { ...hub, "connected_uah_id": MINI_ID };
 
     const { registry } = deviceFixture(bootstrap);
 
     // Hub capability is not the question. A port is exempt because of how it came to exist, not because of what it can do, and every port inherits its hub's
     // capabilities through the expansion - so classifying on capability would pass every other assertion here and fail this one.
-    assert.equal(registry.device(HUB)?.uplinkId, DOOR_MINI);
+    assert.equal(registry.device(UAH_ID)?.uplinkId, MINI_ID);
   });
 });

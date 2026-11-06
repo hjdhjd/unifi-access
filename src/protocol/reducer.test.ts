@@ -9,7 +9,7 @@ import type { AccessBootstrapConfig, AccessControllerConfig, AccessDeviceConfig,
 import type { AccessState, AccessStateDevice, AccessStateDoor } from "./reducer.ts";
 import type { AccessTypedEvent, LOCATION_NOTIFICATION_MEMBERS } from "./events.ts";
 import { DEVICE_NOTIFICATION_MEMBERS, classifyPacket } from "./events.ts";
-import { ULTRA_ID, classify, documentWith, findPacket, withDuty } from "./capture.helpers.ts";
+import { DOORBELL_ID, EAH_ID, EAH_READER_ID, G2_MINI_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID, classify, documentWith, findPacket, withDuty } from "./capture.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture, accessControllerInfoFixture } from "./topology.fixtures.ts";
 import { accessEventPacketsDoorStateFixture, accessEventPacketsFixture, accessEventPacketsTamperFixture } from "./events.fixtures.ts";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
@@ -25,24 +25,16 @@ import { isPlainObject } from "./plain-object.ts";
 import { present } from "homebridge-plugin-utils/testing";
 import { topologyDevices } from "../testing.helpers.ts";
 
-// The identity the captured camera-class doorbell reports. It appears throughout the notification corpus while being absent from every real topology document, which
-// is why a state that needs it present has to seed it deliberately.
-const DOORBELL_ID = "00000000000000000000000c";
-
 // Named entries from the real topology documents, so assertions cite a specific record rather than a count re-derived from the same fixture.
 const ROOT_2026 = "00000000-0000-0000-0000-000000000000";
 const FLOOR_2026 = "00000000-0000-0000-0000-000000000001";
 const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
-const HUB_ID = "aabbcc000001";
-const READER_ID = "aabbcc000002";
 const EAH_ROOT = "00000000-0000-0000-0000-000000000011";
-const EAH_BUILDING_HOSTED_DEVICE = "aabbcc000005";
 
 // The one door in the 2024 document with a hub attached to the door itself, rather than to the building or nothing at all.
 const EAH_HUB_DOOR = "00000000-0000-0000-0000-000000000024";
 
-// The Door Mini and the door it drives, which is the hardware the door-state capture window worked through.
-const DOOR_MINI = "aabbcc000004";
+// The door the Door Mini drives, the hardware the door-state capture window worked through.
 const DOOR_MINI_DOOR = "00000000-0000-0000-0000-00000000000e";
 
 // The UA Ultra's door, the one whose hardware reports no wiring pair at all.
@@ -94,7 +86,7 @@ const classifyDoorState = (predicate: (event: DoorStateEvent) => boolean): DoorS
 
 // A door-state report for a door the corpus never worked, so a test can put two doors into the map. The entry shape is the wire's own; only the door it names is
 // chosen here.
-const syntheticDoorState = (locationId: string): AccessTypedEvent => ({ device: { id: DOOR_MINI, payload: {} }, eventName: "access.data.v2.device.update",
+const syntheticDoorState = (locationId: string): AccessTypedEvent => ({ device: { id: MINI_ID, payload: {} }, eventName: "access.data.v2.device.update",
   kind: "doorStateChanged", states: [{ "dps": "close", "dps_connected": true, "emergency": { "hardware": "none", "software": "none" }, "is_unavailable": false,
     "location_id": locationId, "lock": "locked" }] });
 
@@ -149,7 +141,7 @@ describe("applyBootstrap flattening", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    for(const id of [ "aabbcc000000", HUB_ID, READER_ID, "aabbcc000003", "aabbcc000004" ]) {
+    for(const id of [ ULTRA_ID, UAH_ID, READER_ID, G2_MINI_ID, MINI_ID ]) {
 
       assert.ok(state.devices.has(id), "the devices map should hold " + id);
     }
@@ -185,8 +177,8 @@ describe("applyBootstrap flattening", () => {
 
     const state = stateFrom(accessBootstrapEahFixture);
 
-    assert.ok(state.devices.has(EAH_BUILDING_HOSTED_DEVICE), "the building-hosted device should reach the devices map");
-    assert.equal(state.devices.get(EAH_BUILDING_HOSTED_DEVICE)?.name, "Test Name 61");
+    assert.ok(state.devices.has(EAH_ID), "the building-hosted device should reach the devices map");
+    assert.equal(state.devices.get(EAH_ID)?.name, "Test Name 61");
     assert.equal(state.root?.unique_id, EAH_ROOT);
 
     for(const device of topologyDevices(accessBootstrapEahFixture)) {
@@ -204,8 +196,8 @@ describe("applyBootstrap flattening", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    assert.equal(state.devices.get(HUB_ID)?.unique_id, HUB_ID);
-    assert.equal(state.devices.get(HUB_ID)?.device_type, "UAH");
+    assert.equal(state.devices.get(UAH_ID)?.unique_id, UAH_ID);
+    assert.equal(state.devices.get(UAH_ID)?.device_type, "UAH");
   });
 
   test("stores a floor the controller sent with no doors key, contributing no doors and no hardware", () => {
@@ -401,15 +393,15 @@ describe("applyBootstrap reconciliation", () => {
     const drifted = structuredClone(accessBootstrap2026Fixture);
     const target = present(drifted.floors?.[0]?.doors?.[1]?.device_groups[0]?.[0], "the hub record");
 
-    assert.equal(target.unique_id, HUB_ID);
+    assert.equal(target.unique_id, UAH_ID);
 
     target.ip = "192.0.2.1";
 
     const next = applyBootstrap(state, drifted);
 
     assert.notEqual(Object.is(next, state), true, "a drifted document should mint a new state");
-    assert.equal(next.devices.get(HUB_ID)?.ip, "192.0.2.1");
-    assert.notEqual(Object.is(next.devices.get(HUB_ID), state.devices.get(HUB_ID)), true, "the changed device should be a new reference");
+    assert.equal(next.devices.get(UAH_ID)?.ip, "192.0.2.1");
+    assert.notEqual(Object.is(next.devices.get(UAH_ID), state.devices.get(UAH_ID)), true, "the changed device should be a new reference");
     assert.equal(Object.is(next.devices.get(READER_ID), state.devices.get(READER_ID)), true, "an untouched device should keep its reference");
 
     // The collections that saw no change keep their own references, so no observer of doors or floors is woken by a device change.
@@ -422,7 +414,7 @@ describe("applyBootstrap reconciliation", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
 
-    assert.ok(state.devices.has("aabbcc000004"), "the device is held before the later document drops it");
+    assert.ok(state.devices.has(MINI_ID), "the device is held before the later document drops it");
 
     const reduced = structuredClone(accessBootstrap2026Fixture);
     const doors = reduced.floors?.[0]?.doors;
@@ -434,8 +426,8 @@ describe("applyBootstrap reconciliation", () => {
 
     const next = applyBootstrap(state, reduced);
 
-    assert.equal(next.devices.has("aabbcc000004"), false, "a device the document no longer carries should leave the map");
-    assert.ok(next.devices.has(HUB_ID), "a device the document still carries stays in the map");
+    assert.equal(next.devices.has(MINI_ID), false, "a device the document no longer carries should leave the map");
+    assert.ok(next.devices.has(UAH_ID), "a device the document still carries stays in the map");
   });
 
   test("the document is authoritative over a value a live notification had advanced", () => {
@@ -445,11 +437,11 @@ describe("applyBootstrap reconciliation", () => {
     const state = stateFrom(accessBootstrap2026Fixture);
     const advanced = reduce(state, classifyDoorState((entry) => entry.states[0].dps === "close"));
 
-    assert.equal(advanced.devices.get(DOOR_MINI)?.firmware, "v1.5.16.0");
+    assert.equal(advanced.devices.get(MINI_ID)?.firmware, "v1.5.16.0");
 
     const refreshed = applyBootstrap(advanced, structuredClone(accessBootstrap2026Fixture));
 
-    assert.equal(refreshed.devices.get(DOOR_MINI)?.firmware, "v1.3.4.0", "the document's value replaces the advanced one wholesale");
+    assert.equal(refreshed.devices.get(MINI_ID)?.firmware, "v1.3.4.0", "the document's value replaces the advanced one wholesale");
   });
 });
 
@@ -460,7 +452,7 @@ describe("applyBootstrap capability normalization", () => {
     const document = capabilityLessBootstrap();
     const carrier = present(document.floors?.[0]?.doors?.[1]?.device_groups[0]?.[0], "the hub record");
 
-    assert.equal(carrier.unique_id, HUB_ID);
+    assert.equal(carrier.unique_id, UAH_ID);
 
     const state = applyBootstrap(createInitialState(), document);
     const admitted = state.devices.get(CAPABILITY_LESS_ID);
@@ -470,7 +462,7 @@ describe("applyBootstrap capability normalization", () => {
 
     // The substitution is selective rather than a rewrite of everything that passes through: a record that arrived with the array keeps the very array the document
     // carried. The record itself is a copy, because its address takes the library's spelling on the way in, and the array is held in that copy by reference.
-    assert.equal(Object.is(state.devices.get(HUB_ID)?.capabilities, carrier.capabilities), true, "a record carrying capabilities keeps its own array");
+    assert.equal(Object.is(state.devices.get(UAH_ID)?.capabilities, carrier.capabilities), true, "a record carrying capabilities keeps its own array");
   });
 
   test("re-applying a document carrying that record returns the very same state", () => {
@@ -503,10 +495,6 @@ describe("applyBootstrap capability normalization", () => {
 
 describe("applyBootstrap address spelling", () => {
 
-  // The 2026 document spells this reader's address in uppercase where it spells its siblings' in lowercase, which is the wire's own inconsistency and what makes it
-  // the specimen. The premise is asserted first, so the test cannot pass vacuously if the fixture is ever re-captured.
-  const G2_ID = "aabbcc000003";
-
   // One record of a document by identity, failing loudly rather than skipping if the document ever stops carrying it. The record is the document's own object,
   // which is what lets a caller re-spell it in place on a clone.
   const documentRecord = (document: AccessBootstrapConfig, id: string): AccessDeviceConfig => {
@@ -520,9 +508,11 @@ describe("applyBootstrap address spelling", () => {
 
   test("a record whose address the document spells in uppercase with separators is stored in the library's spelling", () => {
 
-    assert.equal(documentRecord(accessBootstrap2026Fixture, G2_ID).mac, "AA:BB:CC:00:00:03", "the document itself spells this address with separators");
+    // The 2026 document spells the G2 Mini's address in uppercase where it spells its siblings' in lowercase, which is the wire's own inconsistency and what makes
+    // it the specimen. The premise is asserted first, so the test cannot pass vacuously if the fixture is ever re-captured.
+    assert.equal(documentRecord(accessBootstrap2026Fixture, G2_MINI_ID).mac, "AA:BB:CC:00:00:03", "the document itself spells this address with separators");
 
-    const stored = present(stateFrom(accessBootstrap2026Fixture).devices.get(G2_ID), "the stored G2");
+    const stored = present(stateFrom(accessBootstrap2026Fixture).devices.get(G2_MINI_ID), "the stored G2");
 
     assert.equal(stored.mac, "AABBCC000003");
   });
@@ -532,11 +522,11 @@ describe("applyBootstrap address spelling", () => {
     // No captured topology document spells an address the library's way, so the record is prepared on a clone: the assertion is that the fold hands back the very
     // object when it has nothing to do, which is what keeps a canonical record from being rebuilt on every pass.
     const document = structuredClone(accessBootstrap2026Fixture);
-    const carrier = documentRecord(document, HUB_ID);
+    const carrier = documentRecord(document, UAH_ID);
 
     carrier.mac = "AABBCC000001";
 
-    assert.equal(Object.is(applyBootstrap(createInitialState(), document).devices.get(HUB_ID), carrier), true, "nothing to fold means nothing to rebuild");
+    assert.equal(Object.is(applyBootstrap(createInitialState(), document).devices.get(UAH_ID), carrier), true, "nothing to fold means nothing to rebuild");
   });
 
   test("a document that re-spells every address in the other case reconciles to the very same state", () => {
@@ -562,13 +552,13 @@ describe("applyBootstrap address spelling", () => {
     // the record rather than the record's own identity, so they are kept exactly as sent. The wire happens to spell them the library's way already, which would make
     // an assertion on the captured value vacuous, so the nested address is re-spelled on a clone and must come back untouched.
     const document = structuredClone(accessBootstrap2026Fixture);
-    const camera = documentRecord(document, HUB_ID).cameras?.[0];
+    const camera = documentRecord(document, UAH_ID).cameras?.[0];
 
     assert.ok(camera, "the hub should embed a camera record");
     assert.equal(camera["mac"], "AABBCC000002", "the document itself spells the embedded address the library's way");
     camera["mac"] = "aa:bb:cc:00:00:02";
 
-    assert.equal(applyBootstrap(createInitialState(), document).devices.get(HUB_ID)?.cameras?.[0]?.["mac"], "aa:bb:cc:00:00:02");
+    assert.equal(applyBootstrap(createInitialState(), document).devices.get(UAH_ID)?.cameras?.[0]?.["mac"], "aa:bb:cc:00:00:02");
   });
 });
 
@@ -579,7 +569,7 @@ describe("deviceChanged", () => {
    */
   const doorMiniUpdate = (): AccessTypedEvent => {
 
-    const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === DOOR_MINI), "the v2 Door Mini update");
+    const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === MINI_ID), "the v2 Door Mini update");
     const { "location_states": _states, ...data } = present(packet.data, "the Door Mini's payload");
 
     return classify({ ...packet, data });
@@ -588,13 +578,13 @@ describe("deviceChanged", () => {
   test("merges a real sparse v2 payload, updating what changed and preserving what did not", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = present(state.devices.get(DOOR_MINI), "the stored Door Mini");
+    const stored = present(state.devices.get(MINI_ID), "the stored Door Mini");
 
     assert.equal(stored.firmware, "v1.3.4.0");
 
     const event = doorMiniUpdate();
     const next = reduce(state, event);
-    const merged = present(next.devices.get(DOOR_MINI), "the merged Door Mini");
+    const merged = present(next.devices.get(MINI_ID), "the merged Door Mini");
 
     assert.equal(event.kind, "deviceChanged");
     assert.equal(merged.firmware, "v1.5.16.0", "the changed field should take the notification's value");
@@ -618,7 +608,7 @@ describe("deviceChanged", () => {
     assert.notEqual(Object.is(once, state), true, "the first application really did change something");
     assert.equal(Object.is(twice, once), true, "re-applying the same notification should produce no new state");
     assert.equal(Object.is(twice.devices, once.devices), true);
-    assert.equal(Object.is(twice.devices.get(DOOR_MINI), once.devices.get(DOOR_MINI)), true);
+    assert.equal(Object.is(twice.devices.get(MINI_ID), once.devices.get(MINI_ID)), true);
   });
 
   test("a null-valued field means not-carried and leaves the stored value standing", () => {
@@ -626,13 +616,13 @@ describe("deviceChanged", () => {
     // The wire's nulls mostly fall outside the declaration, where the classifier drops them before the merge, so this delivery nulls a declared member to reach
     // the merge's null rule directly: a merge that honored the null as a clear would erase a real stored value and commit a change the controller never made.
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = present(state.devices.get(DOOR_MINI), "the stored Door Mini");
+    const stored = present(state.devices.get(MINI_ID), "the stored Door Mini");
 
     assert.equal(stored.firmware, "v1.3.4.0", "the document establishes the value a clear would erase");
 
-    const next = reduce(state, { eventName: "access.data.device.update", id: DOOR_MINI, kind: "deviceChanged", payload: { "firmware": null } });
+    const next = reduce(state, { eventName: "access.data.device.update", id: MINI_ID, kind: "deviceChanged", payload: { "firmware": null } });
 
-    assert.equal(next.devices.get(DOOR_MINI)?.firmware, "v1.3.4.0", "a null must not clear a stored value");
+    assert.equal(next.devices.get(MINI_ID)?.firmware, "v1.3.4.0", "a null must not clear a stored value");
     assert.equal(Object.is(next, state), true, "a delivery carrying nothing but a null changes nothing at all");
   });
 
@@ -656,9 +646,6 @@ describe("deviceChanged", () => {
  */
 describe("the original dialect's device update", () => {
 
-  // The G2 Mini, whose captured update the 2026 document already agrees with on every declared member.
-  const G2_MINI_ID = "aabbcc000003";
-
   // The declaration as a set, so a row can ask whether a member a record carries is one a notification may write.
   const DECLARED: ReadonlySet<string> = new Set(DEVICE_NOTIFICATION_MEMBERS);
 
@@ -680,7 +667,7 @@ describe("the original dialect's device update", () => {
   // The hub's captured update carrying the live spelling of its name beside the empty uplink a hub reports for itself, where the document names the hub's own id.
   const liveShapedHub = (): AccessEventPacket => {
 
-    const packet = ambientUpdate(HUB_ID);
+    const packet = ambientUpdate(UAH_ID);
 
     return { ...packet, data: { ...packet.data, "connected_uah_id": "", "name": "UA-HUB-5B9C" } };
   };
@@ -729,7 +716,8 @@ describe("the original dialect's device update", () => {
    */
   const restatements: readonly (readonly [ string, (state: AccessState) => AccessEventPacket ])[] = [
 
-    [ "the captured hub update", (): AccessEventPacket => ambientUpdate(HUB_ID) ],
+    [ "the captured hub update", (): AccessEventPacket => ambientUpdate(UAH_ID) ],
+    // The G2 Mini's captured update, which the 2026 document already agrees with on every declared member.
     [ "the captured G2 Mini update", (): AccessEventPacket => ambientUpdate(G2_MINI_ID) ],
     [ "the G2 Pro update on the document's own rows", liveShapedPro ],
     [ "the hub update carrying the live spelling of its name and its empty uplink", liveShapedHub ]
@@ -767,9 +755,9 @@ describe("the original dialect's device update", () => {
   test("the Door Mini's captured update moves exactly the declared members it changes, the capabilities it gained mid-run among them", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = present(state.devices.get(DOOR_MINI), "the stored Door Mini");
-    const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === DOOR_MINI), "the original-dialect Door Mini update");
-    const merged = present(reduce(state, classify(packet)).devices.get(DOOR_MINI), "the merged Door Mini");
+    const stored = present(state.devices.get(MINI_ID), "the stored Door Mini");
+    const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === MINI_ID), "the original-dialect Door Mini update");
+    const merged = present(reduce(state, classify(packet)).devices.get(MINI_ID), "the merged Door Mini");
     const moved = [...new Set([ ...Object.keys(stored), ...Object.keys(merged) ])].filter((member) => !isDeepStrictEqual(merged[member], stored[member])).sort();
 
     assert.deepEqual(moved, [ "capabilities", "configs", "firmware", "ip", "is_adopted", "is_connected", "is_online" ]);
@@ -805,7 +793,7 @@ describe("the device-record merge", () => {
   const ADDED_CAPABILITY = "test_only_capability";
 
   // A well-formed row under an identity no captured device holds, carrying every member the wire type requires.
-  const NEW_ROW = { "device_id": HUB_ID, "key": "test_only_row", "tag": "test_only", "value": "1" };
+  const NEW_ROW = { "device_id": UAH_ID, "key": "test_only_row", "tag": "test_only", "value": "1" };
 
   // The rows a device holds, with the suite failing loudly rather than asserting over an array that is not there.
   const heldRows = (state: AccessState, id: string): AccessDeviceEntryConfig[] => {
@@ -838,18 +826,18 @@ describe("the device-record merge", () => {
   };
 
   // A device update carrying nothing but a configuration-row array, which is the delivery shape most of these assertions are about.
-  const rowDelivery = (rows: AccessDeviceConfigPayload["configs"]): AccessTypedEvent => ({ eventName: "access.data.device.update", id: HUB_ID,
+  const rowDelivery = (rows: AccessDeviceConfigPayload["configs"]): AccessTypedEvent => ({ eventName: "access.data.device.update", id: UAH_ID,
     kind: "deviceChanged", payload: { configs: rows } });
 
   // The same, carrying nothing but a capability list.
-  const capabilityDelivery = (capabilities: readonly string[]): AccessTypedEvent => ({ eventName: "access.data.device.update", id: HUB_ID,
+  const capabilityDelivery = (capabilities: readonly string[]): AccessTypedEvent => ({ eventName: "access.data.device.update", id: UAH_ID,
     kind: "deviceChanged", payload: { capabilities: [...capabilities] } });
 
   test("a delivery naming one row leaves every other row standing, each by its own reference", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldRows(state, HUB_ID);
-    const merged = heldRows(reduce(state, rowDelivery([{ ...rowAt(held, 0), "value": "Renamed" }])), HUB_ID);
+    const held = heldRows(state, UAH_ID);
+    const merged = heldRows(reduce(state, rowDelivery([{ ...rowAt(held, 0), "value": "Renamed" }])), UAH_ID);
 
     // Wholesale replacement would store the one row the delivery named and lose every other row the document supplied, which is what makes this the assertion
     // that the keyed merge landed at all.
@@ -869,12 +857,12 @@ describe("the device-record merge", () => {
   test("a changed row is replaced at the position it already held", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldRows(state, HUB_ID);
+    const held = heldRows(state, UAH_ID);
     const target = held.findIndex((row) => row.key === "dps_mode");
 
     assert.ok((target > 0) && (target < (held.length - 1)), "the hub's rows should carry the door-position mode with a neighbor on either side");
 
-    const merged = heldRows(reduce(state, rowDelivery([{ "key": "dps_mode", "value": "not_available" }])), HUB_ID);
+    const merged = heldRows(reduce(state, rowDelivery([{ "key": "dps_mode", "value": "not_available" }])), UAH_ID);
 
     assert.equal(rowAt(merged, target).key, "dps_mode", "a changed row stays where the document put it rather than moving to the tail");
     assert.equal(rowAt(merged, target).value, "not_available");
@@ -890,18 +878,18 @@ describe("the device-record merge", () => {
      * array on every delivery would wake every observer of the device on every update the controller sent.
      */
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldRows(state, HUB_ID);
+    const held = heldRows(state, UAH_ID);
     const next = reduce(state, rowDelivery([{ ...rowAt(held, 0) }]));
 
     assert.equal(Object.is(next, state), true, "a delivery that changed nothing changes nothing at all");
-    assert.equal(Object.is(heldRows(next, HUB_ID), held), true, "down to the array's own reference");
+    assert.equal(Object.is(heldRows(next, UAH_ID), held), true, "down to the array's own reference");
   });
 
   test("a row the record has never held is appended after the rows it has", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldRows(state, HUB_ID);
-    const merged = heldRows(reduce(state, rowDelivery([NEW_ROW])), HUB_ID);
+    const held = heldRows(state, UAH_ID);
+    const merged = heldRows(reduce(state, rowDelivery([NEW_ROW])), UAH_ID);
 
     assert.equal(merged.length, held.length + 1);
     assert.deepEqual(rowAt(merged, merged.length - 1), NEW_ROW, "the new row lands at the tail, which is where the delivery order puts it");
@@ -911,19 +899,19 @@ describe("the device-record merge", () => {
   test("a row carrying no identity is ignored", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldRows(state, HUB_ID);
-    const next = reduce(state, rowDelivery([{ "device_id": HUB_ID, "tag": "test_only", "value": "1" }]));
+    const held = heldRows(state, UAH_ID);
+    const next = reduce(state, rowDelivery([{ "device_id": UAH_ID, "tag": "test_only", "value": "1" }]));
 
     assert.equal(Object.is(next, state), true, "a row that names nothing can neither match a held row nor be admitted as a new one");
-    assert.equal(Object.is(heldRows(next, HUB_ID), held), true);
+    assert.equal(Object.is(heldRows(next, UAH_ID), held), true);
   });
 
   test("a row the record has never held is admitted only when it carries every member the wire type requires", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldRows(state, HUB_ID);
-    const merged = heldRows(reduce(state, rowDelivery([ { "device_id": HUB_ID, "key": "test_only_missing_tag", "value": "1" },
-      { "device_id": HUB_ID, "key": "test_only_missing_value", "tag": "test_only" }, NEW_ROW ])), HUB_ID);
+    const held = heldRows(state, UAH_ID);
+    const merged = heldRows(reduce(state, rowDelivery([ { "device_id": UAH_ID, "key": "test_only_missing_tag", "value": "1" },
+      { "device_id": UAH_ID, "key": "test_only_missing_value", "tag": "test_only" }, NEW_ROW ])), UAH_ID);
 
     // Not admitted rather than invented: an incomplete row stored as though it were whole would read back as a row the controller had sent whole.
     assert.equal(merged.length, held.length + 1, "only the complete row joined the record");
@@ -935,9 +923,9 @@ describe("the device-record merge", () => {
     // The token-only census establishes no configuration rows, so here the admission guard governs the whole delivered array rather than only its new members.
     const state = listingSeeded();
 
-    assert.equal(state.devices.get(HUB_ID)?.configs, undefined, "a projected listing establishes no rows");
+    assert.equal(state.devices.get(UAH_ID)?.configs, undefined, "a projected listing establishes no rows");
 
-    const merged = heldRows(reduce(state, rowDelivery([ NEW_ROW, { "device_id": HUB_ID, "key": "test_only_incomplete", "value": "1" } ])), HUB_ID);
+    const merged = heldRows(reduce(state, rowDelivery([ NEW_ROW, { "device_id": UAH_ID, "key": "test_only_incomplete", "value": "1" } ])), UAH_ID);
 
     assert.deepEqual(merged, [NEW_ROW]);
   });
@@ -950,7 +938,7 @@ describe("the device-record merge", () => {
     const next = reduce(state, rowDelivery([]));
 
     assert.equal(Object.is(next, state), true, "a delivery that established no row changes nothing at all");
-    assert.equal(Object.hasOwn(present(next.devices.get(HUB_ID), "the listed hub"), "configs"), false, "and the record gains no rows member");
+    assert.equal(Object.hasOwn(present(next.devices.get(UAH_ID), "the listed hub"), "configs"), false, "and the record gains no rows member");
   });
 
   test("rows the admission refuses, onto a record holding no rows, leave the state and the record's shape alone", () => {
@@ -958,10 +946,10 @@ describe("the device-record merge", () => {
     // Neither row is one the controller sent whole - the first carries no tag, and the second carries a key and a value alone - so the merge admits neither, and
     // the delivery reads as the empty array above does.
     const state = listingSeeded();
-    const next = reduce(state, rowDelivery([ { "device_id": HUB_ID, "key": "test_only_missing_tag", "value": "1" }, { "key": "dps_mode", "value": "not_available" } ]));
+    const next = reduce(state, rowDelivery([ { "device_id": UAH_ID, "key": "test_only_missing_tag", "value": "1" }, { "key": "dps_mode", "value": "not_available" } ]));
 
     assert.equal(Object.is(next, state), true, "a delivery whose every row was refused changes nothing at all");
-    assert.equal(Object.hasOwn(present(next.devices.get(HUB_ID), "the listed hub"), "configs"), false, "and the record gains no rows member");
+    assert.equal(Object.hasOwn(present(next.devices.get(UAH_ID), "the listed hub"), "configs"), false, "and the record gains no rows member");
   });
 
   test("a full snapshot that stops carrying a row leaves it standing", () => {
@@ -970,8 +958,8 @@ describe("the device-record merge", () => {
      * controller dropped from one it simply did not mention, so a dropped row outlives its deletion until a full topology reconcile replaces the record outright.
      */
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldRows(state, HUB_ID);
-    const merged = heldRows(reduce(state, rowDelivery(held.slice(1))), HUB_ID);
+    const held = heldRows(state, UAH_ID);
+    const merged = heldRows(reduce(state, rowDelivery(held.slice(1))), UAH_ID);
 
     assert.equal(merged.length, held.length);
     assert.equal(Object.is(rowAt(merged, 0), rowAt(held, 0)), true, "the row the snapshot omitted is the very one the document supplied");
@@ -980,18 +968,18 @@ describe("the device-record merge", () => {
   test("a capability list naming a subset leaves the held set whole, by its own reference", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldCapabilities(state, HUB_ID);
+    const held = heldCapabilities(state, UAH_ID);
     const next = reduce(state, capabilityDelivery(["is_hub"]));
 
     assert.equal(Object.is(next, state), true, "a list that said less than the record holds says nothing new");
-    assert.equal(Object.is(heldCapabilities(next, HUB_ID), held), true, "and the held set comes back by reference");
+    assert.equal(Object.is(heldCapabilities(next, UAH_ID), held), true, "and the held set comes back by reference");
   });
 
   test("a capability list carrying a member the record lacks appends it after the held ones", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldCapabilities(state, HUB_ID);
-    const merged = heldCapabilities(reduce(state, capabilityDelivery([ ADDED_CAPABILITY, ADDED_CAPABILITY ])), HUB_ID);
+    const held = heldCapabilities(state, UAH_ID);
+    const merged = heldCapabilities(reduce(state, capabilityDelivery([ ADDED_CAPABILITY, ADDED_CAPABILITY ])), UAH_ID);
 
     // Repeating a member within one delivery stores it once, which is what makes this a set rather than a concatenation.
     assert.deepEqual(merged, [ ...held, ADDED_CAPABILITY ]);
@@ -1001,11 +989,11 @@ describe("the device-record merge", () => {
 
     // The union's own half of the documented cost: a capability is added by a delivery and removed only by a full reconcile.
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldCapabilities(state, HUB_ID);
+    const held = heldCapabilities(state, UAH_ID);
 
     assert.ok(held.includes("is_hub"), "the hub holds its hub capability before the delivery drops it");
 
-    const merged = heldCapabilities(reduce(state, capabilityDelivery(held.filter((capability) => capability !== "is_hub"))), HUB_ID);
+    const merged = heldCapabilities(reduce(state, capabilityDelivery(held.filter((capability) => capability !== "is_hub"))), UAH_ID);
 
     assert.deepEqual(merged, held, "a hub that stopped listing its own hub capability is still a hub");
   });
@@ -1013,14 +1001,14 @@ describe("the device-record merge", () => {
   test("a delivery naming one held row twice layers the later row onto the earlier one", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldRows(state, HUB_ID);
+    const held = heldRows(state, UAH_ID);
     const target = held.findIndex((row) => row.key === "dps_mode");
 
     assert.ok(target >= 0, "the hub's rows should carry the door-position mode");
 
     // Two partial rows under one identity, each naming a member the other does not. Resolving each against the rows as merged so far keeps both statements, where
     // resolving each against the held row alone lets the second discard the first.
-    const merged = heldRows(reduce(state, rowDelivery([ { "key": "dps_mode", "value": "not_available" }, { "key": "dps_mode", "tag": "test_only_tag" } ])), HUB_ID);
+    const merged = heldRows(reduce(state, rowDelivery([ { "key": "dps_mode", "value": "not_available" }, { "key": "dps_mode", "tag": "test_only_tag" } ])), UAH_ID);
 
     assert.equal(merged.length, held.length, "a repeated identity adds no row");
     assert.equal(rowAt(merged, target).value, "not_available", "the first row's statement survives the second");
@@ -1030,8 +1018,8 @@ describe("the device-record merge", () => {
   test("a delivery carrying a row the record has never held twice admits it once, carrying the later statement", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const held = heldRows(state, HUB_ID);
-    const merged = heldRows(reduce(state, rowDelivery([ NEW_ROW, { ...NEW_ROW, "value": "2" } ])), HUB_ID);
+    const held = heldRows(state, UAH_ID);
+    const merged = heldRows(reduce(state, rowDelivery([ NEW_ROW, { ...NEW_ROW, "value": "2" } ])), UAH_ID);
 
     assert.equal(merged.length, held.length + 1, "one identity, one row");
     assert.deepEqual(rowAt(merged, merged.length - 1), { ...NEW_ROW, "value": "2" }, "and the row carries the later statement");
@@ -1043,9 +1031,6 @@ describe("the device-record merge", () => {
     // newer dialect admits.
     const specimen = findPacket((entry) => (entry.event === "access.data.v2.device.update") && isPlainObject(entry.data?.["access_method"]),
       "the v2 G2 Pro update carrying its access-method map");
-
-    // The EAH document's G2 Pro, whose rows carry no face and no QR row, so the specimen's map names keys that record does not hold.
-    const EAH_READER_ID = "aabbcc000006";
 
     /* The specimen as a typed event: its map's named values replaced, re-addressed to another record where a case names one, and stripped to its identity and
      * its map where a case needs the map's effect alone, apart from the other fields the whole specimen carries.
@@ -1102,8 +1087,9 @@ describe("the device-record merge", () => {
 
     test("a key the record holds no row for is not admitted", () => {
 
-      // The map names face and QR, which this record holds no row for, and restates the values of the rows it does hold. A projected row carries no tag and no
-      // device identity, so the merge can land it on a held row and never admit it as a row of its own.
+      // The record is the EAH document's G2 Pro, whose rows carry no face and no QR row. The map names face and QR, which this record holds no row for, and
+      // restates the values of the rows it does hold. A projected row carries no tag and no device identity, so the merge can land it on a held row and never
+      // admit it as a row of its own.
       const state = stateFrom(accessBootstrapEahFixture);
 
       assert.equal(heldRows(state, EAH_READER_ID).some((row) => [ "face", "qr_code" ].includes(row.key)), false, "the record holds no face or QR row");
@@ -1443,7 +1429,7 @@ describe("activity signals and the exhaustiveness guard", () => {
     const state = stateFrom(accessBootstrap2026Fixture);
     const events: AccessTypedEvent[] = [
 
-      { eventName: "access.data.device.remote_unlock", id: HUB_ID, kind: "unlock" },
+      { eventName: "access.data.device.remote_unlock", id: UAH_ID, kind: "unlock" },
       { eventName: "access.remote_view.change", kind: "doorbellCancel", payload: { "reason_code": 0, "remote_call_request_id": "call" } },
       { eventName: "access.remote_view", id: READER_ID, kind: "doorbellRing",
         payload: { "channel": "channel", "clear_request_id": "", "connected_uah_id": "", "connected_uah_type": "", "controller_id": "", "create_time": 0,
@@ -1476,7 +1462,7 @@ describe("activity signals and the exhaustiveness guard", () => {
   test("an unrecognized event kind is a loud failure rather than a silent fall-through", () => {
 
     const state = stateFrom(accessBootstrap2026Fixture);
-    const rogue = { eventName: "access.invented", id: HUB_ID, kind: "inventedKind" } as unknown as AccessTypedEvent;
+    const rogue = { eventName: "access.invented", id: UAH_ID, kind: "inventedKind" } as unknown as AccessTypedEvent;
 
     assert.throws(() => reduce(state, rogue), AccessProtocolError);
     assert.throws(() => reduce(state, rogue), /inventedKind/);
@@ -1556,7 +1542,7 @@ describe("doorStateChanged", () => {
 
     assert.ok(reported.doorStates.get(DOOR_MINI_DOOR)?.emergency, "the full report established the members only a report carries");
 
-    const sparse: AccessTypedEvent = { device: { id: DOOR_MINI, payload: {} }, eventName: "access.data.v2.device.update", kind: "doorStateChanged",
+    const sparse: AccessTypedEvent = { device: { id: MINI_ID, payload: {} }, eventName: "access.data.v2.device.update", kind: "doorStateChanged",
       states: [{ "location_id": DOOR_MINI_DOOR, "lock": "unlocked" }] };
     const stored = reduce(reported, sparse).doorStates.get(DOOR_MINI_DOOR);
 
@@ -1567,7 +1553,7 @@ describe("doorStateChanged", () => {
 
     // The Door Mini is in the 2026 topology, so the facet has a record to merge onto.
     const state = stateFrom(accessBootstrap2026Fixture);
-    const stored = present(state.devices.get(DOOR_MINI), "the stored Door Mini");
+    const stored = present(state.devices.get(MINI_ID), "the stored Door Mini");
 
     const before = stored.firmware;
     const event = classifyDoorState((entry) => entry.states[0].dps === "close");
@@ -1575,7 +1561,7 @@ describe("doorStateChanged", () => {
     assert.equal(event.kind, "doorStateChanged");
     assert.ok(event.device, "this specimen is the device carrier");
 
-    const merged = present(reduce(state, event).devices.get(DOOR_MINI), "the merged Door Mini");
+    const merged = present(reduce(state, event).devices.get(MINI_ID), "the merged Door Mini");
 
     // Field-level assertions rather than a reference comparison: the facet's own translated values have to land, and the fields it did not mention have to survive.
     assert.equal(merged.firmware, event.device.payload.firmware);
@@ -1786,12 +1772,12 @@ describe("censusApplied", () => {
     assert.equal(state.doorStates.size, 3);
 
     // The hub and the door it drives landed together, which is the whole reason the three collections travel as one event.
-    assert.equal(state.devices.get(HUB_ID)?.location_id, DOOR_HUB);
+    assert.equal(state.devices.get(UAH_ID)?.location_id, DOOR_HUB);
     assert.equal(state.doors.get(DOOR_HUB)?.name, "Test Name 10");
     assert.equal(state.doorStates.get(DOOR_HUB)?.lock, "locked");
 
     // Nothing the listing does not carry is invented, at either level.
-    assert.equal(Object.hasOwn(state.devices.get(HUB_ID) ?? {}, "firmware"), false);
+    assert.equal(Object.hasOwn(state.devices.get(UAH_ID) ?? {}, "firmware"), false);
     assert.equal(state.root, null, "a census places no topology root");
     assert.equal(state.floors.size, 0, "and lists no floors");
   });
@@ -1800,7 +1786,7 @@ describe("censusApplied", () => {
 
     // The census boundary applies no reducer-side fold: the projection composes the address in the library's spelling from the listing's identifier, so what the
     // state holds here is what the projection produced. Asserted at the state rather than at the projection so the boundary itself is on record.
-    assert.equal(reduce(createInitialState(), census()).devices.get(HUB_ID)?.mac, "AABBCC000001");
+    assert.equal(reduce(createInitialState(), census()).devices.get(UAH_ID)?.mac, "AABBCC000001");
   });
 
   test("a second, identical census returns the very same state reference", () => {
@@ -1815,11 +1801,11 @@ describe("censusApplied", () => {
 
     const state = reduce(createInitialState(), census());
     const untouched = state.devices.get(READER_ID);
-    const renamed = accessOfficialDevicesFixture.flat().map((device) => (device.id === HUB_ID) ? { ...device, "alias": "Front Hub" } : device);
+    const renamed = accessOfficialDevicesFixture.flat().map((device) => (device.id === UAH_ID) ? { ...device, "alias": "Front Hub" } : device);
     const next = reduce(state, census({ devices: renamed }));
 
     assert.notEqual(Object.is(next, state), true, "the changed record advances the state");
-    assert.equal(next.devices.get(HUB_ID)?.alias, "Front Hub");
+    assert.equal(next.devices.get(UAH_ID)?.alias, "Front Hub");
     assert.equal(Object.is(next.devices.get(READER_ID), untouched), true, "an untouched record keeps its reference");
     assert.equal(Object.is(next.doors, state.doors), true, "and an untouched collection keeps its own");
   });
@@ -1830,14 +1816,14 @@ describe("censusApplied", () => {
      * no member for at all, and a later census must leave it standing rather than erasing it by omission.
      */
     const seeded = reduce(createInitialState(), census());
-    const withFirmware = reduce(seeded, { eventName: "access.data.device.update", id: HUB_ID, kind: "deviceChanged", payload: { "firmware": "v4.12.19.0" } });
+    const withFirmware = reduce(seeded, { eventName: "access.data.device.update", id: UAH_ID, kind: "deviceChanged", payload: { "firmware": "v4.12.19.0" } });
 
-    assert.equal(withFirmware.devices.get(HUB_ID)?.firmware, "v4.12.19.0");
+    assert.equal(withFirmware.devices.get(UAH_ID)?.firmware, "v4.12.19.0");
 
     const reseeded = reduce(withFirmware, census());
 
-    assert.equal(reseeded.devices.get(HUB_ID)?.firmware, "v4.12.19.0", "a member the listing is silent about survives");
-    assert.equal(reseeded.devices.get(HUB_ID)?.alias, "Test alias 13", "and the members it does supply still stand");
+    assert.equal(reseeded.devices.get(UAH_ID)?.firmware, "v4.12.19.0", "a member the listing is silent about survives");
+    assert.equal(reseeded.devices.get(UAH_ID)?.alias, "Test alias 13", "and the members it does supply still stand");
   });
 
   test("a complete, non-empty census removes a device and a door it no longer names", () => {
@@ -1865,7 +1851,7 @@ describe("censusApplied", () => {
   test("a partial census removes nothing, however few records it names", () => {
 
     const seeded = reduce(createInitialState(), census({ complete: true }));
-    const next = reduce(seeded, census({ devices: [listedDevice(HUB_ID)], doors: [] }));
+    const next = reduce(seeded, census({ devices: [listedDevice(UAH_ID)], doors: [] }));
 
     assert.equal(next.devices.size, 5, "a source that spoke about one device has said nothing about the others");
     assert.equal(next.doors.size, 3);
@@ -1877,15 +1863,15 @@ describe("censusApplied", () => {
      * reconcile too: a degraded listing the projection fills with an empty array can say nothing, and saying nothing has to change nothing.
      */
     const seeded = reduce(createInitialState(), census());
-    const held = seeded.devices.get(HUB_ID)?.capabilities;
+    const held = seeded.devices.get(UAH_ID)?.capabilities;
 
     assert.ok(held?.length, "the census seeds the hub with capabilities to lose");
 
-    const stripped = accessOfficialDevicesFixture.flat().map((device) => (device.id === HUB_ID) ? { ...device, "capabilities": [] } : device);
+    const stripped = accessOfficialDevicesFixture.flat().map((device) => (device.id === UAH_ID) ? { ...device, "capabilities": [] } : device);
     const next = reduce(seeded, census({ devices: stripped }));
 
     assert.equal(Object.is(next, seeded), true, "a listing that stopped naming a device's capabilities wakes no observer");
-    assert.equal(Object.is(next.devices.get(HUB_ID)?.capabilities, held), true);
+    assert.equal(Object.is(next.devices.get(UAH_ID)?.capabilities, held), true);
   });
 
   test("a listing naming only a capability the record lacks appends it after every held member", () => {
@@ -1893,14 +1879,14 @@ describe("censusApplied", () => {
     // Wholesale replacement would leave the record holding the one capability the listing named, which is exactly what a hub classification reads and would then
     // answer false to.
     const seeded = reduce(createInitialState(), census());
-    const held = present(seeded.devices.get(HUB_ID)?.capabilities, "the hub's capabilities");
+    const held = present(seeded.devices.get(UAH_ID)?.capabilities, "the hub's capabilities");
 
-    const narrowed = accessOfficialDevicesFixture.flat().map((device) => (device.id === HUB_ID) ?
+    const narrowed = accessOfficialDevicesFixture.flat().map((device) => (device.id === UAH_ID) ?
       { ...device, "capabilities": [ "test_only_capability", "test_only_capability" ] } : device);
     const next = reduce(seeded, census({ devices: narrowed }));
 
     // Repeated within one listing, the new member is stored once.
-    assert.deepEqual(next.devices.get(HUB_ID)?.capabilities, [ ...held, "test_only_capability" ]);
+    assert.deepEqual(next.devices.get(UAH_ID)?.capabilities, [ ...held, "test_only_capability" ]);
   });
 
   test("a listing leaves a device's configuration rows standing, because it carries none of its own", () => {
@@ -1908,19 +1894,19 @@ describe("censusApplied", () => {
     // A regression assertion of the projection's shape rather than a check on the merge: the listing has no configuration rows to offer, so the rows a topology
     // established survive a census by the merge's own absent-key rule, array reference and all.
     const seeded = stateFrom(accessBootstrap2026Fixture);
-    const held = seeded.devices.get(HUB_ID)?.configs;
+    const held = seeded.devices.get(UAH_ID)?.configs;
 
     assert.ok(held?.length, "the topology established configuration rows for the hub");
 
     const next = reduce(seeded, census());
 
-    assert.equal(Object.is(next.devices.get(HUB_ID)?.configs, held), true, "the rows the document supplied are the rows the record still holds");
-    assert.equal(next.devices.get(HUB_ID)?.name, "Test Name 76", "while the members the listing does carry landed");
+    assert.equal(Object.is(next.devices.get(UAH_ID)?.configs, held), true, "the rows the document supplied are the rows the record still holds");
+    assert.equal(next.devices.get(UAH_ID)?.name, "Test Name 76", "while the members the listing does carry landed");
   });
 
   test("a census admits a record the state did not hold", () => {
 
-    const seeded = reduce(createInitialState(), census({ complete: true, devices: [listedDevice(HUB_ID)] }));
+    const seeded = reduce(createInitialState(), census({ complete: true, devices: [listedDevice(UAH_ID)] }));
 
     assert.equal(seeded.devices.size, 1);
 

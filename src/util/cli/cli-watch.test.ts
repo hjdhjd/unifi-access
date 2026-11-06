@@ -6,7 +6,7 @@
  */
 import type { AccessDoorStateEntry, AccessEventPacket } from "../../index.ts";
 import { CliError, compileEventFilters, packetSubjectId } from "./shared.ts";
-import { EAH_ID, ULTRA_ID, captured, findPacket } from "../../protocol/capture.helpers.ts";
+import { EAH_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID, captured, findPacket } from "../../protocol/capture.helpers.ts";
 import type { FakeClientSpec, FakeDoorSpec } from "./cli.helpers.ts";
 import { accessEventPacketsDoorStateFixture, accessEventPacketsInteractiveFixture } from "../../protocol/events.fixtures.ts";
 import { asAccessClient, makeCommandContext, makeFakeClient, rendered } from "./cli.helpers.ts";
@@ -32,10 +32,7 @@ const DOOR_STATE_DEVICE = findPacket((packet) => packet.event === "access.data.v
 const DOOR_STATE_LOCATION = findPacket((packet) => packet.event === "access.data.v2.location.update", "a door-state location update",
   { corpus: accessEventPacketsDoorStateFixture });
 
-// The identities those specimens carry, read off the corpus: the reader that rang, the hub that unlocked, the door hub that reported its state, and the door itself.
-const READER_ID = "aabbcc000002";
-const HUB_ID = "aabbcc000001";
-const DOOR_MINI_ID = "aabbcc000004";
+// The door the door-state specimens report on, read off the corpus. The hardware those specimens carry is named by the capture helpers.
 const DOOR_MINI_DOOR_ID = "00000000-0000-0000-0000-00000000000e";
 
 /* The one wire name in the unlock vocabulary that no capture in hand contains. The library's own classifier models it because earlier consumers filtered on it, and
@@ -166,7 +163,7 @@ describe("the filter engine", () => {
      * Door Mini, a UA Ultra that carries both roles, and an Enterprise Access Hub. No capture holds an unlock from the last two, so the captured remote unlock is
      * addressed to each of them, which is the identity that packet's classification attributes it by.
      */
-    const devices = [ captured(READER_ID), captured(HUB_ID), captured(DOOR_MINI_ID), captured(ULTRA_ID), captured(EAH_ID, accessBootstrapEahFixture) ]
+    const devices = [ captured(READER_ID), captured(UAH_ID), captured(MINI_ID), captured(ULTRA_ID), captured(EAH_ID, accessBootstrapEahFixture) ]
       .map((record) => ({ config: { ...record }, id: record.unique_id, name: record.name }));
     const table: [ string, AccessEventPacket, boolean, boolean ][] = [
       [ "a ring from the reader", RING, false, true ],
@@ -217,7 +214,7 @@ describe("the filter engine", () => {
 
   test("two different device values match nothing, because every filter must match", async () => {
 
-    assert.equal(await matched([ "--device=" + READER_ID, "--device=" + HUB_ID ], [ RING, REMOTE_UNLOCK ]), 0);
+    assert.equal(await matched([ "--device=" + READER_ID, "--device=" + UAH_ID ], [ RING, REMOTE_UNLOCK ]), 0);
   });
 
   test("a ring is attributed to the device in its payload rather than to its envelope", async () => {
@@ -235,12 +232,12 @@ describe("the filter engine", () => {
 
     // The device carrier names the device; the location carrier names the door. Both envelopes are per-notification identifiers, so neither attribution can come
     // from there.
-    assert.notEqual(DOOR_STATE_DEVICE.event_object_id, DOOR_MINI_ID);
-    assert.equal(packetSubjectId(DOOR_STATE_DEVICE), DOOR_MINI_ID);
+    assert.notEqual(DOOR_STATE_DEVICE.event_object_id, MINI_ID);
+    assert.equal(packetSubjectId(DOOR_STATE_DEVICE), MINI_ID);
     assert.notEqual(DOOR_STATE_LOCATION.event_object_id, DOOR_MINI_DOOR_ID);
     assert.equal(packetSubjectId(DOOR_STATE_LOCATION), DOOR_MINI_DOOR_ID);
 
-    assert.equal(await matched(["--device=" + DOOR_MINI_ID], [DOOR_STATE_DEVICE]), 1);
+    assert.equal(await matched(["--device=" + MINI_ID], [DOOR_STATE_DEVICE]), 1);
     assert.equal(await matched(["--device=" + DOOR_MINI_DOOR_ID], [DOOR_STATE_LOCATION]), 1);
   });
 

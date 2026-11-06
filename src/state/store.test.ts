@@ -10,8 +10,8 @@ import type { AccessState, AccessStateDevice } from "../protocol/reducer.ts";
 import type { CapturingLog, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { StateStore, createStateStore } from "./store.ts";
 import { TestClock, capturingLog, loggedAt, present, settle, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
+import { UAH_ID, classify, findPacket } from "../protocol/capture.helpers.ts";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
-import { classify, findPacket } from "../protocol/capture.helpers.ts";
 import { describe, test } from "node:test";
 import { refuseRefresh, topologyDevices } from "../testing.helpers.ts";
 import type { AccessTypedEvent } from "../protocol/events.ts";
@@ -20,7 +20,6 @@ import { selectHubs } from "./selectors.ts";
 
 // Named entries from the 2026 topology document, so an assertion cites a specific record rather than a number re-derived from the same fixture.
 const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
-const HUB_2026 = "aabbcc000001";
 const DEVICE_COUNT_2026 = 5;
 
 // The identity carried by the record that arrives without a capabilities array. No captured document holds a record in that shape, so it is synthesized below under
@@ -214,8 +213,8 @@ describe("StateStore", () => {
 
       store.dispatch(bootstrapEvent(topologyDocument()));
 
-      const stored = present(store.snapshot().devices.get(HUB_2026), "the stored hub");
-      const update = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === HUB_2026), "the original-dialect hub update");
+      const stored = present(store.snapshot().devices.get(UAH_ID), "the stored hub");
+      const update = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === UAH_ID), "the original-dialect hub update");
 
       assert.equal(stored.mac, "AABBCC000001");
       assert.equal(update.data?.["mac"], "aa:bb:cc:00:00:01", "the update spells the hub's address in the other case");
@@ -232,9 +231,9 @@ describe("StateStore", () => {
       assert.deepEqual(committed, ["bootstrapLoaded"], "and the update commits nothing");
 
       // The same observer wakes on a real change to the same record, which is what shows the silence above was the admission's doing rather than a dead observer.
-      store.dispatch({ eventName: "access.data.device.update", id: HUB_2026, kind: "deviceChanged", payload: { "firmware": "v9.9.9" } });
+      store.dispatch({ eventName: "access.data.device.update", id: UAH_ID, kind: "deviceChanged", payload: { "firmware": "v9.9.9" } });
       await settleUntil(() => values.length === 1, { description: "the devices observer to wake on the firmware change" });
-      assert.equal(values[0]?.get(HUB_2026)?.mac, "AABBCC000001");
+      assert.equal(values[0]?.get(UAH_ID)?.mac, "AABBCC000001");
 
       ac.abort();
       await done;
@@ -714,7 +713,7 @@ describe("StateStore", () => {
 
       await using store = plainStore({ onDispatch: (event) => void seen.push(event) });
       const devices = [{ "alias": "Test alias 13", "capabilities": ["is_hub"], "connected_uah_id": "", "device_type": "UAH", "is_adopted": true, "is_connected": true,
-        "is_managed": true, "is_online": true, "location_id": DOOR_HUB, "name": "Test Name 76", "unique_id": "aabbcc000001" }];
+        "is_managed": true, "is_online": true, "location_id": DOOR_HUB, "name": "Test Name 76", "unique_id": UAH_ID }];
       const doors = [{ "full_name": "Test Name 11", "location_type": "door", "name": "Test Name 10", "unique_id": DOOR_HUB,
         "up_id": "00000000-0000-0000-0000-000000000001" }];
 
@@ -808,7 +807,7 @@ describe("StateStore", () => {
 
       const { log, store } = loggingStore();
       const devices = [{ "alias": "Test alias 13", "capabilities": ["is_hub"], "connected_uah_id": "", "device_type": "UAH", "is_adopted": true,
-        "is_connected": true, "is_managed": true, "is_online": true, "location_id": DOOR_HUB, "name": "Test Name 76", "unique_id": HUB_2026 }];
+        "is_connected": true, "is_managed": true, "is_online": true, "location_id": DOOR_HUB, "name": "Test Name 76", "unique_id": UAH_ID }];
       const doors = [{ "full_name": "Test Name 11", "location_type": "door", "name": "Test Name 10", "unique_id": DOOR_HUB,
         "up_id": "00000000-0000-0000-0000-000000000001" }];
 

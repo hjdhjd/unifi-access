@@ -10,9 +10,10 @@
  * The method fallback inside the interceptor's reply callback has no absent direction to drive: undici hands that callback a method on every dispatch, so the
  * empty-string arm cannot be reached from a test and is recorded here rather than asserted vacuously.
  */
-import { DOOR_HUB, HUB, REFUSED, SUCCESS, deviceFixture, doorStateEvent, intercept, wirePacket } from "./device.helpers.ts";
+import { DOOR_HUB, REFUSED, SUCCESS, deviceFixture, doorStateEvent, intercept, wirePacket } from "./device.helpers.ts";
 import { describe, test } from "node:test";
 import type { AccessEventPacket } from "../types/index.ts";
+import { UAH_ID } from "../protocol/capture.helpers.ts";
 import { accessBootstrap2026Fixture } from "../protocol/topology.fixtures.ts";
 import assert from "node:assert/strict";
 import { classifyPacket } from "../protocol/events.ts";
@@ -27,7 +28,7 @@ describe("deviceFixture", () => {
 
     assert.equal(fixture.store.snapshot().devices.size, topologyDevices(accessBootstrap2026Fixture).length,
       "every device the document describes reached the store the registry stands over");
-    assert.ok(fixture.registry.device(HUB), "and the registry answers for one of them");
+    assert.ok(fixture.registry.device(UAH_ID), "and the registry answers for one of them");
     assert.deepEqual(fixture.captured, [], "nothing has been asked of the wire yet");
     assert.equal(fixture.ctx.transport, fixture.mock.transport, "the context carries the mock's own transport rather than a second one built beside it");
   });
@@ -70,7 +71,7 @@ describe("the door-state builders", () => {
     const event = doorStateEvent(DOOR_HUB, "locked");
 
     assert.ok(event.kind === "doorStateChanged", "the builder produces a door-state report and nothing else");
-    assert.equal(event.device?.id, HUB, "framed as the hub's own report, whichever of its doors the report names");
+    assert.equal(event.device?.id, UAH_ID, "framed as the hub's own report, whichever of its doors the report names");
     assert.equal(event.states[0].location_id, DOOR_HUB);
     assert.equal(event.states[0].lock, "locked");
   });

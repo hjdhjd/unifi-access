@@ -4,8 +4,8 @@
  * it reports, and the port bindings it carries. Each of these is a read of controller state through the projection, so a handle whose record has left the state
  * fails loudly rather than answering from a captured value.
  */
-import { DOOR_HUB, DOOR_MINI, DOOR_MINI_DOOR, EAH_DOOR_2, EAH_HUB, EAH_PORT_2, EAH_PORT_3, HUB, ULTRA, ULTRA_BINDING, deviceFixture, doorStateEvent,
-  wirePacket } from "./device.helpers.ts";
+import { DOOR_HUB, DOOR_MINI_DOOR, EAH_DOOR_2, EAH_PORT_2, EAH_PORT_3, ULTRA_BINDING, deviceFixture, doorStateEvent, wirePacket } from "./device.helpers.ts";
+import { EAH_ID, MINI_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
 import { accessBootstrap2026Fixture, accessBootstrapEahFixture } from "../protocol/topology.fixtures.ts";
 import { describe, test } from "node:test";
 import { accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
@@ -20,8 +20,8 @@ describe("the door record through a hub", () => {
   test("each hub answers its own door's record, and nothing where the state holds none", () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const hub = present(registry.hub(HUB), "the hub");
-    const mini = present(registry.hub(DOOR_MINI), "the Door Mini");
+    const hub = present(registry.hub(UAH_ID), "the hub");
+    const mini = present(registry.hub(MINI_ID), "the Door Mini");
 
     /* The handles drive different doors and the state holds more doors than there are handles, so a getter answering with any present door rather than with the
      * one this handle drives could not satisfy both readings. The size assertion is what keeps that condition from quietly lapsing under a fixture edit.
@@ -54,7 +54,7 @@ describe("door state through a hub", () => {
   test("reads the door's entry, seeded from the topology and then replaced by what the door reports", () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const hub = present(registry.hub(HUB), "the hub");
+    const hub = present(registry.hub(UAH_ID), "the hub");
 
     const before = hub.doorState;
 
@@ -70,7 +70,7 @@ describe("door state through a hub", () => {
 
     // A second single-door hub in the same topology resolves its own door and reads nothing from the first one's report, which is what shows the resolution is
     // per-handle rather than incidental.
-    const mini = present(registry.hub(DOOR_MINI), "the Door Mini");
+    const mini = present(registry.hub(MINI_ID), "the Door Mini");
 
     assert.equal(mini.config.location_id, DOOR_MINI_DOOR);
     assert.equal(mini.doorState?.lock, "locked", "the other hub's door still shows what its own hardware established");
@@ -80,7 +80,7 @@ describe("door state through a hub", () => {
   test("an entry whose optional member is malformed leaves the previously stored one standing", () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const hub = present(registry.hub(HUB), "the hub");
+    const hub = present(registry.hub(UAH_ID), "the hub");
 
     store.dispatch(doorStateEvent(DOOR_HUB, "unlocked"));
 
@@ -114,7 +114,7 @@ describe("terminal reads through a hub", () => {
   test("reads every terminal the UA Hub reports, each with nothing wired to it", () => {
 
     const { registry } = deviceFixture(accessBootstrap2026Fixture);
-    const hub = present(registry.hub(HUB), "the hub");
+    const hub = present(registry.hub(UAH_ID), "the hub");
 
     for(const input of [ "rel", "ren", "rex", "dps" ] as const) {
 
@@ -127,7 +127,7 @@ describe("terminal reads through a hub", () => {
     // The Ultra detects no wiring at all, so its duty selector is what puts one terminal in service and leaves the other reporting nothing wired. Asserting
     // both is what shows the handle threads the argument rather than answering the same way whatever it is asked.
     const { registry } = deviceFixture(accessBootstrap2026Fixture);
-    const ultra = present(registry.hub(ULTRA), "the Ultra");
+    const ultra = present(registry.hub(ULTRA_ID), "the Ultra");
 
     assert.deepEqual(ultra.terminalInput("dps"), { "state": false, "wired": true });
     assert.deepEqual(ultra.terminalInput("rex"), { "wired": false });
@@ -141,7 +141,7 @@ describe("terminal reads through a hub", () => {
     const document = structuredClone(accessBootstrapEahFixture);
     const raised = new Set([ "input_d2_button", "wiring_state_d2-button-neg", "wiring_state_d2-button-pos" ]);
 
-    for(const row of topologyDevices(document).find((device) => device.unique_id === EAH_HUB)?.configs ?? []) {
+    for(const row of topologyDevices(document).find((device) => device.unique_id === EAH_ID)?.configs ?? []) {
 
       if(raised.has(row.key)) {
 
@@ -161,9 +161,9 @@ describe("terminal reads through a hub", () => {
   test("a handle whose record has left controller state fails loudly rather than answering", () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const hub = present(registry.hub(HUB), "the hub");
+    const hub = present(registry.hub(UAH_ID), "the hub");
 
-    store.dispatch({ eventName: "access.data.v2.device.delete", id: HUB, kind: "deviceRemoved" });
+    store.dispatch({ eventName: "access.data.v2.device.delete", id: UAH_ID, kind: "deviceRemoved" });
 
     assert.throws(() => hub.terminalInput("dps"), ReferenceError);
   });
@@ -174,8 +174,8 @@ describe("the port bindings a hub answers", () => {
   test("reads the door each captured hub's port is bound to, and resolves its own door through the first of them", () => {
 
     const { registry } = deviceFixture(accessBootstrap2026Fixture);
-    const ultra = present(registry.hub(ULTRA), "the Ultra");
-    const hub = present(registry.hub(HUB), "the hub");
+    const ultra = present(registry.hub(ULTRA_ID), "the Ultra");
+    const hub = present(registry.hub(UAH_ID), "the hub");
 
     assert.deepEqual(ultra.portBindings, [ULTRA_BINDING]);
     assert.equal(ultra.doorId, ULTRA_BINDING.doorId, "the door this handle commands is the one its first binding names");
@@ -202,14 +202,14 @@ describe("the port bindings a hub answers", () => {
      * reads apart. Moving the record's location is what does: the binding is what the resolution answers with, and the location is only the fallback.
      */
     const document = structuredClone(accessBootstrap2026Fixture);
-    const record = topologyDevices(document).find((device) => device.unique_id === ULTRA);
+    const record = topologyDevices(document).find((device) => device.unique_id === ULTRA_ID);
 
     assert.ok(record, "the 2026 document should carry the UA Ultra");
 
     Object.assign(record, { "location_id": DOOR_HUB });
 
     const { registry } = deviceFixture(document);
-    const ultra = present(registry.hub(ULTRA), "the Ultra");
+    const ultra = present(registry.hub(ULTRA_ID), "the Ultra");
 
     assert.equal(ultra.config.location_id, DOOR_HUB, "the record really does sit at a door other than the one its port binds");
     assert.equal(ultra.doorId, ULTRA_BINDING.doorId, "and the door it commands is still the door that port binds");
@@ -218,9 +218,9 @@ describe("the port bindings a hub answers", () => {
   test("the bindings getter throws once the record has left the state", () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const ultra = present(registry.hub(ULTRA), "the Ultra");
+    const ultra = present(registry.hub(ULTRA_ID), "the Ultra");
 
-    store.dispatch({ eventName: "access.data.v2.device.delete", id: ULTRA, kind: "deviceRemoved" });
+    store.dispatch({ eventName: "access.data.v2.device.delete", id: ULTRA_ID, kind: "deviceRemoved" });
 
     // The asserting read fails loudly, exactly as every other one on this handle does: a handle to an absent record is a caller's own error.
     assert.throws(() => ultra.portBindings, ReferenceError);

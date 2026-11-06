@@ -5,7 +5,8 @@
  * The census rows drive the tier over a store seeded from the official listings rather than from a topology document, in a context holding no transport at all,
  * so a read that reached for the wire would fail loudly rather than pass unnoticed.
  */
-import { DOOR_HUB, DOOR_MINI, HUB, READER, deviceFixture } from "./device.helpers.ts";
+import { DOOR_HUB, deviceFixture } from "./device.helpers.ts";
+import { MINI_ID, READER_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
 import { TestClock, present, silentLog } from "homebridge-plugin-utils/testing";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import { describe, test } from "node:test";
@@ -25,21 +26,21 @@ describe("the registry's three views", () => {
 
     const { registry } = deviceFixture(accessBootstrap2026Fixture);
 
-    assert.equal(registry.device(READER)?.id, READER);
-    assert.equal(registry.hub(READER), undefined, "a reader drives no door, so there is no hub handle for it");
-    assert.equal(registry.hub(HUB)?.id, HUB);
+    assert.equal(registry.device(READER_ID)?.id, READER_ID);
+    assert.equal(registry.hub(READER_ID), undefined, "a reader drives no door, so there is no hub handle for it");
+    assert.equal(registry.hub(UAH_ID)?.id, UAH_ID);
     assert.equal(registry.device("no-such-device"), undefined);
     assert.equal(registry.hub("no-such-device"), undefined);
 
     assert.deepEqual(registry.devices().map((device) => device.id).sort(), [...registry.devices()].map((device) => device.id).sort());
-    assert.deepEqual(registry.hubs().map((hub) => hub.id).sort(), [ DOOR_MINI, "aabbcc000000", HUB ].sort());
+    assert.deepEqual(registry.hubs().map((hub) => hub.id).sort(), [ MINI_ID, ULTRA_ID, UAH_ID ].sort());
   });
 
   test("handles are minted fresh per lookup rather than cached", () => {
 
     const { registry } = deviceFixture(accessBootstrap2026Fixture);
 
-    assert.ok(!Object.is(registry.device(HUB), registry.device(HUB)), "a handle is a thin view, so identity across lookups is meaningless");
+    assert.ok(!Object.is(registry.device(UAH_ID), registry.device(UAH_ID)), "a handle is a thin view, so identity across lookups is meaningless");
   });
 });
 
@@ -65,19 +66,19 @@ describe("a projection over a token-only client's census", () => {
   test("reads a device's identity, name, and enrollment from a projected record", () => {
 
     const { registry } = tokenFixture();
-    const hub = registry.device(HUB);
+    const hub = registry.device(UAH_ID);
 
     assert.ok(hub, "the census seeded the hub, so the registry mints a handle for it");
     assert.equal(hub.name, "Test alias 13", "the alias the listing carried wins over the hardware name, exactly as it does on a topology record");
     assert.equal(hub.isOnline, true);
     assert.equal(hub.uplinkId, null, "an empty carrier field means nothing carries this hub");
-    assert.equal(registry.device(READER)?.uplinkId, HUB, "and a reader names the hub it reaches the controller through");
+    assert.equal(registry.device(READER_ID)?.uplinkId, UAH_ID, "and a reader names the hub it reaches the controller through");
   });
 
   test("resolves a hub's door and its state from the same census", () => {
 
     const { registry } = tokenFixture();
-    const hub = registry.hub(HUB);
+    const hub = registry.hub(UAH_ID);
 
     assert.ok(hub, "a hub-capable projected record is reachable as a hub");
     assert.equal(hub.doorId, DOOR_HUB, "with no port extensions, the door is the device's own location");
@@ -87,7 +88,7 @@ describe("a projection over a token-only client's census", () => {
   test("refuses a restart through routing, without reaching a transport that does not exist", async () => {
 
     const { registry } = tokenFixture();
-    const hub = present(registry.device(HUB), "the hub");
+    const hub = present(registry.device(UAH_ID), "the hub");
 
     await assert.rejects(async () => hub.restart(), (error: unknown) => {
 
@@ -102,7 +103,7 @@ describe("a projection over a token-only client's census", () => {
   test("refuses a configuration write and a close on the same terms", async () => {
 
     const { registry } = tokenFixture();
-    const hub = present(registry.hub(HUB), "the hub");
+    const hub = present(registry.hub(UAH_ID), "the hub");
 
     await assert.rejects(async () => hub.updateDevice({}), AccessCapabilityError);
     await assert.rejects(async () => hub.close(), AccessCapabilityError);

@@ -9,7 +9,7 @@ import type { AccessBootstrapConfig, AccessEventPacket, DeepWirePartial } from "
 import { DEVICE_FIELD_EXCLUSIONS, DEVICE_FIELD_MAP, DEVICE_FIELD_PROJECTIONS, DEVICE_NOTIFICATION_MEMBERS, DOOR_STATE_FACT_GUARDS, LOCATION_FIELD_EXCLUSIONS,
   LOCATION_FIELD_MAP, LOCATION_NOTIFICATION_MEMBERS, ORIGINAL_DEVICE_FIELD_EXCLUSIONS, ORIGINAL_LOCATION_FIELD_EXCLUSIONS, classifyPacket,
   isAccessEventPacket } from "./events.ts";
-import { capturedPackets, classifyAs, findPacket } from "./capture.helpers.ts";
+import { DOORBELL_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID, capturedPackets, classifyAs, findPacket } from "./capture.helpers.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { isPlainObject } from "./plain-object.ts";
@@ -157,7 +157,7 @@ describe("classifyPacket over the captured corpus", () => {
     // The legacy dialect names the entity in the envelope and echoes it in the record it sends.
     assert.equal(legacyEvent?.kind, "deviceRemoved");
     assert.equal(legacyEvent.id, legacyDelete.event_object_id);
-    assert.equal(legacyEvent.id, "00000000000000000000000c");
+    assert.equal(legacyEvent.id, DOORBELL_ID);
 
     const v2Delete = findPacket((packet) => packet.event === "access.data.v2.device.delete", "a v2 device delete");
     const v2Event = classifyPacket(v2Delete);
@@ -166,24 +166,24 @@ describe("classifyPacket over the captured corpus", () => {
     assert.equal(v2Delete.data, null);
     assert.equal(v2Event?.kind, "deviceRemoved");
     assert.equal(v2Event.id, v2Delete.meta?.id);
-    assert.equal(v2Event.id, "00000000000000000000000c");
+    assert.equal(v2Event.id, DOORBELL_ID);
     assert.notEqual(v2Event.id, v2Delete.event_object_id);
   });
 
   test("a v2 device update takes its identity from the packet metadata", () => {
 
-    const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === "aabbcc000001"), "the v2 hub update");
+    const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === UAH_ID), "the v2 hub update");
     const event = classifyPacket(packet);
 
     assert.equal(event?.kind, "deviceChanged");
-    assert.equal(event.id, "aabbcc000001");
+    assert.equal(event.id, UAH_ID);
     assert.equal(event.eventName, "access.data.v2.device.update");
   });
 });
 
 describe("v2 device payload translation", () => {
 
-  const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === "aabbcc000001"), "the v2 hub update");
+  const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === UAH_ID), "the v2 hub update");
 
   test("translates to exactly the allowlist subset and nothing else", () => {
 
@@ -196,7 +196,7 @@ describe("v2 device payload translation", () => {
 
     const { payload } = classifyAs(packet, "deviceChanged");
 
-    assert.equal(payload.unique_id, "aabbcc000001");
+    assert.equal(payload.unique_id, UAH_ID);
     assert.equal(payload.is_online, true);
     assert.equal(payload.adopting, false);
     assert.equal(payload.device_type, "UAH");
@@ -252,7 +252,7 @@ describe("v2 device payload translation", () => {
     assert.equal(Object.hasOwn(sparseEvent.payload, "guid"), false);
 
     // What it did carry still translates.
-    assert.equal(sparseEvent.payload.unique_id, "aabbcc000001");
+    assert.equal(sparseEvent.payload.unique_id, UAH_ID);
     assert.equal(sparseEvent.payload.is_online, true);
   });
 });
@@ -561,11 +561,11 @@ describe("the original dialect's admission", () => {
 
   test("a device update writes the declared members it carries and nothing else", () => {
 
-    const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === "aabbcc000002"), "the legacy reader update");
+    const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === READER_ID), "the legacy reader update");
     const wire = present(packet.data, "the legacy reader record");
     const { id, payload } = classifyAs(packet, "deviceChanged");
 
-    assert.equal(id, "aabbcc000002");
+    assert.equal(id, READER_ID);
     assert.deepEqual(Object.keys(payload).sort(), DEVICE_NOTIFICATION_MEMBERS.filter((member) => Object.hasOwn(wire, member)).sort());
     assert.equal(payload.ip, "192.0.2.3");
     assert.equal(payload.is_online, true);
@@ -582,11 +582,11 @@ describe("the original dialect's admission", () => {
 
     // The two agree on every captured specimen, so a record naming another identity is synthetic: the stored record's self-identity and the key it is stored
     // under come from one source either way.
-    const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === "aabbcc000002"), "the legacy reader update");
+    const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === READER_ID), "the legacy reader update");
     const { id, payload } = classifyAs({ ...packet, data: { ...packet.data, "unique_id": "aabbcc0000ff" } }, "deviceChanged");
 
-    assert.equal(id, "aabbcc000002");
-    assert.equal(payload.unique_id, "aabbcc000002");
+    assert.equal(id, READER_ID);
+    assert.equal(payload.unique_id, READER_ID);
   });
 
   test("a location update writes the declared members it carries and takes its identity from the envelope", () => {
@@ -634,8 +634,8 @@ describe("the doorbell and unlock specimens", () => {
     const event = classifyPacket(packet);
 
     assert.equal(event?.kind, "doorbellRing");
-    assert.equal(event.id, "aabbcc000002");
-    assert.equal(event.payload.device_id, "aabbcc000002");
+    assert.equal(event.id, READER_ID);
+    assert.equal(event.payload.device_id, READER_ID);
     assert.equal(event.payload.channel, "00000000-0000-0000-0000-000000000052");
 
     // The envelope identifier on this notification is a per-notification value, which is why the attribution comes from the payload instead.
@@ -659,7 +659,7 @@ describe("the doorbell and unlock specimens", () => {
     assert.equal(event?.kind, "unlock");
 
     // On this notification the envelope names the device that performed the unlock, while the payload carries the door's own location record.
-    assert.equal(event.id, "aabbcc000001");
+    assert.equal(event.id, UAH_ID);
     assert.equal(packet.data?.["unique_id"], "00000000-0000-0000-0000-00000000004c");
   });
 
@@ -732,8 +732,8 @@ describe("the tamper alert", () => {
     const event = classifyPacket(packet);
 
     assert.equal(event?.kind, "tamperAlert");
-    assert.equal(event.id, "aabbcc000000");
-    assert.equal(event.payload.device.unique_id, "aabbcc000000");
+    assert.equal(event.id, ULTRA_ID);
+    assert.equal(event.payload.device.unique_id, ULTRA_ID);
 
     // The envelope identifier on this notification is a per-notification value, which is why the attribution comes from the payload instead.
     assert.notEqual(event.id, packet.event_object_id);
@@ -763,7 +763,7 @@ describe("the interactive capture specimens", () => {
     const event = classifyPacket(packet);
 
     assert.equal(event?.kind, "doorbellRing");
-    assert.equal(event.id, "aabbcc000002");
+    assert.equal(event.id, READER_ID);
     assert.deepEqual(Object.keys(event.payload).sort(), DOORBELL_RING_FIELDS);
 
     // Reading optional members off the typed payload is what proves they are reachable through the type, which a key-list comparison alone does not show.
@@ -795,7 +795,7 @@ describe("the interactive capture specimens", () => {
     assert.equal(event?.kind, "unlock");
 
     // The envelope names the hub that performed the unlock while the payload carries the door's own location record, which is why the two identifiers differ.
-    assert.equal(event.id, "aabbcc000001");
+    assert.equal(event.id, UAH_ID);
     assert.equal(packet.data?.["unique_id"], "00000000-0000-0000-0000-000000000006");
   });
 
@@ -838,14 +838,12 @@ describe("the interactive capture specimens", () => {
 
 describe("door-state classification", () => {
 
-  // The Door Mini and the door it drives, named once so every assertion below cites the specific hardware rather than re-deriving identity from the packet it is
-  // checking.
-  const DOOR_MINI = "aabbcc000004";
+  // The door the Door Mini drives, named once so every assertion below cites the specific door rather than re-deriving identity from the packet it is checking.
   const DOOR_MINI_DOOR = "00000000-0000-0000-0000-00000000000e";
 
   // A device-carrier specimen and its door-state array, for the synthetic near-miss cases below. Each case rebuilds the array rather than editing the fixture, so
   // the corpus stays the corpus.
-  const deviceCarrier = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === DOOR_MINI) &&
+  const deviceCarrier = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === MINI_ID) &&
     Array.isArray(entry.data?.["location_states"]), "the Door Mini device update carrying door state");
   const entryOf = (packet: AccessEventPacket): Record<string, unknown> => {
 
@@ -860,7 +858,7 @@ describe("door-state classification", () => {
 
   test("a device update carrying door state classifies with its entry and its own device facet", () => {
 
-    const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === DOOR_MINI) &&
+    const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === MINI_ID) &&
       ((entry.data?.["location_states"] as { dps: string }[] | undefined)?.[0]?.dps === "close"), "the Door Mini update reporting a closed door");
     const event = classifyPacket(packet);
 
@@ -879,8 +877,8 @@ describe("door-state classification", () => {
     assert.deepEqual(entry.emergency, { hardware: "none", software: "none" });
 
     // The device carrier contributes the device facet and only that one: its own translated fields come along, and there is no location facet to invent.
-    assert.equal(event.device?.id, DOOR_MINI);
-    assert.equal(event.device.payload.unique_id, DOOR_MINI);
+    assert.equal(event.device?.id, MINI_ID);
+    assert.equal(event.device.payload.unique_id, MINI_ID);
     assert.equal(event.device.payload.device_type, "UA-Hub-Door-Mini");
     assert.equal(event.device.payload.is_online, true);
     assert.equal(event.location, undefined);
@@ -913,7 +911,7 @@ describe("door-state classification", () => {
 
   test("the legacy dialect's door position stays untranslated and classifies as it always did", () => {
 
-    const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === DOOR_MINI), "the legacy Door Mini update");
+    const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === MINI_ID), "the legacy Door Mini update");
     const event = classifyPacket(packet);
 
     assert.equal(event?.kind, "deviceChanged");
@@ -937,7 +935,7 @@ describe("door-state classification", () => {
     assert.equal(event?.kind, "doorStateChanged");
     assert.equal(event.states.length, 1, "the entry naming no door is dropped while its sibling is admitted");
     assert.equal(event.states[0].location_id, DOOR_MINI_DOOR);
-    assert.equal(event.device?.id, DOOR_MINI, "the packet's device facet is carried regardless of which entries were dropped");
+    assert.equal(event.device?.id, MINI_ID, "the packet's device facet is carried regardless of which entries were dropped");
   });
 
   test("an entry whose optional member is malformed is rejected rather than admitted without it", () => {

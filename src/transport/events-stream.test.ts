@@ -14,6 +14,7 @@ import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, createSilentLoopback, elapsedSince } from "./loopback.helpers.ts";
 import { EventStream, HEARTBEAT_FRAME, directNotificationUrl } from "./events-stream.ts";
 import { FakeWebSocket, announcedSockets, createLoopbackServer, createProxiedLoopbackServer } from "./events-stream.helpers.ts";
+import { READER_ID, findPacket } from "../protocol/capture.helpers.ts";
 import { TestClock, assertNoUnhandledRejections, capturingLog, errnoError, expectAt, freePort, loggedAt, settle, settleUntil, silentLog,
   waitUntil } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
@@ -25,7 +26,6 @@ import type { AccessWireEvent } from "../protocol/events.ts";
 import type { EventStreamEvents } from "./events-stream.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
-import { findPacket } from "../protocol/capture.helpers.ts";
 import { getEventListeners } from "node:events";
 import { subscribeTo } from "../testing.helpers.ts";
 import tls from "node:tls";
@@ -353,7 +353,7 @@ describe("EventStream", () => {
       const { ws } = opened;
       const packets = collect(stream, "packet");
       const raw = collect(stream, "rawPacket");
-      const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === "aabbcc000002"), "the legacy reader update");
+      const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === READER_ID), "the legacy reader update");
 
       ws.emitMessage(frame(packet));
 
@@ -363,7 +363,7 @@ describe("EventStream", () => {
       const [event] = first(packets);
 
       assert.equal(event.kind, "deviceChanged");
-      assert.equal((event as { id: string }).id, "aabbcc000002");
+      assert.equal((event as { id: string }).id, READER_ID);
     });
 
     test("a throwing rawPacket listener is logged and the frame still decodes onto the packet rail, with nothing on the error rail", async () => {
@@ -376,7 +376,7 @@ describe("EventStream", () => {
       const errors = collect(stream, "error");
       const packets = collect(stream, "packet");
       const failure = new Error("the consumer's raw handler failed");
-      const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === "aabbcc000002"), "the legacy reader update");
+      const packet = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === READER_ID), "the legacy reader update");
 
       // The raw rail fires one step before classification, so a throw that escaped it would leave the frame short of the packet rail and unwind into the socket's
       // own message dispatch.
@@ -445,7 +445,7 @@ describe("EventStream", () => {
        * reshapes. The raw rail is the only place a consumer can still see the excluded fields, and the one place the map arrives in its own wire shape, so it must
        * deliver the payload verbatim rather than a re-serialization of what survived translation.
        */
-      const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === "aabbcc000002"),
+      const packet = findPacket((entry) => (entry.event === "access.data.v2.device.update") && (entry.meta?.id === READER_ID),
         "the v2 reader update carrying the excluded payload fields");
 
       ws.emitMessage(frame(packet));
@@ -1020,7 +1020,7 @@ describe("EventStream", () => {
       await using stream = opened.stream;
       const { ws } = opened;
       const payloads: AccessEventsPacketPayload[] = [];
-      const deviceUpdate = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === "aabbcc000002"),
+      const deviceUpdate = findPacket((entry) => (entry.event === "access.data.device.update") && (entry.event_object_id === READER_ID),
         "the legacy reader update");
       const ringCancel = findPacket((entry) => entry.event === "access.remote_view.change", "a historical ring cancellation specimen");
 
@@ -1031,7 +1031,7 @@ describe("EventStream", () => {
 
       // A notification that names an entity carries its identifier; a ring cancellation identifies the call rather than a device, so the payload does not invent
       // one for it.
-      assert.deepEqual(payloads[0], { eventName: "access.data.device.update", host: HOST, id: "aabbcc000002", kind: "deviceChanged" });
+      assert.deepEqual(payloads[0], { eventName: "access.data.device.update", host: HOST, id: READER_ID, kind: "deviceChanged" });
       assert.deepEqual(payloads[1], { eventName: "access.remote_view.change", host: HOST, kind: "doorbellCancel" });
     });
 

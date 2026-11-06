@@ -9,6 +9,7 @@
  * wire round trip. Writing that once here is what keeps each suite down to the concern its name states.
  */
 import type { AccessBootstrapConfig, AccessDeviceConfig, AccessEventPacket } from "../types/index.ts";
+import { DOORBELL_ID, UAH_ID } from "../protocol/capture.helpers.ts";
 import { TestClock, present, silentLog } from "homebridge-plugin-utils/testing";
 import type { AccessDeviceContext } from "./context.ts";
 import { AccessDeviceRegistry } from "./registry.ts";
@@ -22,25 +23,17 @@ import { accessEventPacketsFixture } from "../protocol/events.fixtures.ts";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
 import { refuseRefresh } from "../testing.helpers.ts";
 
-// Named entries from the 2026 document: a single-door hub, the door it drives, and a reader that is not hub-capable.
-export const HUB = "aabbcc000001";
+// Named entries from the 2026 document: the door the single-door hub drives, and the door the UA Hub Door Mini drives.
 export const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
-export const READER = "aabbcc000002";
-export const DOOR_MINI = "aabbcc000004";
 export const DOOR_MINI_DOOR = "00000000-0000-0000-0000-00000000000e";
 
-// The UA Ultra of the same document, the one device in it whose hardware detects tampering, and the one binding its single port carries.
-export const ULTRA = "aabbcc000000";
+// The one binding the single port of the same document's UA Ultra carries, the one device in it whose hardware detects tampering.
 export const ULTRA_BINDING: AccessPortBinding = { doorId: "00000000-0000-0000-0000-000000000002", name: "Test Name 4", port: "port1" };
 
-// Named entries from the 2024 document: the building-hosted Enterprise Access Hub, two of its ports, and the doors those ports serve.
-export const EAH_HUB = "aabbcc000005";
+// Named entries from the 2024 document: two ports of the building-hosted Enterprise Access Hub, and the doors those ports serve.
 export const EAH_PORT_2 = "00000000-0000-0000-0000-00000000002a";
 export const EAH_PORT_3 = "00000000-0000-0000-0000-00000000002b";
 export const EAH_DOOR_2 = "00000000-0000-0000-0000-000000000013";
-
-// The camera-class reader the event corpus caught, a UVC G6 Pro Entry, under the identity its device-update packets carry.
-export const CAMERA = "00000000000000000000000c";
 
 /* The 2026 document with the captured camera-class record added. No captured topology holds camera-class hardware - the record survives only in the device-update
  * packets the corpus caught - and the store admits only devices a topology document gave it, so the packet's record is seated at root level, as hardware the
@@ -50,8 +43,8 @@ export const CAMERA = "00000000000000000000000c";
  */
 export function cameraBootstrap(): AccessBootstrapConfig {
 
-  const packet = present(accessEventPacketsFixture.find((candidate) => (candidate.event === "access.data.device.update") && (candidate.data?.["unique_id"] === CAMERA)),
-    "the camera-class record's device-update packet");
+  const packet = present(accessEventPacketsFixture.find((candidate) => (candidate.event === "access.data.device.update") &&
+    (candidate.data?.["unique_id"] === DOORBELL_ID)), "the camera-class record's device-update packet");
   const record = present(structuredClone(packet.data), "the camera-class record");
 
   return { ...structuredClone(accessBootstrap2026Fixture), "device_groups": [[record as AccessDeviceConfig]] };
@@ -124,7 +117,7 @@ export function intercept(fixture: DeviceFixture, options: InterceptOptions): vo
 }
 
 // A door-state report, so a test can put a door's live state into the store without a wire round trip.
-export const doorStateEvent = (locationId: string, lock: string): AccessTypedEvent => ({ device: { id: HUB, payload: {} },
+export const doorStateEvent = (locationId: string, lock: string): AccessTypedEvent => ({ device: { id: UAH_ID, payload: {} },
   eventName: "access.data.v2.device.update", kind: "doorStateChanged",
   states: [{ "dps": "close", "dps_connected": true, "emergency": { "hardware": "none", "software": "none" }, "is_unavailable": false,
     "location_id": locationId, "lock": lock }] });
@@ -132,11 +125,11 @@ export const doorStateEvent = (locationId: string, lock: string): AccessTypedEve
 // The same report as the controller would have framed it, for the cases that need to go through the classifier's admission contract rather than around it.
 export const wirePacket = (locationId: string, lock: string, extra: Record<string, unknown> = {}): AccessEventPacket => ({
 
-  "data": { "id": HUB, "location_states": [{ "alarms": undefined, "dps": "close", "dps_connected": true,
+  "data": { "id": UAH_ID, "location_states": [{ "alarms": undefined, "dps": "close", "dps_connected": true,
     "emergency": { "hardware": "none", "software": "none" }, "is_unavailable": false, "location_id": locationId, "lock": lock, ...extra }] },
   "event": "access.data.v2.device.update",
   "event_object_id": "00000000-0000-4000-8000-000000000000",
-  "meta": { "all_field": false, "id": HUB, "object_type": "device", "source": "", "target_field": ["location_states"] },
+  "meta": { "all_field": false, "id": UAH_ID, "object_type": "device", "source": "", "target_field": ["location_states"] },
   "receiver_id": "",
   "save_to_history": false
 });

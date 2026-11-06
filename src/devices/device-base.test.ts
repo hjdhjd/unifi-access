@@ -4,7 +4,8 @@
  * read-through, and the write-through commands. Every command test asserts the wire shape through an intercepted request rather than through the projection's own
  * return value, so what is being checked is what the controller would actually receive.
  */
-import { CAMERA, HUB, READER, REFUSED, ULTRA, cameraBootstrap, deviceFixture, intercept } from "./device.helpers.ts";
+import { DOORBELL_ID, READER_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
+import { REFUSED, cameraBootstrap, deviceFixture, intercept } from "./device.helpers.ts";
 import { describe, test } from "node:test";
 import { expectAt, present, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import { ACCESS_METHODS } from "../protocol/vocabulary.ts";
@@ -18,12 +19,12 @@ describe("liveness and read-through", () => {
   test("a held handle reflects a later store change rather than a value captured at lookup", () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const device = present(registry.device(HUB), "the hub");
+    const device = present(registry.device(UAH_ID), "the hub");
 
     assert.equal(device.name, "Test alias 13");
     assert.equal(device.isOnline, true);
 
-    store.dispatch({ eventName: "access.data.device.update", id: HUB, kind: "deviceChanged", payload: { "alias": "Renamed", "is_online": false } });
+    store.dispatch({ eventName: "access.data.device.update", id: UAH_ID, kind: "deviceChanged", payload: { "alias": "Renamed", "is_online": false } });
 
     assert.equal(device.name, "Renamed", "the handle re-read rather than answering from a captured value");
     assert.equal(device.isOnline, false);
@@ -32,11 +33,11 @@ describe("liveness and read-through", () => {
   test("the display name falls through to the controller's own name when the alias is empty", () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const device = present(registry.device(HUB), "the hub");
+    const device = present(registry.device(UAH_ID), "the hub");
 
     // Clearing an alias in the controller's interface reads on the wire as the empty string rather than as an absent member, so the fall-through has to treat it
     // as unset.
-    store.dispatch({ eventName: "access.data.device.update", id: HUB, kind: "deviceChanged", payload: { "alias": "" } });
+    store.dispatch({ eventName: "access.data.device.update", id: UAH_ID, kind: "deviceChanged", payload: { "alias": "" } });
 
     assert.equal(device.name, device.config.name);
     assert.notEqual(device.name, "");
@@ -48,9 +49,9 @@ describe("liveness and read-through", () => {
      * those flags in would make this getter one consumer's policy; reading the controller's own report keeps it the controller's answer.
      */
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const device = present(registry.device(HUB), "the hub");
+    const device = present(registry.device(UAH_ID), "the hub");
 
-    store.dispatch({ eventName: "access.data.device.update", id: HUB, kind: "deviceChanged",
+    store.dispatch({ eventName: "access.data.device.update", id: UAH_ID, kind: "deviceChanged",
       payload: { "is_adopted": false, "is_connected": false, "is_online": true } });
 
     assert.equal(device.config.is_connected, false, "the enrollment flags really are false on this record");
@@ -61,21 +62,21 @@ describe("liveness and read-through", () => {
   test("peek reports an absent record while the asserting reads throw", () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const device = present(registry.device(HUB), "the hub");
+    const device = present(registry.device(UAH_ID), "the hub");
 
-    assert.equal(device.peek()?.unique_id, HUB);
+    assert.equal(device.peek()?.unique_id, UAH_ID);
 
-    store.dispatch({ eventName: "access.data.v2.device.delete", id: HUB, kind: "deviceRemoved" });
+    store.dispatch({ eventName: "access.data.v2.device.delete", id: UAH_ID, kind: "deviceRemoved" });
 
     assert.equal(device.peek(), undefined, "a departed record reads as absent rather than throwing");
     assert.throws(() => device.name, ReferenceError, "while the asserting read fails loudly");
-    assert.equal(registry.device(HUB), undefined, "and a fresh lookup finds nothing");
+    assert.equal(registry.device(UAH_ID), undefined, "and a fresh lookup finds nothing");
   });
 
   test("observe yields the handle on each change to its own record and stays silent otherwise", async () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const device = present(registry.device(HUB), "the hub");
+    const device = present(registry.device(UAH_ID), "the hub");
 
     const ac = new AbortController();
     const seen: string[] = [];
@@ -90,11 +91,11 @@ describe("liveness and read-through", () => {
     await settle();
 
     // An unrelated device changing must not wake this handle's observer.
-    store.dispatch({ eventName: "access.data.device.update", id: READER, kind: "deviceChanged", payload: { "alias": "Other" } });
+    store.dispatch({ eventName: "access.data.device.update", id: READER_ID, kind: "deviceChanged", payload: { "alias": "Other" } });
     await settle();
     assert.equal(seen.length, 0);
 
-    store.dispatch({ eventName: "access.data.device.update", id: HUB, kind: "deviceChanged", payload: { "alias": "Renamed" } });
+    store.dispatch({ eventName: "access.data.device.update", id: UAH_ID, kind: "deviceChanged", payload: { "alias": "Renamed" } });
     await settleUntil(() => seen.length === 1, { description: "the hub's observer to see the rename" });
     assert.deepEqual(seen, ["Renamed"]);
 
@@ -105,8 +106,8 @@ describe("liveness and read-through", () => {
   test("the tamper getters read the record through the selectors rather than answering from a captured value", () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const ultra = present(registry.device(ULTRA), "the Ultra");
-    const hub = present(registry.device(HUB), "the hub");
+    const ultra = present(registry.device(ULTRA_ID), "the Ultra");
+    const hub = present(registry.device(UAH_ID), "the hub");
 
     // The capability is mirrored on the handle because it produces no projection class a consumer could ask about instead, so this is where a consumer asks.
     assert.equal(ultra.isTamperCapable, true);
@@ -121,7 +122,7 @@ describe("liveness and read-through", () => {
     // setting moves with the input it gates, because a reading is established only while the setting is on.
     const flipped: Readonly<Record<string, string>> = { "tamper_event": "true", "tampering": "true" };
 
-    store.dispatch({ eventName: "access.data.device.update", id: ULTRA, kind: "deviceChanged",
+    store.dispatch({ eventName: "access.data.device.update", id: ULTRA_ID, kind: "deviceChanged",
       payload: { configs: rows.map((row) => ({ ...row, "value": flipped[row.key] ?? row.value })) } });
 
     assert.equal(ultra.tamperState, true, "the handle re-read rather than answering from a captured value");
@@ -131,9 +132,9 @@ describe("liveness and read-through", () => {
   test("the tamper getters throw once the record has left the state", () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const ultra = present(registry.device(ULTRA), "the Ultra");
+    const ultra = present(registry.device(ULTRA_ID), "the Ultra");
 
-    store.dispatch({ eventName: "access.data.v2.device.delete", id: ULTRA, kind: "deviceRemoved" });
+    store.dispatch({ eventName: "access.data.v2.device.delete", id: ULTRA_ID, kind: "deviceRemoved" });
 
     // The asserting reads fail loudly, exactly as every other one on this handle does: a handle to an absent record is a caller's own error.
     assert.throws(() => ultra.tamperState, ReferenceError);
@@ -143,22 +144,22 @@ describe("liveness and read-through", () => {
   test("the access-method getter reads the record through the selector rather than answering from a captured value", () => {
 
     const { registry, store } = deviceFixture(accessBootstrap2026Fixture);
-    const reader = present(registry.device(READER), "the G2 Pro");
+    const reader = present(registry.device(READER_ID), "the G2 Pro");
 
     // The captured pin row carries a scrubbed placeholder, so pin is unestablished here, and the hub carries no access-method rows at all.
     assert.deepEqual(reader.accessMethodStates, { face: true, mobile: true, nfc: true, qr: true, touchPass: false });
-    assert.deepEqual(present(registry.device(HUB), "the hub").accessMethodStates, {});
+    assert.deepEqual(present(registry.device(UAH_ID), "the hub").accessMethodStates, {});
 
     const rows = reader.config.configs;
 
     assert.ok(rows, "the document should carry the G2 Pro's configuration rows");
 
-    store.dispatch({ eventName: "access.data.device.update", id: READER, kind: "deviceChanged",
+    store.dispatch({ eventName: "access.data.device.update", id: READER_ID, kind: "deviceChanged",
       payload: { configs: rows.map((row) => ((row.key === "nfc") ? { ...row, "value": "no" } : row)) } });
 
     assert.equal(reader.accessMethodStates.nfc, false, "the handle re-read rather than answering from a captured value");
 
-    store.dispatch({ eventName: "access.data.v2.device.delete", id: READER, kind: "deviceRemoved" });
+    store.dispatch({ eventName: "access.data.v2.device.delete", id: READER_ID, kind: "deviceRemoved" });
 
     assert.throws(() => reader.accessMethodStates, ReferenceError, "and it fails loudly once the record has left the state");
   });
@@ -169,50 +170,50 @@ describe("the device commands", () => {
   test("updateDevice writes a hub's settings under the hub collection and returns what the controller echoed", async () => {
 
     const fixture = deviceFixture(accessBootstrap2026Fixture);
-    const echoed = { ...structuredClone(fixture.store.snapshot().devices.get(HUB)), "alias": "Echoed" };
+    const echoed = { ...structuredClone(fixture.store.snapshot().devices.get(UAH_ID)), "alias": "Echoed" };
 
-    intercept(fixture, { body: JSON.stringify(echoed), method: "PUT", path: "/proxy/access/api/v2/device/" + HUB + "/configs" });
+    intercept(fixture, { body: JSON.stringify(echoed), method: "PUT", path: "/proxy/access/api/v2/device/" + UAH_ID + "/configs" });
 
-    const hub = present(fixture.registry.device(HUB), "the hub");
+    const hub = present(fixture.registry.device(UAH_ID), "the hub");
 
     const result = await hub.updateDevice({ "alias": "Echoed" });
 
     assert.equal(fixture.captured[0]?.method, "PUT");
-    assert.equal(fixture.captured[0].path, "/proxy/access/api/v2/device/" + HUB + "/configs");
+    assert.equal(fixture.captured[0].path, "/proxy/access/api/v2/device/" + UAH_ID + "/configs");
     assert.deepEqual(JSON.parse(String(fixture.captured[0].body)), { "alias": "Echoed" });
     assert.equal(result.alias, "Echoed", "the echoed record reaches the caller");
 
     // Write-through: the echo is a convenience, not a second source of state, so the store is untouched by it.
-    assert.equal(fixture.store.snapshot().devices.get(HUB)?.alias, "Test alias 13");
+    assert.equal(fixture.store.snapshot().devices.get(UAH_ID)?.alias, "Test alias 13");
   });
 
   test("updateDevice writes a non-hub device's settings under the other collection", async () => {
 
     const fixture = deviceFixture(accessBootstrap2026Fixture);
 
-    intercept(fixture, { body: JSON.stringify(structuredClone(fixture.store.snapshot().devices.get(READER))), method: "PUT",
-      path: "/proxy/access/api/v2/device/" + READER + "/settings" });
+    intercept(fixture, { body: JSON.stringify(structuredClone(fixture.store.snapshot().devices.get(READER_ID))), method: "PUT",
+      path: "/proxy/access/api/v2/device/" + READER_ID + "/settings" });
 
-    const reader = present(fixture.registry.device(READER), "the reader");
+    const reader = present(fixture.registry.device(READER_ID), "the reader");
 
     await reader.updateDevice({ "alias": "Renamed Reader" });
 
     // The suffix follows the device's live capability, and a reader is not hub-capable - the widened surface reaching any modeled device is the point here.
-    assert.equal(fixture.captured[0]?.path, "/proxy/access/api/v2/device/" + READER + "/settings");
+    assert.equal(fixture.captured[0]?.path, "/proxy/access/api/v2/device/" + READER_ID + "/settings");
   });
 
   test("restart puts to the device's restart resource with an empty object body", async () => {
 
     const fixture = deviceFixture(accessBootstrap2026Fixture);
 
-    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + READER + "/restart" });
+    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + READER_ID + "/restart" });
 
-    const reader = present(fixture.registry.device(READER), "the reader");
+    const reader = present(fixture.registry.device(READER_ID), "the reader");
 
     await reader.restart();
 
     assert.equal(fixture.captured[0]?.method, "PUT");
-    assert.equal(fixture.captured[0].path, "/proxy/access/api/v2/device/" + READER + "/restart");
+    assert.equal(fixture.captured[0].path, "/proxy/access/api/v2/device/" + READER_ID + "/restart");
 
     // The body is present and empty, which is the opposite polarity from the close command below - both are asserted, because the difference is on the wire.
     assert.equal(String(fixture.captured[0].body), "{}");
@@ -222,9 +223,9 @@ describe("the device commands", () => {
 
     const fixture = deviceFixture(accessBootstrap2026Fixture);
 
-    intercept(fixture, { body: "forbidden", method: "PUT", path: "/proxy/access/api/v2/device/" + HUB + "/configs", status: 403 });
+    intercept(fixture, { body: "forbidden", method: "PUT", path: "/proxy/access/api/v2/device/" + UAH_ID + "/configs", status: 403 });
 
-    const hub = present(fixture.registry.device(HUB), "the hub");
+    const hub = present(fixture.registry.device(UAH_ID), "the hub");
 
     await assert.rejects(() => hub.updateDevice({ "alias": "Nope" }), AccessAuthorizationError);
   });
@@ -240,43 +241,43 @@ describe("the access-method write", () => {
 
     const fixture = deviceFixture(accessBootstrap2026Fixture);
 
-    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + READER + "/settings" });
+    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + READER_ID + "/settings" });
 
-    await present(fixture.registry.device(READER), "the reader").setAccessMethod("nfc", false);
+    await present(fixture.registry.device(READER_ID), "the reader").setAccessMethod("nfc", false);
 
     const captured = expectAt(fixture.captured, 0, "the access-method write");
 
     assert.equal(captured.method, "PUT");
-    assert.equal(captured.path, "/proxy/access/api/v2/device/" + READER + "/settings");
+    assert.equal(captured.path, "/proxy/access/api/v2/device/" + READER_ID + "/settings");
     assert.equal(captured.body, "[{\"key\":\"nfc\",\"tag\":\"open_door_mode\",\"value\":\"no\"}]");
   });
 
   test("a hub takes its methods on the settings collection, where its configuration write takes the hub collection", async () => {
 
     const fixture = deviceFixture(accessBootstrap2026Fixture);
-    const ultra = present(fixture.registry.device(ULTRA), "the Ultra");
+    const ultra = present(fixture.registry.device(ULTRA_ID), "the Ultra");
 
     // The UA Ultra drives a door and reads credentials at it, so a write routed by a role capability would send it somewhere other than the settings collection.
     assert.ok(ultra.config.capabilities.includes("is_hub") && ultra.config.capabilities.includes("is_reader"), "the UA Ultra is a hub as well as a reader");
 
-    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + ULTRA + "/settings" });
+    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + ULTRA_ID + "/settings" });
 
     await ultra.setAccessMethod("pin", true);
 
-    assert.equal(expectAt(fixture.captured, 0, "the access-method write").path, "/proxy/access/api/v2/device/" + ULTRA + "/settings");
+    assert.equal(expectAt(fixture.captured, 0, "the access-method write").path, "/proxy/access/api/v2/device/" + ULTRA_ID + "/settings");
   });
 
   test("the captured camera-class record takes its methods on the camera configuration endpoint, mobile unlock as its Bluetooth keys in one request", async () => {
 
     const fixture = deviceFixture(cameraBootstrap());
 
-    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + CAMERA + "/configs?is_camera=true" });
+    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + DOORBELL_ID + "/configs?is_camera=true" });
 
-    await present(fixture.registry.device(CAMERA), "the camera-class reader").setAccessMethod("mobile", true);
+    await present(fixture.registry.device(DOORBELL_ID), "the camera-class reader").setAccessMethod("mobile", true);
 
     const captured = expectAt(fixture.captured, 0, "the access-method write");
 
-    assert.equal(captured.path, "/proxy/access/api/v2/device/" + CAMERA + "/configs?is_camera=true");
+    assert.equal(captured.path, "/proxy/access/api/v2/device/" + DOORBELL_ID + "/configs?is_camera=true");
     assert.equal(captured.body, "[{\"key\":\"bt\",\"tag\":\"open_door_mode\",\"value\":\"yes\"},{\"key\":\"bt_button\",\"tag\":\"open_door_mode\",\"value\":\"yes\"}," +
       "{\"key\":\"bt_tap\",\"tag\":\"open_door_mode\",\"value\":\"yes\"}]");
     assert.equal(fixture.captured.length, 1, "and one request carries every row");
@@ -292,11 +293,11 @@ describe("the access-method write", () => {
 
     const fixture = deviceFixture({ ...accessBootstrap2026Fixture, "device_groups": [[unflagged]] });
 
-    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + CAMERA + "/settings" });
+    intercept(fixture, { method: "PUT", path: "/proxy/access/api/v2/device/" + DOORBELL_ID + "/settings" });
 
-    await present(fixture.registry.device(CAMERA), "the unflagged record").setAccessMethod("nfc", true);
+    await present(fixture.registry.device(DOORBELL_ID), "the unflagged record").setAccessMethod("nfc", true);
 
-    assert.equal(expectAt(fixture.captured, 0, "the access-method write").path, "/proxy/access/api/v2/device/" + CAMERA + "/settings");
+    assert.equal(expectAt(fixture.captured, 0, "the access-method write").path, "/proxy/access/api/v2/device/" + DOORBELL_ID + "/settings");
   });
 
   test("each name sends the keys it spans, one row per key, on a reader's settings collection and on the camera configuration endpoint alike", async () => {
@@ -314,8 +315,8 @@ describe("the access-method write", () => {
       touchPass: { camera: ["apple_pass"], direct: ["apple_pass"] },
       wave: { camera: ["wave"], direct: ["wave"] }
     };
-    const endpoints = [ { bootstrap: accessBootstrap2026Fixture, column: "direct", id: READER, path: "/settings" },
-      { bootstrap: cameraBootstrap(), column: "camera", id: CAMERA, path: "/configs?is_camera=true" } ] as const;
+    const endpoints = [ { bootstrap: accessBootstrap2026Fixture, column: "direct", id: READER_ID, path: "/settings" },
+      { bootstrap: cameraBootstrap(), column: "camera", id: DOORBELL_ID, path: "/configs?is_camera=true" } ] as const;
 
     for(const endpoint of endpoints) {
 
@@ -339,10 +340,10 @@ describe("the access-method write", () => {
   test("any 2xx answer is success whatever its body, a refusal envelope and a body that is not JSON among them", async () => {
 
     const fixture = deviceFixture(accessBootstrap2026Fixture);
-    const reader = present(fixture.registry.device(READER), "the reader");
+    const reader = present(fixture.registry.device(READER_ID), "the reader");
 
-    intercept(fixture, { body: REFUSED, method: "PUT", path: "/proxy/access/api/v2/device/" + READER + "/settings" });
-    intercept(fixture, { body: "accepted", method: "PUT", path: "/proxy/access/api/v2/device/" + READER + "/settings" });
+    intercept(fixture, { body: REFUSED, method: "PUT", path: "/proxy/access/api/v2/device/" + READER_ID + "/settings" });
+    intercept(fixture, { body: "accepted", method: "PUT", path: "/proxy/access/api/v2/device/" + READER_ID + "/settings" });
 
     await reader.setAccessMethod("nfc", false);
     await reader.setAccessMethod("nfc", true);
@@ -354,8 +355,8 @@ describe("the access-method write", () => {
 
     const fixture = deviceFixture(accessBootstrap2026Fixture);
 
-    intercept(fixture, { body: "forbidden", method: "PUT", path: "/proxy/access/api/v2/device/" + READER + "/settings", status: 403 });
+    intercept(fixture, { body: "forbidden", method: "PUT", path: "/proxy/access/api/v2/device/" + READER_ID + "/settings", status: 403 });
 
-    await assert.rejects(() => present(fixture.registry.device(READER), "the reader").setAccessMethod("nfc", false), AccessAuthorizationError);
+    await assert.rejects(() => present(fixture.registry.device(READER_ID), "the reader").setAccessMethod("nfc", false), AccessAuthorizationError);
   });
 });

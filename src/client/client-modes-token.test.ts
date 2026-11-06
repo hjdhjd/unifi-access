@@ -3,8 +3,9 @@
  * client-modes-token.test.ts: Tests for what a client that connects with a token alone can reach - which endpoints it touches, what it seeds door state from,
  * which of its accessors answer, and what it tears down.
  */
-import { DEVICES_PATH, DOORS_PATH, DOOR_HUB, DOOR_MINI, DOOR_ULTRA, HOST, HUB, READER_PRO, connectCapturing, connectCapturingWithDispatch, devicesBody, doorsBody,
-  identityEnterpriseBody, interceptOfficialPass, mockController, officialDoor } from "./client-modes.helpers.ts";
+import { DEVICES_PATH, DOORS_PATH, DOOR_HUB, DOOR_MINI, DOOR_ULTRA, HOST, connectCapturing, connectCapturingWithDispatch, devicesBody, doorsBody, identityEnterpriseBody,
+  interceptOfficialPass, mockController, officialDoor } from "./client-modes.helpers.ts";
+import { EAH_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
 import { TestClock, capturingLog, logCount, present, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
 import { describe, test } from "node:test";
@@ -83,7 +84,7 @@ describe("a token-only client", () => {
 
     // The per-port expansion and a hub's own placement are read from topology, which the listings do not carry, so this view is the one that stays empty.
     assert.deepEqual(client.accessPoints, []);
-    assert.equal(client.accessPoint(HUB), undefined);
+    assert.equal(client.accessPoint(UAH_ID), undefined);
 
     // No account, so no privilege verdict; no controller document, so no name and no information - which is also why restart detection is inert in this mode.
     assert.equal(client.isAdmin, null);
@@ -110,15 +111,15 @@ describe("a token-only client", () => {
 
     const hubs = selectHubs(client.state.snapshot());
 
-    assert.deepEqual(hubs.map((device) => device.unique_id).sort(), [ "aabbcc000000", "aabbcc000004", HUB ].sort(), "every hub-capable record the listing carried");
+    assert.deepEqual(hubs.map((device) => device.unique_id).sort(), [ ULTRA_ID, MINI_ID, UAH_ID ].sort(), "every hub-capable record the listing carried");
 
-    const hub = client.hub(HUB);
+    const hub = client.hub(UAH_ID);
 
     assert.ok(hub, "a hub-capable projected record is reachable as a hub");
     assert.equal(hub.doorId, DOOR_HUB, "with no port extensions, the door is the record's own location");
     assert.deepEqual(hub.doorState, { "dps": "none", "location_id": DOOR_HUB, "lock": "locked" }, "and its state came from the same pass that seeded it");
 
-    assert.equal(client.device(READER_PRO)?.name, "Test Name 68", "a reader that is not hub-capable is still a device");
+    assert.equal(client.device(READER_ID)?.name, "Test Name 68", "a reader that is not hub-capable is still a device");
     assert.equal(client.devices.length, 5);
     assert.equal(client.state.snapshot().doors.get(DOOR_HUB)?.name, "Test Name 10", "the door record carries the listing's own name");
   });
@@ -146,15 +147,15 @@ describe("a token-only client", () => {
      * and no port extensions to expand, so a whole-hub handle would resolve its door to the hub's own location and command the wrong resource.
      */
     const { agent, official } = mockController();
-    const enterprise = { ...accessOfficialDevicesFixture[0]?.[0], "capabilities": ["is_hub"], "id": "aabbcc000005", "type": "UAH-Ent" };
+    const enterprise = { ...accessOfficialDevicesFixture[0]?.[0], "capabilities": ["is_hub"], "id": EAH_ID, "type": "UAH-Ent" };
 
     interceptOfficialPass(official, { devices: devicesBody([[enterprise]]) });
 
     await using client = (await connectCapturing(agent, { token: "t0ken" })).client;
 
-    assert.equal(client.hub("aabbcc000005"), undefined, "an unplaced Enterprise hub is not a whole-hub handle");
+    assert.equal(client.hub(EAH_ID), undefined, "an unplaced Enterprise hub is not a whole-hub handle");
     assert.deepEqual(client.hubs, [], "and it is absent from the hub roster for the same reason");
-    assert.ok(client.device("aabbcc000005"), "while the record itself stays reachable for configuration");
+    assert.ok(client.device(EAH_ID), "while the record itself stays reachable for configuration");
     assert.deepEqual(client.accessPoints, [], "the per-port expansion is topology-derived, so it has nothing to answer with");
   });
 
@@ -171,12 +172,12 @@ describe("a token-only client", () => {
 
     await using client = captured.client;
 
-    captured.ws.emitMessage(JSON.stringify({ "data": { "firmware": "v4.12.19.0", "unique_id": HUB }, "event": "access.data.device.update",
-      "event_object_id": HUB, "receiver_id": "", "save_to_history": false }));
-    await settleUntil(() => client.device(HUB)?.config.firmware === "v4.12.19.0", { description: "the frame's firmware to merge onto the seeded hub" });
+    captured.ws.emitMessage(JSON.stringify({ "data": { "firmware": "v4.12.19.0", "unique_id": UAH_ID }, "event": "access.data.device.update",
+      "event_object_id": UAH_ID, "receiver_id": "", "save_to_history": false }));
+    await settleUntil(() => client.device(UAH_ID)?.config.firmware === "v4.12.19.0", { description: "the frame's firmware to merge onto the seeded hub" });
 
     // A member the listing carries is untouched by a frame that never mentions it, which is what says the frame merged rather than replaced.
-    assert.equal(client.device(HUB)?.config.alias, "Test alias 13");
+    assert.equal(client.device(UAH_ID)?.config.alias, "Test alias 13");
 
     const before = client.state.snapshot().devices.size;
 
@@ -198,19 +199,19 @@ describe("a token-only client", () => {
 
     await using client = captured.client;
 
-    captured.ws.emitMessage(JSON.stringify({ "data": { "firmware": "v4.12.19.0", "unique_id": HUB }, "event": "access.data.device.update",
-      "event_object_id": HUB, "receiver_id": "", "save_to_history": false }));
-    await settleUntil(() => client.device(HUB)?.config.firmware === "v4.12.19.0", { description: "the frame's firmware to merge onto the seeded hub" });
+    captured.ws.emitMessage(JSON.stringify({ "data": { "firmware": "v4.12.19.0", "unique_id": UAH_ID }, "event": "access.data.device.update",
+      "event_object_id": UAH_ID, "receiver_id": "", "save_to_history": false }));
+    await settleUntil(() => client.device(UAH_ID)?.config.firmware === "v4.12.19.0", { description: "the frame's firmware to merge onto the seeded hub" });
 
-    const surviving = accessOfficialDevicesFixture.flat().filter((device) => device.id !== READER_PRO).map(officialDeviceRecord);
+    const surviving = accessOfficialDevicesFixture.flat().filter((device) => device.id !== READER_ID).map(officialDeviceRecord);
     const admitted = officialDeviceRecord({ ...accessOfficialDevicesFixture.flat()[0], "alias": "New Reader", "id": "aabbccddeeff" } as unknown as AccessOfficialDevice);
 
     client.state.applyCensus({ devices: [ ...surviving, admitted ], doorStates: accessOfficialDoorsFixture.map(doorStateEntry),
       doors: accessOfficialDoorsFixture.map(officialDoorRecord) }, { complete: true });
 
-    assert.equal(client.device(READER_PRO), undefined, "the device the enumeration no longer names left with it");
+    assert.equal(client.device(READER_ID), undefined, "the device the enumeration no longer names left with it");
     assert.equal(client.device("aabbccddeeff")?.name, "New Reader", "and the one it newly named was admitted whole");
-    assert.equal(client.device(HUB)?.config.firmware, "v4.12.19.0", "while the member only the socket established survived the pass");
+    assert.equal(client.device(UAH_ID)?.config.firmware, "v4.12.19.0", "while the member only the socket established survived the pass");
   });
 
   test("re-reads both listings on the refresh interval, which is a cadence this mode honors like any other", async () => {
@@ -225,14 +226,14 @@ describe("a token-only client", () => {
 
     await using client = (await connectCapturing(agent, { clock, refreshIntervalMs: 1000, token: "t0ken" })).client;
 
-    assert.equal(client.device(HUB)?.config.alias, "Test alias 13");
+    assert.equal(client.device(UAH_ID)?.config.alias, "Test alias 13");
 
-    const renamed = accessOfficialDevicesFixture.map((group) => group.map((device) => (device.id === HUB) ? { ...device, "alias": "Front Hub" } : device));
+    const renamed = accessOfficialDevicesFixture.map((group) => group.map((device) => (device.id === UAH_ID) ? { ...device, "alias": "Front Hub" } : device));
 
     interceptOfficialPass(official, { devices: devicesBody(renamed) });
     clock.advance(1000);
     await settle();
-    await settleUntil(() => client.device(HUB)?.config.alias === "Front Hub", { description: "the refresh pass to re-seed the renamed hub" });
+    await settleUntil(() => client.device(UAH_ID)?.config.alias === "Front Hub", { description: "the refresh pass to re-seed the renamed hub" });
   });
 
   test("refuses to produce the topology document, which is credential surface", async () => {
@@ -255,7 +256,7 @@ describe("a token-only client", () => {
       .reply(200, JSON.stringify({ code: "SUCCESS", data: {}, msg: "success" }));
 
     await using client = (await connectCapturing(agent, { token: "t0ken" })).client;
-    const hub = present(client.hub(HUB), "the hub");
+    const hub = present(client.hub(UAH_ID), "the hub");
 
     await hub.unlock();
   });
@@ -269,7 +270,7 @@ describe("a token-only client", () => {
       .reply(200, JSON.stringify({ code: "SUCCESS", data: {}, msg: "success" }));
 
     await using client = (await connectCapturing(agent, { token: "t0ken" })).client;
-    const hub = present(client.hub(HUB), "the hub");
+    const hub = present(client.hub(UAH_ID), "the hub");
 
     await hub.close();
 
@@ -287,7 +288,7 @@ describe("a token-only client", () => {
     interceptOfficialPass(official);
 
     await using client = (await connectCapturing(agent, { token: "t0ken" })).client;
-    const device = present(client.device(HUB), "the hub");
+    const device = present(client.device(UAH_ID), "the hub");
 
     for(const attempt of [ { label: "a restart", run: async (): Promise<void> => device.restart() },
       { label: "a configuration write", run: async (): Promise<void> => { await device.updateDevice({}); } } ]) {
@@ -313,12 +314,12 @@ describe("a token-only client", () => {
     const { agent, official } = mockController();
 
     interceptOfficialPass(official);
-    official.intercept({ method: "PUT", path: DEVICES_PATH + "/" + HUB + "/settings" }).reply(200, JSON.stringify({ code: "SUCCESS", data: {}, msg: "success" }));
-    official.intercept({ method: "GET", path: DEVICES_PATH + "/" + HUB + "/settings" })
-      .reply(200, JSON.stringify({ code: "SUCCESS", data: { "access_methods": { nfc: { enabled: "no" } }, "device_id": HUB }, msg: "success" }));
+    official.intercept({ method: "PUT", path: DEVICES_PATH + "/" + UAH_ID + "/settings" }).reply(200, JSON.stringify({ code: "SUCCESS", data: {}, msg: "success" }));
+    official.intercept({ method: "GET", path: DEVICES_PATH + "/" + UAH_ID + "/settings" })
+      .reply(200, JSON.stringify({ code: "SUCCESS", data: { "access_methods": { nfc: { enabled: "no" } }, "device_id": UAH_ID }, msg: "success" }));
 
     await using client = (await connectCapturing(agent, { token: "t0ken" })).client;
-    const device = present(client.device(HUB), "the hub");
+    const device = present(client.device(UAH_ID), "the hub");
     const starts: AccessHttpRequestStartPayload[] = [];
 
     // The capture opens once the connect's own reads are done, so anything it records is a request the write itself started.

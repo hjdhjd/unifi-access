@@ -31,8 +31,6 @@ export const TOPOLOGY_PATH = "/proxy/access/api/v2/devices/topology4";
 
 // Named entries from the 2026 topology document, which is what the credential path seeds from - and, under the same identities, from the official listings the
 // token path seeds from.
-export const HUB = "aabbcc000001";
-export const READER_PRO = "aabbcc000002";
 export const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
 export const DOOR_MINI = "00000000-0000-0000-0000-00000000000e";
 export const DOOR_ULTRA = "00000000-0000-0000-0000-000000000002";

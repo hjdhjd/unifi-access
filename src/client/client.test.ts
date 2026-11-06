@@ -6,7 +6,7 @@
  */
 import { AccessApiError, AccessBootstrapError, AccessNetworkError, AccessProtocolError } from "../errors.ts";
 import type { AccessConnectionTransitionPayload, AccessStoreDispatchPayload } from "../diagnostics.ts";
-import { CONTROLLER_PATH, DOOR_HUB, HOST, HUB, LOGIN_PATH, SELF_PATH, TOPOLOGY_PATH, mockController } from "./client-modes.helpers.ts";
+import { CONTROLLER_PATH, DOOR_HUB, HOST, LOGIN_PATH, SELF_PATH, TOPOLOGY_PATH, mockController } from "./client-modes.helpers.ts";
 import type { Interceptable, MockAgent } from "undici";
 import { TestClock, capturingLog, expectAt, present, settle, settleUntil, silentLog } from "homebridge-plugin-utils/testing";
 import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../protocol/topology.fixtures.ts";
@@ -16,6 +16,7 @@ import { AccessClient } from "./client.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
+import { UAH_ID } from "../protocol/capture.helpers.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { subscribeTo } from "../testing.helpers.ts";
@@ -128,11 +129,11 @@ function doorStateFrame(locationId: string, lock: string): string {
 
   return JSON.stringify({
 
-    "data": { "id": HUB, "location_states": [{ "dps": "close", "dps_connected": true, "emergency": { "hardware": "none", "software": "none" },
+    "data": { "id": UAH_ID, "location_states": [{ "dps": "close", "dps_connected": true, "emergency": { "hardware": "none", "software": "none" },
       "is_unavailable": false, "location_id": locationId, "lock": lock }] },
     "event": "access.data.v2.device.update",
     "event_object_id": "00000000-0000-4000-8000-000000000000",
-    "meta": { "all_field": false, "id": HUB, "object_type": "device", "source": "", "target_field": ["location_states"] },
+    "meta": { "all_field": false, "id": UAH_ID, "object_type": "device", "source": "", "target_field": ["location_states"] },
     "receiver_id": "",
     "save_to_history": false
   });
@@ -155,7 +156,7 @@ describe("AccessClient.connect", () => {
 
       // The topology document reached the state model, unwrapped from its single-element collection.
       assert.equal(client.state.snapshot().devices.size, 5);
-      assert.equal(client.device(HUB)?.name, "Test alias 13");
+      assert.equal(client.device(UAH_ID)?.name, "Test alias 13");
       assert.equal(client.device("no-such-device"), undefined);
 
       // And the controller's own document reached it too, unwrapped from the envelope's payload.
@@ -178,7 +179,7 @@ describe("AccessClient.connect", () => {
       assert.equal(client.devices.length, 5);
       assert.equal(client.hubs.length, 3);
       assert.deepEqual(client.accessPoints, [], "the 2026 topology carries no Enterprise Access Hub to expand");
-      assert.equal(client.hub(HUB)?.id, HUB);
+      assert.equal(client.hub(UAH_ID)?.id, UAH_ID);
       assert.equal(client.accessPoint("no-such-port"), undefined);
       assert.equal(client.doorStates.size, 3, "every door the topology's own hardware establishes something about carries an entry from the connect seed");
       assert.ok(client.transport, "the transport escape hatch is exposed");
@@ -259,10 +260,10 @@ describe("AccessClient.connect", () => {
       controller.abort();
       await settle();
 
-      ws.emitMessage(deviceFrame(HUB, { "alias": "Still live" }));
+      ws.emitMessage(deviceFrame(UAH_ID, { "alias": "Still live" }));
 
       assert.equal(ws.closeRequested, false, "the notification socket is not asked to close");
-      assert.equal(client.device(HUB)?.name, "Still live", "the realtime channel still carries frames into the state model");
+      assert.equal(client.device(UAH_ID)?.name, "Still live", "the realtime channel still carries frames into the state model");
       assert.equal(client.connection.state, "healthy");
     });
   });
@@ -705,11 +706,11 @@ describe("AccessClient.connect", () => {
 
       client.on("packet", (event) => void firehose.push(event));
 
-      ws.emitMessage(deviceFrame(HUB, { "alias": "Renamed" }));
+      ws.emitMessage(deviceFrame(UAH_ID, { "alias": "Renamed" }));
 
       // The store advanced and the same event reached the firehose, both from the one decode - and the store first, so a consumer reading state inside its handler
       // sees the post-event value.
-      assert.equal(client.device(HUB)?.name, "Renamed");
+      assert.equal(client.device(UAH_ID)?.name, "Renamed");
       assert.equal(firehose.length, 1);
       assert.equal(firehose[0]?.kind, "deviceChanged");
     });
@@ -738,9 +739,9 @@ describe("AccessClient.connect", () => {
 
       client.on("packet", (event) => void firehose.push(event));
 
-      ws.emitMessage(deviceFrame(HUB, { "alias": "Contained" }));
+      ws.emitMessage(deviceFrame(UAH_ID, { "alias": "Contained" }));
 
-      assert.equal(client.device(HUB)?.name, "Contained", "the frame still advanced the store");
+      assert.equal(client.device(UAH_ID)?.name, "Contained", "the frame still advanced the store");
       assert.equal(firehose.length, 1, "and still reached the packet rail");
 
       const thrown = log.entries.filter((entry) => (entry.level === "error") && (entry.message === "An event listener threw; the remaining listeners still run."));
@@ -760,7 +761,7 @@ describe("AccessClient.connect", () => {
 
       await using client = captured.client;
       const { ws } = captured;
-      const hub = present(client.hub(HUB), "the hub");
+      const hub = present(client.hub(UAH_ID), "the hub");
 
       // What the connect seed established for this door from the hub's own flags: a lock at rest, and no report-only members.
       const before = hub.doorState;
@@ -787,7 +788,7 @@ describe("AccessClient.connect", () => {
 
       await using client = captured.client;
       const { ws } = captured;
-      const hub = present(client.hub(HUB), "the hub");
+      const hub = present(client.hub(UAH_ID), "the hub");
 
       /* The composition check: the handle's observation runs through the read-only store slice the client built into its context, so this fails if that wiring is
        * wrong in a way no unit test with a hand-built context would catch.
@@ -804,7 +805,7 @@ describe("AccessClient.connect", () => {
 
       await settle();
 
-      ws.emitMessage(deviceFrame(HUB, { "alias": "Observed" }));
+      ws.emitMessage(deviceFrame(UAH_ID, { "alias": "Observed" }));
 
       await settleUntil(() => seen.length === 1, { description: "the hub's observer to see the frame" });
       assert.deepEqual(seen, ["Observed"]);
@@ -835,7 +836,7 @@ describe("AccessClient.connect", () => {
       })();
 
       // One modeled frame and one the library deliberately does not model: the typed rail drops the second, the raw rail carries both.
-      ws.emitMessage(deviceFrame(HUB));
+      ws.emitMessage(deviceFrame(UAH_ID));
       ws.emitMessage(unmodeledFrame());
 
       await settleUntil(() => raw.length === 2, { description: "the raw firehose to carry the modeled frame and the unmodeled one" });
@@ -867,7 +868,7 @@ describe("AccessClient.connect", () => {
         }
       })();
 
-      ws.emitMessage(deviceFrame(HUB));
+      ws.emitMessage(deviceFrame(UAH_ID));
       await settleUntil(() => collected.length === 1, { description: "the typed firehose to deliver the frame" });
 
       controller.abort();
@@ -888,7 +889,7 @@ describe("AccessClient.connect", () => {
       const pending = iterator.next();
 
       // One frame resolves the first read and leaves the generator resting at its yield, which is where a thrown failure has to land to reach the catch at all.
-      ws.emitMessage(deviceFrame(HUB));
+      ws.emitMessage(deviceFrame(UAH_ID));
       await pending;
 
       /* The catch finds no aborted signal - this consumer passed none - so the rethrow is what rejects the call. That is the arm the abort sugar is defined
@@ -916,7 +917,7 @@ describe("AccessClient.connect", () => {
       const iterator = client.rawPackets();
       const pending = iterator.next();
 
-      ws.emitMessage(deviceFrame(HUB));
+      ws.emitMessage(deviceFrame(UAH_ID));
       await pending;
 
       // The raw rail carries the same contract as the typed one, and it is a separate generator with its own catch, so it needs its own case.
@@ -944,7 +945,7 @@ describe("AccessClient.connect", () => {
       // once registers synchronously, so it catches the emission that follows it.
       const pending = client.once("packet");
 
-      ws.emitMessage(deviceFrame(HUB));
+      ws.emitMessage(deviceFrame(UAH_ID));
 
       const [event] = await pending;
 
@@ -968,7 +969,7 @@ describe("AccessClient.connect", () => {
       })();
 
       await settle();
-      ws.emitMessage(deviceFrame(HUB, { "alias": "Streamed" }));
+      ws.emitMessage(deviceFrame(UAH_ID, { "alias": "Streamed" }));
 
       await settleUntil(() => seen.length === 1, { description: "the raw stream rail to deliver the frame" });
       assert.deepEqual(seen, ["deviceChanged"]);
@@ -1048,7 +1049,7 @@ describe("AccessClient.connect", () => {
 
     test("the static classifier runs without a connection", () => {
 
-      const packet = { "data": { "unique_id": HUB }, "event": "access.data.device.update", "event_object_id": HUB, "receiver_id": "",
+      const packet = { "data": { "unique_id": UAH_ID }, "event": "access.data.device.update", "event_object_id": UAH_ID, "receiver_id": "",
         "save_to_history": false };
 
       assert.equal(AccessClient.classifyPacket(packet)?.kind, "deviceChanged");
@@ -1173,7 +1174,7 @@ describe("AccessClient.connect", () => {
 
       using dispatchSub = subscribeTo(channels.storeDispatch, (message) => void payloads.push(message));
 
-      ws.emitMessage(deviceFrame(HUB, { "alias": "Published" }));
+      ws.emitMessage(deviceFrame(UAH_ID, { "alias": "Published" }));
       ws.emitMessage(doorStateFrame(DOOR_HUB, "unlocked"));
 
       // Content rather than counts: the host is the controller this client addresses, and the kind is the reducer's own vocabulary.

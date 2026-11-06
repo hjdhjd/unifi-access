@@ -10,6 +10,7 @@ import type { AccessCapabilities, AccessOfficialRoutingSurface } from "./routing
 import type { AccessOfficialAccessMethods, AccessOfficialDeviceSettings, AccessOfficialDeviceSettingsUpdate } from "../official/devices.ts";
 import type { CapturingLog, TestLogEntry } from "homebridge-plugin-utils/testing";
 import { HOST, officialPath } from "../official/domain.helpers.ts";
+import { MINI_ID, UAH_ID } from "../protocol/capture.helpers.ts";
 import { TestClock, capturingLog, loggedAt, silentLog } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { officialEndpoint, officialHost } from "../official/endpoints.ts";
@@ -24,7 +25,6 @@ import assert from "node:assert/strict";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
 import { refuseRefresh } from "../testing.helpers.ts";
 
-const HUB = "aabbcc000001";
 const DOOR_HUB = "00000000-0000-0000-0000-000000000006";
 
 // The transport's own sentence for each refusal of the token, which the closure's warning carries as it stands.
@@ -163,7 +163,7 @@ describe("the routing decision", () => {
     const calls = newCalls();
     const { service } = makeService({ calls });
 
-    return service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }).then(() => {
+    return service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB }).then(() => {
 
       assert.deepEqual(calls.unlocks, [{ call: {}, id: DOOR_HUB, opts: {} }]);
       assert.deepEqual(calls.direct, [], "the direct path was not taken");
@@ -175,7 +175,7 @@ describe("the routing decision", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { mode: "credential", official: false }, official: false });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
     assert.deepEqual(calls.direct, ["unlock"]);
     assert.deepEqual(calls.unlocks, []);
@@ -186,7 +186,7 @@ describe("the routing decision", () => {
     const calls = newCalls();
     const { service } = makeService({ calls });
 
-    await service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
     assert.deepEqual(calls.unlocks, [{ call: {}, id: DOOR_HUB, opts: { actor: { id: "a1", name: "Automation" } } }]);
 
@@ -194,7 +194,7 @@ describe("the routing decision", () => {
     const credentialCalls = newCalls();
     const credential = makeService({ calls: credentialCalls, capabilities: { mode: "credential", official: false }, official: false });
 
-    await assert.rejects(async () => credential.service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB,
+    await assert.rejects(async () => credential.service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: UAH_ID,
       direct: direct(credentialCalls, "unlock"), doorId: DOOR_HUB }), AccessCapabilityError);
 
     assert.deepEqual(credentialCalls.direct, [], "and nothing was issued on the path that cannot express it");
@@ -205,7 +205,7 @@ describe("the routing decision", () => {
     const calls = newCalls();
     const { service } = makeService({ calls });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB, entryMethod: "in" });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB, entryMethod: "in" });
 
     assert.deepEqual(calls.unlocks, [{ call: {}, id: DOOR_HUB, opts: { entryMethod: "in" } }]);
     assert.deepEqual(calls.direct, [], "the direct endpoint cannot say which approach was taken, so it was never offered");
@@ -215,7 +215,7 @@ describe("the routing decision", () => {
     const credential = makeService({ calls: credentialCalls, capabilities: { mode: "credential", official: false }, official: false });
 
     // The refusal names the unlock by what made it official-only.
-    await assert.rejects(async () => credential.service.routedUnlock({ deviceId: HUB, direct: direct(credentialCalls, "unlock"), doorId: DOOR_HUB,
+    await assert.rejects(async () => credential.service.routedUnlock({ deviceId: UAH_ID, direct: direct(credentialCalls, "unlock"), doorId: DOOR_HUB,
       entryMethod: "out" }), { message: /an unlock carrying an entry direction/, name: "AccessCapabilityError" });
 
     assert.deepEqual(credentialCalls.direct, []);
@@ -226,7 +226,7 @@ describe("the routing decision", () => {
     const calls = newCalls();
     const { service } = makeService({ calls });
 
-    await service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB,
+    await service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB,
       entryMethod: "out" });
 
     assert.deepEqual(calls.unlocks, [{ call: {}, id: DOOR_HUB, opts: { actor: { id: "a1", name: "Automation" }, entryMethod: "out" } }]);
@@ -235,7 +235,7 @@ describe("the routing decision", () => {
     const credentialCalls = newCalls();
     const credential = makeService({ calls: credentialCalls, capabilities: { mode: "credential", official: false }, official: false });
 
-    await assert.rejects(async () => credential.service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB,
+    await assert.rejects(async () => credential.service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: UAH_ID,
       direct: direct(credentialCalls, "unlock"), doorId: DOOR_HUB, entryMethod: "in" }), { message: /an unlock attributed to an actor/, name: "AccessCapabilityError" });
   });
 
@@ -244,8 +244,8 @@ describe("the routing decision", () => {
     const calls = newCalls();
     const { service } = makeService({ calls });
 
-    await service.routedSetLockRule({ deviceId: HUB, direct: direct(calls, "reset"), doorId: DOOR_HUB, rule: { type: "reset" } });
-    await service.routedSetLockRule({ deviceId: HUB, doorId: DOOR_HUB, rule: { type: "lock_now" } });
+    await service.routedSetLockRule({ deviceId: UAH_ID, direct: direct(calls, "reset"), doorId: DOOR_HUB, rule: { type: "reset" } });
+    await service.routedSetLockRule({ deviceId: UAH_ID, doorId: DOOR_HUB, rule: { type: "lock_now" } });
 
     assert.deepEqual(calls.lockRules, [ { call: {}, id: DOOR_HUB, rule: { type: "reset" } }, { call: {}, id: DOOR_HUB, rule: { type: "lock_now" } } ]);
 
@@ -253,7 +253,7 @@ describe("the routing decision", () => {
     const credentialCalls = newCalls();
     const credential = makeService({ calls: credentialCalls, capabilities: { mode: "credential", official: false }, official: false });
 
-    await assert.rejects(async () => credential.service.routedSetLockRule({ deviceId: HUB, doorId: DOOR_HUB, rule: { type: "lock_now" } }), {
+    await assert.rejects(async () => credential.service.routedSetLockRule({ deviceId: UAH_ID, doorId: DOOR_HUB, rule: { type: "lock_now" } }), {
 
       message: /the lock_now lock rule for door "Test Name 11"/,
       name: "AccessCapabilityError"
@@ -265,7 +265,7 @@ describe("the routing decision", () => {
     const calls = newCalls();
     const { service } = makeService({ calls });
 
-    await service.routedClose({ deviceId: HUB, direct: direct(calls, "close"), doorId: DOOR_HUB });
+    await service.routedClose({ deviceId: UAH_ID, direct: direct(calls, "close"), doorId: DOOR_HUB });
 
     assert.deepEqual(calls.direct, ["close"], "the direct close is the hardware-proven one, so a client holding that path keeps it");
     assert.deepEqual(calls.unlocks, [], "and the official rail was never reached for it");
@@ -273,7 +273,7 @@ describe("the routing decision", () => {
     const pinnedCalls = newCalls();
     const pinned = makeService({ calls: pinnedCalls, capabilities: { override: "direct-only" } });
 
-    await pinned.service.routedClose({ deviceId: HUB, direct: direct(pinnedCalls, "close"), doorId: DOOR_HUB });
+    await pinned.service.routedClose({ deviceId: UAH_ID, direct: direct(pinnedCalls, "close"), doorId: DOOR_HUB });
 
     assert.deepEqual(pinnedCalls.direct, ["close"]);
     assert.deepEqual(pinnedCalls.unlocks, []);
@@ -285,7 +285,7 @@ describe("the routing decision", () => {
     const pinnedCalls = newCalls();
     const pinned = makeService({ calls: pinnedCalls, capabilities: { override: "official-only" } });
 
-    await pinned.service.routedClose({ deviceId: HUB, direct: direct(pinnedCalls, "close"), doorId: DOOR_HUB });
+    await pinned.service.routedClose({ deviceId: UAH_ID, direct: direct(pinnedCalls, "close"), doorId: DOOR_HUB });
 
     assert.deepEqual(pinnedCalls.unlocks, [{ call: {}, id: DOOR_HUB, opts: { controlCmd: "close" } }]);
     assert.deepEqual(pinnedCalls.direct, [], "the override is what makes the direct expression unavailable rather than merely unused");
@@ -294,7 +294,7 @@ describe("the routing decision", () => {
     const tokenCalls = newCalls();
     const token = makeService({ calls: tokenCalls, capabilities: { mode: "token" } });
 
-    await token.service.routedClose({ deviceId: HUB, direct: direct(tokenCalls, "close"), doorId: DOOR_HUB });
+    await token.service.routedClose({ deviceId: UAH_ID, direct: direct(tokenCalls, "close"), doorId: DOOR_HUB });
 
     assert.deepEqual(tokenCalls.unlocks, [{ call: {}, id: DOOR_HUB, opts: { controlCmd: "close" } }]);
     assert.deepEqual(tokenCalls.direct, []);
@@ -305,7 +305,7 @@ describe("the routing decision", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { mode: "token" }, official: false });
 
-    await assert.rejects(async () => service.routedClose({ deviceId: HUB, direct: direct(calls, "close"), doorId: DOOR_HUB }), (error: unknown) => {
+    await assert.rejects(async () => service.routedClose({ deviceId: UAH_ID, direct: direct(calls, "close"), doorId: DOOR_HUB }), (error: unknown) => {
 
       assert.ok(error instanceof AccessCapabilityError);
       assert.match(error.message, /a close for door "Test Name 11"/, "the message names the operation and the door");
@@ -322,13 +322,13 @@ describe("the routing decision", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { override: "direct-only" } });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
     assert.deepEqual(calls.direct, ["unlock"]);
     assert.deepEqual(calls.unlocks, [], "a client held to one channel does not attempt the channel it was held away from");
 
     // And an operation only the official path can express is refused rather than quietly demoted.
-    await assert.rejects(async () => service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB, direct: direct(calls, "unlock"),
+    await assert.rejects(async () => service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: UAH_ID, direct: direct(calls, "unlock"),
       doorId: DOOR_HUB }), AccessCapabilityError);
   });
 });
@@ -343,11 +343,11 @@ describe("the capability error's message", () => {
      */
     const attributedUnlock = async (service: AccessRoutingService, calls: RecordedCalls): Promise<void> => {
 
-      await service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+      await service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
     };
     const entryDirectionUnlock = async (service: AccessRoutingService, calls: RecordedCalls): Promise<void> => {
 
-      await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB, entryMethod: "in" });
+      await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB, entryMethod: "in" });
     };
     const arms: { capabilities: Partial<AccessCapabilities>; issue: (service: AccessRoutingService, calls: RecordedCalls) => Promise<void>; label: string;
       official: boolean; operation: RegExp; reason: RegExp; refuse?: () => Error; target: RegExp; }[] = [
@@ -373,7 +373,7 @@ describe("the capability error's message", () => {
       if(arm.refuse !== undefined) {
 
         // eslint-disable-next-line no-await-in-loop
-        await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "trip"), doorId: DOOR_HUB });
+        await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "trip"), doorId: DOOR_HUB });
       }
 
       // eslint-disable-next-line no-await-in-loop
@@ -397,7 +397,7 @@ describe("the capability error's message", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { override: "official-only" } });
 
-    await assert.rejects(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, "restart"), operation: "a restart" }), {
+    await assert.rejects(async () => service.routedDirect({ deviceId: UAH_ID, direct: direct(calls, "restart"), operation: "a restart" }), {
 
       message: /either cannot express that operation or refused it for this device/,
       name: "AccessCapabilityError"
@@ -413,7 +413,7 @@ describe("the capability error's message", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { mode: "credential", official: false }, official: false });
 
-    await assert.rejects(async () => service.routedStop({ deviceId: HUB, doorId: "00000000-0000-0000-0000-00000000ffff" }), {
+    await assert.rejects(async () => service.routedStop({ deviceId: UAH_ID, doorId: "00000000-0000-0000-0000-00000000ffff" }), {
 
       message: /a stop for door "00000000-0000-0000-0000-00000000ffff"/,
       name: "AccessCapabilityError"
@@ -438,7 +438,7 @@ describe("the per-device firmware floor", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, refuse: () => new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
     // The official attempt happened and was refused - the recording surface throws before recording - and the direct body is what the door actually received.
     assert.deepEqual(calls.unlocks, []);
@@ -463,7 +463,7 @@ describe("the per-device firmware floor", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, refuse: () => refusal });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
     assert.deepEqual(calls.unlocks, [], "the official attempt was refused");
     assert.deepEqual(calls.direct, ["unlock"], "and the door was unlocked over the direct path instead");
@@ -483,8 +483,8 @@ describe("the per-device firmware floor", () => {
       return new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
     } });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "second"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "second"), doorId: DOOR_HUB });
 
     assert.equal(attempts, 1, "exactly one official attempt across two commands against the same device");
     assert.deepEqual(calls.direct, [ "first", "second" ]);
@@ -505,16 +505,16 @@ describe("the per-device firmware floor", () => {
       return new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
     }, store });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
 
     assert.equal(attempts, 1);
 
-    const upgraded = store.snapshot().devices.get(HUB);
+    const upgraded = store.snapshot().devices.get(UAH_ID);
 
     assert.ok(upgraded?.firmware, "this row needs a record whose census established a firmware, since that is the key the memo moves with");
-    store.dispatch({ eventName: "test", id: HUB, kind: "deviceChanged", payload: { "firmware": upgraded.firmware + ".1" } });
+    store.dispatch({ eventName: "test", id: UAH_ID, kind: "deviceChanged", payload: { "firmware": upgraded.firmware + ".1" } });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "second"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "second"), doorId: DOOR_HUB });
 
     assert.equal(attempts, 2, "the upgraded device is a different memo key, so the official path is tried again");
   });
@@ -528,11 +528,11 @@ describe("the per-device firmware floor", () => {
     const fromUnlock = makeService({ calls: unlockRefused,
       refuse: (attempt) => ((attempt.method === "unlock") ? new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
 
-    await fromUnlock.service.routedUnlock({ deviceId: HUB, direct: direct(unlockRefused, "unlock"), doorId: DOOR_HUB });
+    await fromUnlock.service.routedUnlock({ deviceId: UAH_ID, direct: direct(unlockRefused, "unlock"), doorId: DOOR_HUB });
 
     assert.deepEqual(unlockRefused.direct, ["unlock"], "the refused unlock fell back to its direct expression and recorded its floor");
 
-    await fromUnlock.service.routedSetLockRule({ deviceId: HUB, doorId: DOOR_HUB, rule: { type: "lock_now" } });
+    await fromUnlock.service.routedSetLockRule({ deviceId: UAH_ID, doorId: DOOR_HUB, rule: { type: "lock_now" } });
 
     assert.deepEqual(unlockRefused.lockRules, [{ call: {}, id: DOOR_HUB, rule: { type: "lock_now" } }],
       "and the lock rule still reached the official path on that same device");
@@ -542,11 +542,11 @@ describe("the per-device firmware floor", () => {
     const fromRule = makeService({ calls: ruleRefused,
       refuse: (attempt) => ((attempt.method === "setLockRule") ? new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
 
-    await fromRule.service.routedSetLockRule({ deviceId: HUB, direct: direct(ruleRefused, "reset"), doorId: DOOR_HUB, rule: { type: "reset" } });
+    await fromRule.service.routedSetLockRule({ deviceId: UAH_ID, direct: direct(ruleRefused, "reset"), doorId: DOOR_HUB, rule: { type: "reset" } });
 
     assert.deepEqual(ruleRefused.direct, ["reset"]);
 
-    await fromRule.service.routedUnlock({ deviceId: HUB, direct: direct(ruleRefused, "unlock"), doorId: DOOR_HUB });
+    await fromRule.service.routedUnlock({ deviceId: UAH_ID, direct: direct(ruleRefused, "unlock"), doorId: DOOR_HUB });
 
     assert.deepEqual(ruleRefused.unlocks, [{ call: {}, id: DOOR_HUB, opts: {} }], "the unlock's official path was never suppressed by the rule's refusal");
   });
@@ -561,9 +561,9 @@ describe("the per-device firmware floor", () => {
       refuse: (attempt) => (((attempt.method === "unlock") && (attempt.opts?.controlCmd === "stop")) ?
         new AccessApiError("not a gate", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
 
-    await assert.rejects(async () => fromStop.service.routedStop({ deviceId: HUB, doorId: DOOR_HUB }), AccessCapabilityError);
+    await assert.rejects(async () => fromStop.service.routedStop({ deviceId: UAH_ID, doorId: DOOR_HUB }), AccessCapabilityError);
 
-    await fromStop.service.routedClose({ deviceId: HUB, direct: direct(stopRefused, "close"), doorId: DOOR_HUB });
+    await fromStop.service.routedClose({ deviceId: UAH_ID, direct: direct(stopRefused, "close"), doorId: DOOR_HUB });
 
     assert.deepEqual(stopRefused.unlocks, [{ call: {}, id: DOOR_HUB, opts: { controlCmd: "close" } }], "the stop's refusal says nothing about the close");
 
@@ -573,10 +573,10 @@ describe("the per-device firmware floor", () => {
       refuse: (attempt) => (((attempt.method === "unlock") && (attempt.opts?.controlCmd === "close")) ?
         new AccessApiError("not a gate", { code: "CODE_DEVICE_API_NOT_SUPPORTED" }) : undefined) });
 
-    await assert.rejects(async () => fromClose.service.routedClose({ deviceId: HUB, direct: direct(closeRefused, "close"), doorId: DOOR_HUB }),
+    await assert.rejects(async () => fromClose.service.routedClose({ deviceId: UAH_ID, direct: direct(closeRefused, "close"), doorId: DOOR_HUB }),
       AccessCapabilityError);
 
-    await fromClose.service.routedUnlock({ deviceId: HUB, direct: direct(closeRefused, "unlock"), doorId: DOOR_HUB });
+    await fromClose.service.routedUnlock({ deviceId: UAH_ID, direct: direct(closeRefused, "unlock"), doorId: DOOR_HUB });
 
     assert.deepEqual(closeRefused.unlocks, [{ call: {}, id: DOOR_HUB, opts: {} }], "the close's refusal left the unlock officially served");
     assert.deepEqual(closeRefused.direct, [], "and a token client has no direct path that could have served it instead");
@@ -594,8 +594,8 @@ describe("the per-device firmware floor", () => {
       return new AccessApiError("not a gate", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
     } });
 
-    await assert.rejects(async () => service.routedClose({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB }), AccessCapabilityError);
-    await assert.rejects(async () => service.routedClose({ deviceId: HUB, direct: direct(calls, "second"), doorId: DOOR_HUB }), AccessCapabilityError);
+    await assert.rejects(async () => service.routedClose({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB }), AccessCapabilityError);
+    await assert.rejects(async () => service.routedClose({ deviceId: UAH_ID, direct: direct(calls, "second"), doorId: DOOR_HUB }), AccessCapabilityError);
 
     assert.equal(attempts, 1, "exactly one official attempt across two closes against the same device");
   });
@@ -611,8 +611,8 @@ describe("the per-device firmware floor", () => {
       return new AccessApiError("too old", { code: "CODE_DEVICE_API_NOT_SUPPORTED" });
     } });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "hub"), doorId: DOOR_HUB });
-    await service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "mini"), doorId: "00000000-0000-0000-0000-00000000000e" });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "hub"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "mini"), doorId: "00000000-0000-0000-0000-00000000000e" });
 
     assert.equal(attempts, 2, "one device's floor says nothing about another's");
   });
@@ -625,7 +625,7 @@ describe("the gate stop", () => {
     const calls = newCalls();
     const { service } = makeService({ calls });
 
-    await service.routedStop({ deviceId: HUB, doorId: DOOR_HUB });
+    await service.routedStop({ deviceId: UAH_ID, doorId: DOOR_HUB });
 
     assert.deepEqual(calls.unlocks, [{ call: {}, id: DOOR_HUB, opts: { controlCmd: "stop" } }]);
     assert.deepEqual(calls.direct, [], "a stop carries no direct expression to take");
@@ -636,7 +636,7 @@ describe("the gate stop", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, capabilities: { mode: "credential", official: false }, official: false });
 
-    await assert.rejects(async () => service.routedStop({ deviceId: HUB, doorId: DOOR_HUB }), (error: unknown) => {
+    await assert.rejects(async () => service.routedStop({ deviceId: UAH_ID, doorId: DOOR_HUB }), (error: unknown) => {
 
       assert.ok(error instanceof AccessCapabilityError);
       assert.match(error.message, /a stop for door "Test Name 11"/, "the message names the operation and the door");
@@ -652,9 +652,9 @@ describe("the gate stop", () => {
     const { service } = makeService({ calls, refuse: () => new AccessApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) });
 
     // The first routed unlock is what teaches the service the session is revoked; the stop that follows has nothing left to take.
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
-    await assert.rejects(async () => service.routedStop({ deviceId: HUB, doorId: DOOR_HUB }), {
+    await assert.rejects(async () => service.routedStop({ deviceId: UAH_ID, doorId: DOOR_HUB }), {
 
       message: /no longer available to this session/,
       name: "AccessCapabilityError"
@@ -676,8 +676,8 @@ describe("the session revocation latch", () => {
       return new AccessApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" });
     } });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
-    await service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
 
     // Unlike the floor, this is about the session rather than a device, so it holds for every device from the moment it is seen.
     assert.equal(attempts, 1);
@@ -702,8 +702,8 @@ describe("the session revocation latch", () => {
       return new AccessAuthError(TOKEN_REJECTED, { identity: "token", statusCode: 401 });
     } });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
-    await service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
 
     assert.equal(attempts, 1, "the rejected token is asked once, and the latch answers every command after it");
     assert.deepEqual(calls.direct, [ "first", "second" ], "each unlock completed on the direct path");
@@ -728,8 +728,8 @@ describe("the session revocation latch", () => {
       return new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 });
     } });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
-    await service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
 
     assert.equal(attempts, 1, "the refused permission is asked once, and the latch answers every door command after it");
     assert.deepEqual(calls.direct, [ "first", "second" ], "each unlock completed on the direct path");
@@ -757,9 +757,9 @@ describe("the session revocation latch", () => {
       } });
 
       // eslint-disable-next-line no-await-in-loop
-      await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
+      await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
       // eslint-disable-next-line no-await-in-loop
-      await service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+      await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
 
       assert.equal(attempts, 1, code + ": the refused token is asked once, and the latch answers every command after it");
       assert.deepEqual(calls.direct, [ "first", "second" ], code + ": each unlock completed on the direct path");
@@ -782,8 +782,8 @@ describe("the session revocation latch", () => {
       return new AccessApiError(ENVELOPE_REFUSAL, { code: "CODE_OPERATION_FORBIDDEN" });
     } });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB });
-    await service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" });
 
     assert.equal(attempts, 1, "the refused permission is asked once, and the latch answers every door command after it");
     assert.deepEqual(calls.direct, [ "first", "second" ], "each unlock completed on the direct path");
@@ -813,8 +813,8 @@ describe("the session revocation latch", () => {
       } });
 
       // eslint-disable-next-line no-await-in-loop
-      await Promise.all([ service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB }),
-        service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" }) ]);
+      await Promise.all([ service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB }),
+        service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" }) ]);
 
       assert.equal(attempts, 2, refusal.label + ": each command reached the official path before any refusal arrived");
       assert.deepEqual(calls.direct, [ "first", "second" ], refusal.label + ": each command completed on the direct path");
@@ -841,8 +841,8 @@ describe("the session revocation latch", () => {
       } });
 
       // eslint-disable-next-line no-await-in-loop
-      await Promise.all([ service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB }),
-        service.routedUnlock({ deviceId: "aabbcc000004", direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" }) ]);
+      await Promise.all([ service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB }),
+        service.routedUnlock({ deviceId: MINI_ID, direct: direct(calls, "second"), doorId: "00000000-0000-0000-0000-00000000000e" }) ]);
 
       assert.equal(attempts, 2, refusal.name + ": each command reached the official path before any refusal arrived");
       assert.deepEqual(calls.direct, [ "first", "second" ], refusal.name + ": each command completed on the direct path");
@@ -866,8 +866,8 @@ describe("the session revocation latch", () => {
       return new AccessAuthError("rejected", { identity: "token", statusCode: 401 });
     } });
 
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB }), AccessAuthError);
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "second"), doorId: DOOR_HUB }), AccessAuthError);
+    await assert.rejects(async () => service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB }), AccessAuthError);
+    await assert.rejects(async () => service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "second"), doorId: DOOR_HUB }), AccessAuthError);
 
     assert.equal(attempts, 2, "nothing was latched, so the second call asked the controller again");
     assert.deepEqual(calls.direct, [], "a token client holds no direct path to take");
@@ -887,8 +887,8 @@ describe("the session revocation latch", () => {
       return new AccessAuthorizationError("forbidden", { identity: "token", statusCode: 403 });
     } });
 
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "first"), doorId: DOOR_HUB }), AccessAuthorizationError);
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "second"), doorId: DOOR_HUB }), AccessAuthorizationError);
+    await assert.rejects(async () => service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB }), AccessAuthorizationError);
+    await assert.rejects(async () => service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "second"), doorId: DOOR_HUB }), AccessAuthorizationError);
 
     assert.equal(attempts, 2, "nothing was latched, so the second call asked the controller again");
     assert.deepEqual(calls.direct, [], "a token client holds no direct path to take");
@@ -913,7 +913,7 @@ describe("the session revocation latch", () => {
       for(const label of [ "first", "second" ]) {
 
         // eslint-disable-next-line no-await-in-loop
-        await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, label), doorId: DOOR_HUB }), (error: unknown) => {
+        await assert.rejects(async () => service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, label), doorId: DOOR_HUB }), (error: unknown) => {
 
           assert.ok(error instanceof AccessApiError);
           assert.equal(error.code, code, code + ": the " + label + " call reaches the caller as the refusal it arrived as");
@@ -935,7 +935,7 @@ describe("the session revocation latch", () => {
     const { service } = makeService({ calls, capabilities: { override: "official-only" }, log,
       refuse: () => new AccessAuthError("rejected", { identity: "token", statusCode: 401 }) });
 
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), {
+    await assert.rejects(async () => service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), {
 
       identity: "token",
       name: "AccessAuthError"
@@ -950,9 +950,9 @@ describe("the session revocation latch", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, refuse: () => new AccessApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
-    await assert.rejects(async () => service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB, direct: direct(calls, "unlock"),
+    await assert.rejects(async () => service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: UAH_ID, direct: direct(calls, "unlock"),
       doorId: DOOR_HUB }), AccessCapabilityError);
   });
 });
@@ -967,7 +967,7 @@ describe("what is not a capability verdict", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, refuse: () => new AccessApiError("the door is busy", { code: "CODE_DEVICE_DEVICE_BUSY" }) });
 
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), {
+    await assert.rejects(async () => service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), {
 
       code: "CODE_DEVICE_DEVICE_BUSY",
       name: "AccessApiError"
@@ -981,7 +981,7 @@ describe("what is not a capability verdict", () => {
     const calls = newCalls();
     const { service } = makeService({ calls, refuse: () => new Error("the socket closed") });
 
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), /the socket closed/);
+    await assert.rejects(async () => service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), /the socket closed/);
     assert.deepEqual(calls.direct, []);
   });
 
@@ -994,7 +994,7 @@ describe("what is not a capability verdict", () => {
       const { service } = makeService({ calls, refuse: () => new AccessApiError("refused", { code }) });
 
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => service.routedSetLockRule({ deviceId: HUB, doorId: DOOR_HUB, rule: { type: "lock_now" } }), (error: unknown) => {
+      await assert.rejects(async () => service.routedSetLockRule({ deviceId: UAH_ID, doorId: DOOR_HUB, rule: { type: "lock_now" } }), (error: unknown) => {
 
         assert.ok(error instanceof AccessCapabilityError, code + " should reach the caller as a capability error");
         assert.ok(!(error instanceof AccessApiError), "the refusal reaches the caller as a capability error rather than as the raw official error");
@@ -1015,7 +1015,7 @@ describe("a command only the direct path can carry", () => {
       const { service } = makeService({ calls, capabilities: { mode }, official: (mode === "dual") });
 
       // eslint-disable-next-line no-await-in-loop
-      await service.routedDirect({ deviceId: HUB, direct: direct(calls, "restart"), operation: "a restart" });
+      await service.routedDirect({ deviceId: UAH_ID, direct: direct(calls, "restart"), operation: "a restart" });
 
       assert.deepEqual(calls.direct, ["restart"], mode + " holds a direct path, so the command takes it");
     }
@@ -1032,7 +1032,7 @@ describe("a command only the direct path can carry", () => {
       for(const operation of [ "a restart", "a configuration write" ]) {
 
         // eslint-disable-next-line no-await-in-loop
-        await assert.rejects(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, operation), operation }), (error: unknown) => {
+        await assert.rejects(async () => service.routedDirect({ deviceId: UAH_ID, direct: direct(calls, operation), operation }), (error: unknown) => {
 
           assert.ok(error instanceof AccessCapabilityError);
           assert.match(error.message, new RegExp(operation), "the message names the operation");
@@ -1057,7 +1057,7 @@ describe("a command only the direct path can carry", () => {
     for(const operation of [ "a restart", "a configuration write" ]) {
 
       // eslint-disable-next-line no-await-in-loop
-      await assert.rejects(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, operation), operation }), (error: unknown) => {
+      await assert.rejects(async () => service.routedDirect({ deviceId: UAH_ID, direct: direct(calls, operation), operation }), (error: unknown) => {
 
         assert.ok(error instanceof AccessCapabilityError);
         assert.match(error.message, new RegExp(operation), "the message names the operation");
@@ -1083,13 +1083,13 @@ describe("a command only the direct path can carry", () => {
       refuse: () => new AccessApiError("refused", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }) });
 
     // The first routed unlock is what teaches the service the session is revoked; its own refusal is not what this row is about.
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), AccessCapabilityError);
+    await assert.rejects(async () => service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), AccessCapabilityError);
 
     // The closure's warning states what closing means for a client with no direct path: the commands only the official API carries are refused.
     assert.ok(loggedAt(log.entries, "warn", "will be refused for the life of this connection"), "the warning names the refusal that follows");
     assert.equal(loggedAt(log.entries, "warn", "own endpoints"), false, "and promises no direct path this client does not hold");
 
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), (error: unknown) => {
+    await assert.rejects(async () => service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB }), (error: unknown) => {
 
       assert.ok(error instanceof AccessCapabilityError);
       assert.match(error.message, /no longer available to this session on this controller/, "the revoked arm is the one that speaks");
@@ -1099,7 +1099,7 @@ describe("a command only the direct path can carry", () => {
     });
 
     // The latch speaks for a command with no official half too: refused for the revocation, the more particular reason, rather than for credentials it never held.
-    await assert.rejects(async () => service.routedDirect({ deviceId: HUB, direct: direct(calls, "restart"), operation: "a restart" }), {
+    await assert.rejects(async () => service.routedDirect({ deviceId: UAH_ID, direct: direct(calls, "restart"), operation: "a restart" }), {
 
       message: /no longer available to this session on this controller/,
       name: "AccessCapabilityError"
@@ -1120,7 +1120,7 @@ describe("the caller's abort signal", () => {
     const { service } = makeService({ calls });
     const controller = new AbortController();
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB, signal: controller.signal });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB, signal: controller.signal });
 
     assert.deepEqual(calls.unlocks, [{ call: { signal: controller.signal }, id: DOOR_HUB, opts: {} }]);
     assert.deepEqual(calls.direct, [], "the official path served, so the direct expression was not taken");
@@ -1136,7 +1136,7 @@ describe("the caller's abort signal", () => {
     const { service } = makeService({ calls, capabilities: { mode: "credential", official: false }, official: false });
     const controller = new AbortController();
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB, signal: controller.signal });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB, signal: controller.signal });
 
     assert.deepEqual(calls.direct, ["unlock"], "the direct path served rather than the unlock refusing for want of an official one");
     assert.deepEqual(calls.unlocks, []);
@@ -1148,7 +1148,7 @@ describe("the caller's abort signal", () => {
     const { service } = makeService({ calls, capabilities: { mode: "token" } });
     const controller = new AbortController();
 
-    await service.routedClose({ deviceId: HUB, direct: direct(calls, "close"), doorId: DOOR_HUB, signal: controller.signal });
+    await service.routedClose({ deviceId: UAH_ID, direct: direct(calls, "close"), doorId: DOOR_HUB, signal: controller.signal });
 
     assert.deepEqual(calls.unlocks, [{ call: { signal: controller.signal }, id: DOOR_HUB, opts: { controlCmd: "close" } }]);
     assert.deepEqual(calls.direct, [], "a token client holds no direct path for the close to take");
@@ -1161,7 +1161,7 @@ describe("the caller's abort signal", () => {
     const { service } = makeService({ calls });
     const controller = new AbortController();
 
-    await service.routedStop({ deviceId: HUB, doorId: DOOR_HUB, signal: controller.signal });
+    await service.routedStop({ deviceId: UAH_ID, doorId: DOOR_HUB, signal: controller.signal });
 
     assert.deepEqual(calls.unlocks, [{ call: { signal: controller.signal }, id: DOOR_HUB, opts: { controlCmd: "stop" } }]);
     assert.equal(calls.unlocks[0]?.call.signal, controller.signal, "and the signal is the caller's own");
@@ -1173,7 +1173,7 @@ describe("the caller's abort signal", () => {
     const { service } = makeService({ calls });
     const controller = new AbortController();
 
-    await service.routedSetLockRule({ deviceId: HUB, doorId: DOOR_HUB, rule: { type: "lock_now" }, signal: controller.signal });
+    await service.routedSetLockRule({ deviceId: UAH_ID, doorId: DOOR_HUB, rule: { type: "lock_now" }, signal: controller.signal });
 
     assert.deepEqual(calls.lockRules, [{ call: { signal: controller.signal }, id: DOOR_HUB, rule: { type: "lock_now" } }]);
     assert.equal(calls.lockRules[0]?.call.signal, controller.signal, "and the signal is the caller's own");
@@ -1195,13 +1195,13 @@ describe("the caller's abort signal", () => {
     } });
     const controller = new AbortController();
 
-    await assert.rejects(async () => service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB, signal: controller.signal }),
+    await assert.rejects(async () => service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB, signal: controller.signal }),
       AccessAbortedError);
 
     assert.deepEqual(calls.direct, [], "the caller cancelled, so there is no fallback to take");
 
     // A second, unrefused command is what proves nothing was recorded: a memo entry would send this one straight to the direct path instead.
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
     assert.deepEqual(calls.unlocks, [{ call: {}, id: DOOR_HUB, opts: {} }], "the official path served the second command");
     assert.deepEqual(calls.direct, []);
@@ -1223,7 +1223,7 @@ describe("the access-method write", () => {
 
   async function write(service: AccessRoutingService, calls: RecordedCalls, options: WriteOptions = {}): Promise<void> {
 
-    await service.routedAccessMethod({ deviceId: options.deviceId ?? HUB, direct: direct(calls, options.method ?? "nfc"), enabled: true,
+    await service.routedAccessMethod({ deviceId: options.deviceId ?? UAH_ID, direct: direct(calls, options.method ?? "nfc"), enabled: true,
       method: options.method ?? "nfc", ...((options.signal !== undefined) && { signal: options.signal }) });
   }
 
@@ -1234,8 +1234,8 @@ describe("the access-method write", () => {
 
     await write(service, calls, { method: "mobile" });
 
-    assert.deepEqual(calls.settingsWrites, [{ call: {}, id: HUB, opts: { "access_methods": { "bt_button": { enabled: "yes" }, "bt_tap": { enabled: "yes" } } } }]);
-    assert.deepEqual(calls.settingsReads, [{ call: {}, id: HUB }], "the read-back followed the write");
+    assert.deepEqual(calls.settingsWrites, [{ call: {}, id: UAH_ID, opts: { "access_methods": { "bt_button": { enabled: "yes" }, "bt_tap": { enabled: "yes" } } } }]);
+    assert.deepEqual(calls.settingsReads, [{ call: {}, id: UAH_ID }], "the read-back followed the write");
     assert.deepEqual(calls.direct, [], "the method held, so the direct path was not taken");
   });
 
@@ -1310,7 +1310,7 @@ describe("the access-method write", () => {
       await write(service, calls);
 
       assert.deepEqual(calls.direct, ["nfc"], failure.label + " sends the write to the direct path");
-      assert.deepEqual(debugs(log).map((entry) => entry.params), [[{ deviceId: HUB, error: failure.error.message.replace(/\.$/, ""),
+      assert.deepEqual(debugs(log).map((entry) => entry.params), [[{ deviceId: UAH_ID, error: failure.error.message.replace(/\.$/, ""),
         operation: "the nfc access method write" }]], failure.label + " is logged at debug with the operation, the device, and the error");
       assert.deepEqual(warnings(log), [], failure.label + " closes nothing, so nothing is reported at warn");
     }
@@ -1327,9 +1327,9 @@ describe("the access-method write", () => {
       const { pool, transport } = makeMockTransport({ host: officialHost(HOST) });
       const dispatch = new OfficialDispatch({ transport });
 
-      pool.intercept({ method: "PUT", path: officialPath("/devices/" + HUB + "/settings") }).reply(status, body);
+      pool.intercept({ method: "PUT", path: officialPath("/devices/" + UAH_ID + "/settings") }).reply(status, body);
 
-      return dispatch.command(officialEndpoint(HOST, "/devices/" + HUB + "/settings"), { json: { "access_methods": {} }, method: "PUT" })
+      return dispatch.command(officialEndpoint(HOST, "/devices/" + UAH_ID + "/settings"), { json: { "access_methods": {} }, method: "PUT" })
         .catch((error: unknown) => error);
     };
     const limited = await dispatched(429, "");
@@ -1350,7 +1350,7 @@ describe("the access-method write", () => {
 
       assert.deepEqual(calls.direct, ["nfc"], refusal.name + " sends the write to the direct path");
       assert.ok(loggedAt(log.entries, "debug", "safe to repeat"), refusal.name + " is logged at debug on its way there");
-      assert.deepEqual(debugs(log).map((entry) => entry.params), [[{ deviceId: HUB, error: formatErrorChain(refusal), operation: "the nfc access method write" }]],
+      assert.deepEqual(debugs(log).map((entry) => entry.params), [[{ deviceId: UAH_ID, error: formatErrorChain(refusal), operation: "the nfc access method write" }]],
         refusal.name + " is logged with the operation, the device, and the whole error chain");
       assert.deepEqual(warnings(log), [], refusal.name + " closes nothing, so nothing is reported at warn");
     }
@@ -1436,12 +1436,12 @@ describe("the access-method write", () => {
 
       // The memo files the write against the command and the device, so a door command on the same device and the same write on another device stay official.
       // eslint-disable-next-line no-await-in-loop
-      await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+      await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
       // eslint-disable-next-line no-await-in-loop
-      await write(service, calls, { deviceId: "aabbcc000004" });
+      await write(service, calls, { deviceId: MINI_ID });
 
       assert.deepEqual(calls.unlocks, [{ call: {}, id: DOOR_HUB, opts: {} }], at + ": the unlock on the same device still went official");
-      assert.equal(calls.settingsWrites.at(-1)?.id, "aabbcc000004", at + ": and another device's write still reached the official path");
+      assert.equal(calls.settingsWrites.at(-1)?.id, MINI_ID, at + ": and another device's write still reached the official path");
       assert.deepEqual(calls.direct, [ "nfc", "nfc" ], at + ": neither of them took the direct path");
     }
   });
@@ -1495,7 +1495,7 @@ describe("the access-method write", () => {
       assert.deepEqual(warnings(log), [], refusal.name + ": and nothing closed the official path");
 
       // eslint-disable-next-line no-await-in-loop
-      await service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+      await service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
       assert.deepEqual(calls.unlocks, [{ call: {}, id: DOOR_HUB, opts: { actor: { id: "a1", name: "Automation" } } }],
         refusal.name + ": the attributed unlock went official");
@@ -1514,7 +1514,7 @@ describe("the access-method write", () => {
     assert.deepEqual(calls.direct, ["nfc"], "the write completed on the direct path");
     assert.deepEqual(warnings(log).map((entry) => entry.params), [[{ identity: "token", statusCode: 401 }]], "and the closure was reported once");
 
-    await assert.rejects(async () => service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: HUB, direct: direct(calls, "unlock"),
+    await assert.rejects(async () => service.routedUnlock({ actor: { id: "a1", name: "Automation" }, deviceId: UAH_ID, direct: direct(calls, "unlock"),
       doorId: DOOR_HUB }), { message: /no longer available to this session/, name: "AccessCapabilityError" });
   });
 
@@ -1529,7 +1529,7 @@ describe("the access-method write", () => {
       refuse: (attempt) => ((attempt.method === "unlock") ? new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 }) : undefined),
       settings: { declines: true } });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
     await assert.rejects(async () => write(service, calls), AccessDeclinedError);
 
     assert.equal(calls.settingsWrites.length, 1, "the write went official");
@@ -1563,7 +1563,7 @@ describe("the access-method write", () => {
       return undefined;
     } });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
     await write(service, calls);
     await write(service, calls);
 
@@ -1593,7 +1593,7 @@ describe("the access-method write", () => {
       return [ "unlock", "updateSettings" ].includes(attempt.method) ? new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 }) : undefined;
     } });
 
-    await service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
     await write(service, calls);
     await write(service, calls);
 
@@ -1632,7 +1632,7 @@ describe("the access-method write", () => {
       throw new AccessAuthorizationError(TOKEN_FORBIDDEN, { identity: "token", statusCode: 403 });
     } } };
     const service = new AccessRoutingService({ capabilities: { mode: "dual", official: true, override: "auto" }, log, official, store: storeWith() });
-    const unlock = service.routedUnlock({ deviceId: HUB, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
+    const unlock = service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "unlock"), doorId: DOOR_HUB });
 
     await write(service, calls);
     release();
