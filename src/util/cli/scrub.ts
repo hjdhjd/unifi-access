@@ -19,20 +19,22 @@
  * Numbers are otherwise left alone, with one exception. A latitude or a longitude carries a site's position, identity no string rule can reach, so a number arriving
  * under a coordinate key becomes zero: the field stays numeric, and it points nowhere a real installation could be.
  *
- * Replacements keep the shape of what they replace. Hardware addresses stay address-shaped and locally administered, network addresses land in the range RFC 5737
- * reserves for documentation, UUIDs keep their dash layout, and a cleared secret is sized to what it replaced - down to the fixed width of the redaction marker
- * itself, below which a short secret comes back longer than it went in. That size is measured against the value as the URL rule left it, because the authority
- * scrub runs ahead of the catalogs and a secret that was a URL is therefore cleared at the length of its host-substituted form. A consumer reading a scrubbed
- * capture sees data that still parses, still classifies, and still lines up.
+ * Replacements keep the shape of what they replace. Hardware addresses stay address-shaped and locally administered, network addresses of either family land in
+ * the ranges RFC 5737 and RFC 3849 reserve for documentation, UUIDs keep their dash layout, and a cleared secret is sized to what it replaced - down to the fixed
+ * width of the redaction marker itself, below which a short secret comes back longer than it went in. That size is measured against the value as the URL rule left
+ * it, because the authority scrub runs ahead of the catalogs and a secret that was a URL is therefore cleared at the length of its host-substituted form. An object
+ * key is read by the same shape rules a value is, so an identifier, an address, a mailbox or a URL used as a key is replaced as it would be as a value. A consumer
+ * reading a scrubbed capture sees data that still parses, still classifies, and still lines up.
  *
  * Two properties are accepted rather than solved. The replacement memory grows with the count of distinct identity values seen - that is what referential
  * consistency is bought with, bounded by a site's identity vocabulary plus one entry per event identifier on a long stream. And a value that legitimately changes
  * during a run, a renewed lease or a renamed door, takes a fresh stand-in: this is content-keyed pseudonymization, which describes values rather than entities.
  */
+import { isIPv4, isIPv6 } from "node:net";
 import { isMacAddress, isPlainObject, normalizeMacAddress } from "../../index.ts";
 
 // The replacement categories. Each keeps its own memory, so a hostname and a door name that happen to share text never collapse onto one pseudonym.
-type ScrubCategory = "email" | "hash" | "host" | "ip" | "mac" | "name" | "phone" | "plate" | "token" | "uuid";
+type ScrubCategory = "email" | "hash" | "host" | "ip" | "ipv6" | "mac" | "name" | "phone" | "plate" | "token" | "uuid";
 
 /**
  * The replacement memory for one scrub run.
@@ -149,14 +151,19 @@ const VERSION_KEYS: ReadonlySet<string> = new Set([ "firmware", "firmware_versio
 // `{ config_key, config_value }` - so the pairs live here rather than in the walk, and a further spelling is one entry rather than another branch.
 const ROW_SUBJECT_MEMBERS: ReadonlyMap<string, string> = new Map([ [ "config_value", "config_key" ], [ "value", "key" ] ]);
 
-// Shape guards, each anchored so it recognizes a value that is entirely of that shape rather than one that merely contains it. The hardware address has no guard
-// here at all: the library's own vocabulary answers that question, so the CLI cannot drift from what the wire calls an address.
-const IP_PATTERN = /^(\d{1,3}\.){3}\d{1,3}$/;
+// Shape guards, each anchored so it recognizes a value that is entirely of that shape rather than one that merely contains it. Neither a hardware address nor an
+// internet address has a guard here: the library's own vocabulary answers the first, so the CLI cannot drift from what the wire calls an address, and the
+// platform's own parser answers the second in both families, because a parser is the one place that already knows what an address is.
 const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 // The mail-address shape is deliberately broad - one at-sign with a dotted authority after it - so that no real address escapes it. That breadth also reads a
 // package-at-version locator such as "eslint@9.0.0" as an address, which is accepted: a controller capture carries no such locator, and a stand-in for a value
 // that was never an address costs nothing where a missed address would leak identity.
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// The canonical spelling of an IPv4-mapped address, which names an IPv4 host inside an IPv6 literal. The parser writes the dotted spelling as these two hex
+// groups, so both spellings of one host name the same IPv4 host here, and the groups convert back to the dotted quad that host's memory is keyed by. This reads a
+// form rather than deciding a shape: what makes the value an address at all is the parser, and this only says which family's memory the host belongs in.
+const IPV4_MAPPED = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
 
 /* An identifier that is entirely twenty-four hexadecimal characters, the width the controller addresses a camera-class device by. One camera's identity arrives
  * under several spellings - as an event's device identifier, as the object an event names, and as the camelCase member a metadata block states it in - and the
@@ -243,6 +250,68 @@ function scrubIp(context: ScrubContext, value: string): string {
   return remember(context, "ip", value, (index) => "192.0.2." + ((index % 254) + 1).toString());
 }
 
+// The canonical spelling of an IPv6 literal, which is what its memory is keyed by and what the mapped form is read on. One address has several valid spellings -
+// the case of its digits, where the run of zero groups is compressed, whether a group carries leading zeros - so a memory keyed by the text as it arrived would
+// mint a second stand-in for the second spelling of one host. The platform's URL parser is the one canonicalizer already shipped with the runtime, and its output
+// is the form RFC 5952 sets out for a plain literal: lowercase, compressed, no leading zeros. It writes an IPv4-mapped literal's dotted quad as two hex groups, so
+// both spellings of a mapped literal name one IPv4 host by the time the mapped form is read. A spelling the parser refuses is a zone-scoped literal; keying that by
+// its lowercase text folds the one difference that does vary and keeps two distinct addresses distinct, which is the honest answer where there is no canonical
+// form to ask for.
+function canonicalIpv6(value: string): string {
+
+  return URL.parse("http://[" + value + "]/")?.hostname.slice(1, -1) ?? value.toLowerCase();
+}
+
+// A count written as colon-joined sixteen-bit groups, so a stand-in stays IPv6-shaped however many addresses a capture carries: 1 reads as "1", 65535 as "ffff",
+// 65536 as "1:0". Written straight into one group instead, a large enough count runs past that group's width and spells something that is not an address.
+function hextets(n: number): string {
+
+  const groups = [(n % 65536).toString(16)];
+
+  for(let remaining = Math.floor(n / 65536); remaining > 0; remaining = Math.floor(remaining / 65536)) {
+
+    groups.unshift((remaining % 65536).toString(16));
+  }
+
+  return groups.join(":");
+}
+
+// A synthetic address in the prefix RFC 3849 reserves for documentation. An IPv4-mapped literal names an IPv4 host in either spelling, so it is answered from the
+// IPv4 memory and handed back in the dotted mapped shape: the plain address and both spellings of the mapped one stay one host, and the cross-reference between
+// records that spell it differently survives. Every other literal is remembered under its canonical spelling in this family's own memory.
+function scrubIpv6(context: ScrubContext, value: string): string {
+
+  const canonical = canonicalIpv6(value);
+  const [ , high, low ] = IPV4_MAPPED.exec(canonical) ?? [];
+
+  if((high !== undefined) && (low !== undefined)) {
+
+    const upper = Number.parseInt(high, 16);
+    const lower = Number.parseInt(low, 16);
+
+    return "::ffff:" + scrubIp(context, [ upper >> 8, upper & 255, lower >> 8, lower & 255 ].join("."));
+  }
+
+  return remember(context, "ipv6", canonical, (index) => "2001:db8::" + hextets(index + 1));
+}
+
+// The stand-in for an internet address in either family, or undefined for a value that is not one. This is the one place the family is decided, so every path
+// that meets an address - a value, an object key, a subnet, a URL's host - answers it the same way.
+function scrubAddress(context: ScrubContext, value: string): string | undefined {
+
+  if(isIPv4(value)) {
+
+    return scrubIp(context, value);
+  }
+
+  if(isIPv6(value)) {
+
+    return scrubIpv6(context, value);
+  }
+
+  return undefined;
+}
+
 // A synthetic UUID that keeps the dash layout, so length and format checks downstream still pass.
 function scrubUuid(context: ScrubContext, value: string): string {
 
@@ -261,14 +330,14 @@ function scrubHostname(context: ScrubContext, value: string): string {
 function scrubHost(context: ScrubContext, value: string): string {
 
   const slash = value.indexOf("/");
-  const address = (slash > 0) ? value.substring(0, slash) : value;
+  const address = scrubAddress(context, (slash > 0) ? value.substring(0, slash) : value);
 
-  if(!IP_PATTERN.test(address)) {
+  if(address === undefined) {
 
     return scrubHostname(context, value);
   }
 
-  return scrubIp(context, address) + ((slash > 0) ? value.substring(slash) : "");
+  return address + ((slash > 0) ? value.substring(slash) : "");
 }
 
 // A synthetic email address. Referential like every other category: the same address always becomes the same stand-in, so a capture still shows that two records
@@ -335,28 +404,26 @@ function scrubEmbeddedMac(context: ScrubContext, value: string): string {
  *
  * This is what reaches the portal, imagery, and vendor URLs the wire carries under keys no catalog names, where the identity is the host rather than the value as a
  * whole and the path is evidence worth keeping. A value that does not parse as a URL is returned untouched for the rest of the pipeline to judge, and so is one
- * that parses but carries no authority - a bare "scheme:text" string is not a locator, and rewriting it would rewrite values that were never URLs.
+ * that parses but carries no authority - a bare "scheme:text" string is not a locator, and rewriting it would rewrite values that were never URLs. The parser
+ * answers a value it refuses with null rather than a thrown exception, so the ordinary string that is no URL at all, every object key and most values among them,
+ * costs nothing extra.
  */
 function scrubUrl(context: ScrubContext, value: string): string {
 
-  let url: URL;
+  const url = URL.parse(value);
 
-  try {
-
-    url = new URL(value);
-  } catch {
+  if((url === null) || (url.hostname.length === 0)) {
 
     return value;
   }
 
-  if(url.hostname.length === 0) {
-
-    return value;
-  }
+  // The parser writes an IPv6 host inside brackets, so the bare literal is what the family helper reads and the brackets go back around its stand-in.
+  const bracketed = url.hostname.startsWith("[");
+  const address = scrubAddress(context, bracketed ? url.hostname.slice(1, -1) : url.hostname);
 
   url.username = "";
   url.password = "";
-  url.hostname = IP_PATTERN.test(url.hostname) ? scrubIp(context, url.hostname) : scrubHostname(context, url.hostname);
+  url.hostname = (address === undefined) ? scrubHostname(context, url.hostname) : (bracketed ? "[" + address + "]" : address);
 
   return url.toString();
 }
@@ -370,9 +437,11 @@ function scrubShape(context: ScrubContext, value: string): string | undefined {
     return scrubMac(context, value);
   }
 
-  if(IP_PATTERN.test(value)) {
+  const address = scrubAddress(context, value);
 
-    return scrubIp(context, value);
+  if(address !== undefined) {
+
+    return address;
   }
 
   if(UUID_PATTERN.test(value)) {
@@ -468,31 +537,15 @@ function scrubString(context: ScrubContext, value: string, key: string | undefin
   return scrubShape(context, stripped) ?? stripped;
 }
 
-// Replace an object key that is itself identifying. Some controller maps are keyed by a raw hardware address or identifier, so a scrub that only touched values
-// would leave the identifiers sitting in the key positions.
+// Replace an object key that is itself identifying. Some controller maps are keyed by a raw hardware address, an identifier, an address or a mailbox, so a scrub
+// that only touched values would leave the identity sitting in the key positions. A key takes the URL rule and then the shape rules a value under an uncataloged
+// name takes, through the same memory, so a key and a value naming one thing still agree. It is read by shape alone because the catalogs answer by the name a value
+// arrived under, and a key is that name.
 function scrubKey(context: ScrubContext, key: string): string {
 
-  if(isMacAddress(key)) {
+  const stripped = scrubUrl(context, key);
 
-    return scrubMac(context, key);
-  }
-
-  if(UUID_PATTERN.test(key)) {
-
-    return scrubUuid(context, key);
-  }
-
-  if(HEX_IDENTIFIER_PATTERN.test(key)) {
-
-    return scrubHash(context, key);
-  }
-
-  if(IP_PATTERN.test(key)) {
-
-    return scrubIp(context, key);
-  }
-
-  return key;
+  return scrubShape(context, stripped) ?? stripped;
 }
 
 /* Clear every string beneath a secret container, keeping the structure and the key names. A webhook registration's `headers` map is what this exists for: its keys

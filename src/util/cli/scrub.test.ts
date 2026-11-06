@@ -1,9 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * scrub.test.ts: Unit tests for the capture scrub - referential consistency in both directions, key-over-shape precedence, every cataloged key, the configuration
- * rows that name their subject in a sibling field, the mints and their shapes, URL authority replacement, secret containers, bare-document clearing, embedded
- * addresses, coordinate and locale replacement, key replacement, the promise that the input is never modified, and the promise that a scrubbed packet still
- * classifies as what it was.
+ * rows that name their subject in a sibling field, the mints and their shapes, both internet address families, URL authority replacement, secret containers,
+ * bare-document clearing, embedded addresses, coordinate and locale replacement, key replacement, the promise that the input is never modified, and the promise
+ * that a scrubbed packet still classifies as what it was.
  */
 import { createScrubContext, scrub } from "./scrub.ts";
 import { describe, test } from "node:test";
@@ -549,6 +549,46 @@ describe("the capture scrub", () => {
     assert.equal(result.ip_subnets[0], result.gateway_ip + "/24", "the address half is remembered like any other, so the two still agree");
   });
 
+  test("an IPv6 literal under a key no catalog names lands in the documentation prefix, one stand-in for every spelling of one address", () => {
+
+    // One address spelled two ways - compressed and lowercase, then expanded with leading zeros and uppercase - is one host, and a neighboring address is another.
+    const result = scrubbed({ "uaVocSensorOther": "fd12:3456:789a::43", "uaVocSensorPeer": "fd12:3456:789a::42",
+      "uaVocSensorUplink": "FD12:3456:789A:0000:0000:0000:0000:0042" }) as { uaVocSensorOther: string; uaVocSensorPeer: string; uaVocSensorUplink: string };
+
+    assert.match(result.uaVocSensorPeer, /^2001:db8::[0-9a-f:]+$/, "the stand-in lands in the prefix RFC 3849 reserves for documentation");
+    assert.equal(result.uaVocSensorUplink, result.uaVocSensorPeer, "every spelling of one address takes one stand-in");
+    assert.notEqual(result.uaVocSensorOther, result.uaVocSensorPeer);
+  });
+
+  test("an IPv4-mapped literal in either spelling shares the stand-in its IPv4 host takes", () => {
+
+    // The dotted and the hexadecimal spellings of a mapped literal both name 10.13.0.42, so the three values are one host and keep one cross-reference.
+    const result = scrubbed({ "ip": "10.13.0.42", "uaVocSensorPeer": "::ffff:10.13.0.42", "uaVocSensorUplink": "::ffff:a0d:2a" }) as {
+
+      ip: string;
+      uaVocSensorPeer: string;
+      uaVocSensorUplink: string;
+    };
+
+    assert.match(result.ip, /^192\.0\.2\.\d+$/);
+    assert.equal(result.uaVocSensorPeer, "::ffff:" + result.ip);
+    assert.equal(result.uaVocSensorUplink, result.uaVocSensorPeer);
+  });
+
+  test("an IPv6 address under a host key, as a subnet, and as a URL's host takes the bare literal's stand-in", () => {
+
+    const result = scrubbed({ "host": "fd12:3456:789a::42", "ip_subnets": ["fd12:3456:789a::42/64"], "streamUrl": "https://[fd12:3456:789a::42]:8443/live/feed" }) as {
+
+      host: string;
+      ip_subnets: string[];
+      streamUrl: string;
+    };
+
+    assert.match(result.host, /^2001:db8::[0-9a-f:]+$/, "an IPv6 address under a host key is an address rather than a hostname");
+    assert.equal(result.ip_subnets[0], result.host + "/64", "a subnet keeps its prefix length and agrees with the host");
+    assert.equal(result.streamUrl, "https://[" + result.host + "]:8443/live/feed", "a URL keeps its brackets, port and path around the stand-in");
+  });
+
   test("a version survives every spelling the wire gives it, while an address under an address key still does not", () => {
 
     /* The version keys answer ahead of the shape rules, because the bare four-part spelling a controller sometimes sends is indistinguishable from an address to a
@@ -619,6 +659,29 @@ describe("the capture scrub", () => {
     assert.notEqual(Object.keys(result.byMac)[0], "02FFEE000002");
     assert.match(Object.keys(result.byId)[0] ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     assert.match(Object.keys(result.byAddress)[0] ?? "", /^192\.0\.2\.\d+$/);
+  });
+
+  test("an IPv6 literal, a mailbox and a URL used as an object key are replaced as their values are, and agree with them", () => {
+
+    // A key is read by the same shape rules and the same memory a value under an uncataloged name is, so each map below still points at the value naming it.
+    const result = scrubbed({ byEmail: { "jane@acme.example": true }, byUrl: { "https://operator:hunter2@access.acme.example/hooks": true },
+      byV6: { "fd12:3456:789a::42": true }, uaVocSensorHook: "https://access.acme.example/hooks", uaVocSensorOwner: "jane@acme.example",
+      uaVocSensorPeer: "fd12:3456:789a::42" }) as {
+
+      byEmail: Record<string, unknown>;
+      byUrl: Record<string, unknown>;
+      byV6: Record<string, unknown>;
+      uaVocSensorHook: string;
+      uaVocSensorOwner: string;
+      uaVocSensorPeer: string;
+    };
+
+    assert.match(result.uaVocSensorOwner, /^user-\d+@example\.com$/);
+    assert.match(result.uaVocSensorPeer, /^2001:db8::[0-9a-f:]+$/);
+    assert.match(result.uaVocSensorHook, /^https:\/\/host-\d+\.test\.local\/hooks$/);
+    assert.deepEqual(Object.keys(result.byEmail), [result.uaVocSensorOwner]);
+    assert.deepEqual(Object.keys(result.byV6), [result.uaVocSensorPeer]);
+    assert.deepEqual(Object.keys(result.byUrl), [result.uaVocSensorHook], "the credentials in a URL key are dropped and its host takes the value's stand-in");
   });
 
   test("a key and a value carrying the same identifier agree", () => {
@@ -830,7 +893,7 @@ describe("the capture scrub", () => {
      */
     const planted = [ "02FFEE000004", "10.13.0.42", "203.0.113.77", "7ABC123", "9f2ac1-receiver-token", "9fK2pQ7mVx4LrT8nBwZq", "Acme Holdings",
       "02FFEE000002", "Dr. Jane Smith", "Loading Dock", "UBNTX1234567", "access.acme.example", "02ffee000002", "hunter2", "jane@acme.example", "jsmith",
-      "host-1.acme.example" ];
+      "host-1.acme.example", "fd12:3456:789a::42", "sam@acme.example", "hooks.acme.example" ];
 
     const document = {
 
@@ -840,6 +903,7 @@ describe("the capture scrub", () => {
         "room_id": "WR-02ffee000002-D4aKxWPrjIOp7eVbBBcfJsMtbbxVhU2n", "serial": "UBNTX1234567" },
       "door": { "latitude": 40.741895, "name": "Loading Dock" },
       "host": { "host": "access.acme.example", "time_zone": "America/New_York", "wan_ip": "203.0.113.77" },
+      "peers": { "https://hooks.acme.example/relay": { "address": "fd12:3456:789a::42" }, "sam@acme.example": { "enabled": true } },
       "user": { "credentials": { "password": "hunter2" }, "email": "jane@acme.example", "full_name": "Dr. Jane Smith",
         "license_plates": [{ "credential": "7ABC123" }], "username": "jsmith" },
       "webhook": { "headers": { "Authorization": "Bearer 9f2ac1-receiver-token" }, "url": "https://hooks.example.net/access/9f2ac1-receiver-token" }
