@@ -32,7 +32,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
 | `policyIds` | readonly `string`[] | The policies to assign. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -60,7 +60,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
 | `policyIds` | readonly `string`[] | The policies to assign. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -90,7 +90,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
 | `plates` | readonly `string`[] | The plate numbers to register. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -118,7 +118,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
 | `opts` | [`AccessOfficialUserNfcCardAssign`](AccessOfficialUserNfcCardAssign.md) | The card's token, and whether to take it from its current holder. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -146,7 +146,7 @@ Live-verified.
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
 | `pinCode` | `string` | The code, minted through the credentials domain. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -176,7 +176,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
 | `userIds` | readonly `string`[] | The users to add. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -204,7 +204,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `userId` | `string` | The user's identifier. |
 | `touchPassId` | `string` | The pass's identifier, from the assignable list. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -229,7 +229,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialTouchPassBatchAssign`](AccessOfficialTouchPassBatchAssign.md) | The users to assign to, and the email addresses to record against them. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -254,7 +254,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialUserCreate`](AccessOfficialUserCreate.md) | The user to register. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -279,7 +279,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialUserGroupCreate`](AccessOfficialUserGroupCreate.md) | The group to create. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -304,7 +304,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -327,7 +327,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -354,8 +354,8 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
-| `opts` | [`AccessOfficialUserFetchOptions`](AccessOfficialUserFetchOptions.md) | The expansions to request. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialUserFetchOptions`](AccessOfficialUserFetchOptions.md) | The expansions to request. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -384,8 +384,8 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
-| `opts` | [`AccessOfficialUserAccessPolicyOptions`](AccessOfficialUserAccessPolicyOptions.md) | Whether to report only the policies assigned directly to the user rather than those inherited from their groups. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialUserAccessPolicyOptions`](AccessOfficialUserAccessPolicyOptions.md) | Whether to report only the policies assigned directly to the user rather than those inherited from their groups. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -409,8 +409,8 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialUserListOptions`](AccessOfficialUserListOptions.md) | The page to fetch, and the expansions to request. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialUserListOptions`](AccessOfficialUserListOptions.md) | The page to fetch, and the expansions to request. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -434,7 +434,7 @@ Documentation-derived.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -459,7 +459,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -484,7 +484,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -509,7 +509,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -534,7 +534,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -558,8 +558,8 @@ Composed over [OfficialUsers.fetchAll](#fetchall); the endpoint is live-verified
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialUserListOptions`](AccessOfficialUserListOptions.md) | The expansions to request, and the page size to walk the listing in. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialUserListOptions`](AccessOfficialUserListOptions.md) | The expansions to request, and the page size to walk the listing in. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -583,8 +583,8 @@ Composed over [OfficialUsers.search](#search); the endpoint is live-verified and
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialUserSearchOptions`](AccessOfficialUserSearchOptions.md) | The search terms, and the page size to walk the matches in. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialUserSearchOptions`](AccessOfficialUserSearchOptions.md) | The search terms, and the page size to walk the matches in. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -609,8 +609,8 @@ pagination member, so a walk over it ends after its first page.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialUserSearchOptions`](AccessOfficialUserSearchOptions.md) | The search terms and the page to fetch. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialUserSearchOptions`](AccessOfficialUserSearchOptions.md) | The search terms and the page to fetch. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -642,7 +642,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
 | `userIds` | readonly `string`[] | The users to remove. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -671,7 +671,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `userId` | `string` | The user's identifier. |
 | `licensePlateId` | `string` | The plate's identifier, from the user's own record. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -702,7 +702,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
 | `token` | `string` | The card's token. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -725,7 +725,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -753,7 +753,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `userId` | `string` | The user's identifier. |
 | `touchPassId` | `string` | The pass's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -783,7 +783,7 @@ Live-verified.
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
 | `opts` | [`AccessOfficialUserUpdate`](AccessOfficialUserUpdate.md) | The members to change; anything omitted is left as it stands. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -811,7 +811,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
 | `opts` | [`AccessOfficialUserGroupUpdate`](AccessOfficialUserGroupUpdate.md) | The members to change; anything omitted is left as it stands. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -841,7 +841,7 @@ Live-verified (2026-09-18): a multipart upload sending the image under the field
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
 | `opts` | [`AccessOfficialFileUpload`](AccessOfficialFileUpload.md) | The image bytes and the name to send them under. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 

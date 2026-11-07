@@ -360,7 +360,7 @@ say rather than this library's.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `doorId?`: `string`; `signal?`: `AbortSignal`; \} | Which door to close, and an optional abort signal. |
+| `opts?` | \{ `doorId?`: `string`; `signal?`: `AbortSignal`; \} | Which door to close, and an optional abort signal. |
 | `opts.doorId?` | `string` | - |
 | `opts.signal?` | `AbortSignal` | - |
 
@@ -389,7 +389,7 @@ it. Pair it with the synchronous getters: those answer "what is it now", this an
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -448,7 +448,7 @@ non-2xx classifies and throws, and a 2xx whose envelope reports anything other t
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -495,7 +495,7 @@ hardware, as [isCamera](../functions/isCamera.md) answers it, takes its rows on 
 | ------ | ------ | ------ |
 | `method` | `"face"` \| `"mobile"` \| `"nfc"` \| `"pin"` \| `"qr"` \| `"touchPass"` \| `"wave"` | The access method, by the library's own name for it. |
 | `enabled` | `boolean` | `true` to switch the method on, `false` to switch it off. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -538,7 +538,7 @@ same write the default is, and takes the direct path exactly as the default does
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `rule` | [`AccessOfficialLockRuleSet`](../type-aliases/AccessOfficialLockRuleSet.md) | The rule to establish. A `custom` rule's interval is a positive whole number of minutes. |
-| `opts` | \{ `doorId?`: `string`; `signal?`: `AbortSignal`; \} | Which door the rule governs, and an optional abort signal. |
+| `opts?` | \{ `doorId?`: `string`; `signal?`: `AbortSignal`; \} | Which door the rule governs, and an optional abort signal. |
 | `opts.doorId?` | `string` | - |
 | `opts.signal?` | `AbortSignal` | - |
 
@@ -575,7 +575,7 @@ Which gate is halted is this handle's own door unless `doorId` picks out another
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `doorId?`: `string`; `signal?`: `AbortSignal`; \} | Which door to halt, and an optional abort signal. |
+| `opts?` | \{ `doorId?`: `string`; `signal?`: `AbortSignal`; \} | Which door to halt, and an optional abort signal. |
 | `opts.doorId?` | `string` | - |
 | `opts.signal?` | `AbortSignal` | - |
 
@@ -647,7 +647,7 @@ door id names, and nothing here checks it against the state first.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `actor?`: [`AccessOfficialDoorUnlockActor`](AccessOfficialDoorUnlockActor.md); `doorId?`: `string`; `entryMethod?`: [`AccessOfficialDoorEntryMethod`](../type-aliases/AccessOfficialDoorEntryMethod.md); `signal?`: `AbortSignal`; \} | Who to attribute the unlock to, which door to unlock, which approach of a driveway gate it is for, and an optional abort signal. |
+| `opts?` | \{ `actor?`: [`AccessOfficialDoorUnlockActor`](AccessOfficialDoorUnlockActor.md); `doorId?`: `string`; `entryMethod?`: [`AccessOfficialDoorEntryMethod`](../type-aliases/AccessOfficialDoorEntryMethod.md); `signal?`: `AbortSignal`; \} | Who to attribute the unlock to, which door to unlock, which approach of a driveway gate it is for, and an optional abort signal. |
 | `opts.actor?` | [`AccessOfficialDoorUnlockActor`](AccessOfficialDoorUnlockActor.md) | - |
 | `opts.doorId?` | `string` | - |
 | `opts.entryMethod?` | [`AccessOfficialDoorEntryMethod`](../type-aliases/AccessOfficialDoorEntryMethod.md) | - |
@@ -683,7 +683,7 @@ classifies and throws, and a 2xx is the echoed record.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `payload` | [`AccessDeviceConfigPayload`](../type-aliases/AccessDeviceConfigPayload.md) | The configuration to apply. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns

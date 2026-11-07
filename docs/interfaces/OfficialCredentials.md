@@ -25,7 +25,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `sessionId` | `string` | The session identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -48,7 +48,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `token` | `string` | The card's token. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -72,7 +72,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `visitorId` | `string` | The visitor whose code to download. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -100,7 +100,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialNfcCardEnroll`](AccessOfficialNfcCardEnroll.md) | The reader to wake, and whether to reset a card already enrolled at another site. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -124,8 +124,8 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialPageOptions`](AccessOfficialPageOptions.md) | The page to fetch. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialPageOptions`](AccessOfficialPageOptions.md) | The page to fetch. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -149,8 +149,8 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialTouchPassListOptions`](AccessOfficialTouchPassListOptions.md) | The page to fetch, and the status to narrow to. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialTouchPassListOptions`](AccessOfficialTouchPassListOptions.md) | The page to fetch, and the status to narrow to. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -175,7 +175,7 @@ Documentation-derived.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -200,7 +200,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `token` | `string` | The card's token. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -225,7 +225,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `sessionId` | `string` | The session identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -250,7 +250,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The pass's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -276,7 +276,7 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -304,7 +304,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialFileUpload`](AccessOfficialFileUpload.md) | The CSV bytes and the name to send them under. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -329,8 +329,8 @@ Composed over [OfficialCredentials.fetchAllNfcCards](#fetchallnfccards); the end
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialPageOptions`](AccessOfficialPageOptions.md) | The page size to walk the listing in. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialPageOptions`](AccessOfficialPageOptions.md) | The page size to walk the listing in. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -354,8 +354,8 @@ Composed over [OfficialCredentials.fetchAllTouchPasses](#fetchalltouchpasses); t
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialTouchPassListOptions`](AccessOfficialTouchPassListOptions.md) | The status to narrow to, and the page size to walk the listing in. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialTouchPassListOptions`](AccessOfficialTouchPassListOptions.md) | The status to narrow to, and the page size to walk the listing in. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -383,7 +383,7 @@ any capture.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `count` | `number` | How many passes to purchase. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -409,7 +409,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `condition` | `string` | The card identifier or user name to match. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -439,7 +439,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `token` | `string` | The card's token. |
 | `opts` | [`AccessOfficialNfcCardUpdate`](AccessOfficialNfcCardUpdate.md) | The members to change. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -467,7 +467,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The pass's identifier. |
 | `opts` | [`AccessOfficialTouchPassUpdate`](AccessOfficialTouchPassUpdate.md) | The members to change. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 

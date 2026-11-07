@@ -50,9 +50,7 @@ new AccessApiError(message, options): AccessApiError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`
 
 ## Properties
 

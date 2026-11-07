@@ -38,9 +38,7 @@ new AccessStallError(message, options): AccessStallError;
 
 #### Overrides
 
-```ts
-RecoverableError.constructor
-```
+`RecoverableError.constructor`
 
 ## Properties
 

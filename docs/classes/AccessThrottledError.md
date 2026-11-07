@@ -36,9 +36,7 @@ new AccessThrottledError(message, options): AccessThrottledError;
 
 #### Overrides
 
-```ts
-RecoverableError.constructor
-```
+`RecoverableError.constructor`
 
 ## Properties
 

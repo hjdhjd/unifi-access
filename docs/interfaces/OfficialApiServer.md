@@ -27,7 +27,7 @@ Documentation-derived.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -57,7 +57,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialCertificateUpload`](AccessOfficialCertificateUpload.md) | The certificate and its private key. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 

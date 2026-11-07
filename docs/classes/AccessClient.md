@@ -219,7 +219,7 @@ are reachable through [AccessClient.official](#official)'s request hatches.
 ### \[asyncDispose\]()
 
 ```ts
-asyncDispose: Promise<void>;
+[asyncDispose](): Promise<void>;
 ```
 
 Dispose the client: tear down the connection monitor, stopping recovery and closing the realtime channel; stop the refresh failsafe and end every observation;
@@ -233,9 +233,7 @@ holding both identities destroys both pools; one holding either destroys the one
 
 #### Implementation of
 
-```ts
-AsyncDisposable.[asyncDispose]
-```
+`AsyncDisposable.[asyncDispose]`
 
 ***
 
@@ -296,7 +294,7 @@ the state model by the time it arrives here, so reading `client.state` inside th
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -326,7 +324,7 @@ token-only client cannot produce it and says so rather than answering something 
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -375,7 +373,7 @@ Subscribe to a client event. Returns a `Disposable`; prefer `using sub = client.
 
 | Type Parameter |
 | ------ |
-| `K` *extends* keyof [`AccessClientEvents`](../interfaces/AccessClientEvents.md) |
+| <a id="type-parameter-k"></a> `K` *extends* keyof [`AccessClientEvents`](../interfaces/AccessClientEvents.md) |
 
 #### Parameters
 
@@ -404,14 +402,14 @@ Wait for the next emission of a client event.
 
 | Type Parameter |
 | ------ |
-| `K` *extends* keyof [`AccessClientEvents`](../interfaces/AccessClientEvents.md) |
+| <a id="type-parameter-k-1"></a> `K` *extends* keyof [`AccessClientEvents`](../interfaces/AccessClientEvents.md) |
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `event` | `K` | The event to await. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -436,7 +434,7 @@ ordering guarantee relative to the frame.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -459,14 +457,14 @@ Stream every subsequent emission of a client event until the signal aborts.
 
 | Type Parameter |
 | ------ |
-| `K` *extends* keyof [`AccessClientEvents`](../interfaces/AccessClientEvents.md) |
+| <a id="type-parameter-k-2"></a> `K` *extends* keyof [`AccessClientEvents`](../interfaces/AccessClientEvents.md) |
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `event` | `K` | The event to stream. |
-| `opts` | [`StreamOptions`](../interfaces/StreamOptions.md) | Stream options, including the abort signal. |
+| `opts?` | [`StreamOptions`](../interfaces/StreamOptions.md) | Stream options, including the abort signal. |
 
 #### Returns
 

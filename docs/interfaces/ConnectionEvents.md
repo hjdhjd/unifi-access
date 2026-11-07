@@ -19,9 +19,9 @@ The events [ConnectionMonitor](ConnectionMonitor.md) publishes on its three-rail
 
 | Property | Type |
 | ------ | ------ |
-| <a id="controllerlost"></a> `controllerLost` | \[[`AccessError`](../classes/AccessError.md)\] |
-| <a id="controllerrebooted"></a> `controllerRebooted` | \[\{ `newUptime`: `number`; `previousUptime`: `number`; \}\] |
+| <a id="controllerlost"></a> `controllerLost` | \[`reason`: [`AccessError`](../classes/AccessError.md)\] |
+| <a id="controllerrebooted"></a> `controllerRebooted` | \[`info`: \{ `newUptime`: `number`; `previousUptime`: `number`; \}\] |
 | <a id="controllerrecovered"></a> `controllerRecovered` | \[\] |
-| <a id="statechanged"></a> `stateChanged` | \[[`ConnectionTransition`](ConnectionTransition.md)\] |
+| <a id="statechanged"></a> `stateChanged` | \[`transition`: [`ConnectionTransition`](ConnectionTransition.md)\] |
 | <a id="throttleentered"></a> `throttleEntered` | \[\] |
 | <a id="throttleexited"></a> `throttleExited` | \[\] |

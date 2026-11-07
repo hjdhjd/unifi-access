@@ -35,6 +35,4 @@ new AccessAbortedError(message, options?): AccessAbortedError;
 
 #### Overrides
 
-```ts
-RecoverableError.constructor
-```
+`RecoverableError.constructor`

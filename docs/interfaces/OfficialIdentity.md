@@ -34,7 +34,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
 | `opts` | [`AccessOfficialIdentityAssignment`](AccessOfficialIdentityAssignment.md) | The resource type and the resources of it to assign. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -62,7 +62,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
 | `opts` | [`AccessOfficialIdentityAssignment`](AccessOfficialIdentityAssignment.md) | The resource type and the resources of it to assign. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -84,8 +84,8 @@ Documentation-derived.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialIdentityResourceOptions`](AccessOfficialIdentityResourceOptions.md) | The resource type to narrow to; omitting it returns every type. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialIdentityResourceOptions`](AccessOfficialIdentityResourceOptions.md) | The resource type to narrow to; omitting it returns every type. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -111,7 +111,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -136,7 +136,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The user's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -164,7 +164,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `invitations` | readonly [`AccessOfficialIdentityInvitation`](AccessOfficialIdentityInvitation.md)[] | The invitations to send. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 

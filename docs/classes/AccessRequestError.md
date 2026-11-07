@@ -38,9 +38,7 @@ new AccessRequestError(message, options): AccessRequestError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`
 
 ## Properties
 

@@ -40,9 +40,7 @@ new AccessDeclinedError(message, options): AccessDeclinedError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`
 
 ## Properties
 

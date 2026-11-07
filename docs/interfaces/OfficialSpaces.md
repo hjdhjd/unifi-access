@@ -25,7 +25,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialDoorGroupCreate`](AccessOfficialDoorGroupCreate.md) | The group to create. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -50,7 +50,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -73,7 +73,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The door's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -97,7 +97,7 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -123,7 +123,7 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -148,7 +148,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -172,7 +172,7 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -197,7 +197,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The door's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -221,7 +221,7 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -249,7 +249,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `state` | [`AccessOfficialEmergencyState`](../type-aliases/AccessOfficialEmergencyState.md) | The mode to put in force; `normal` clears both. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -281,7 +281,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The door's identifier. |
 | `rule` | [`AccessOfficialLockRuleSet`](../type-aliases/AccessOfficialLockRuleSet.md) | The rule to put in force. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -311,8 +311,8 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The door's identifier. |
-| `opts` | [`AccessOfficialDoorUnlockOptions`](AccessOfficialDoorUnlockOptions.md) | Who to attribute the unlock to, what to echo onto the webhook delivery, and the gate-specific controls. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialDoorUnlockOptions`](AccessOfficialDoorUnlockOptions.md) | Who to attribute the unlock to, what to echo onto the webhook delivery, and the gate-specific controls. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -340,7 +340,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
 | `opts` | [`AccessOfficialDoorGroupUpdate`](AccessOfficialDoorGroupUpdate.md) | The members to change. An empty `resources` array empties the group. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 

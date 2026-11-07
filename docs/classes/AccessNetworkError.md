@@ -42,9 +42,7 @@ new AccessNetworkError(message, options?): AccessNetworkError;
 
 #### Overrides
 
-```ts
-RecoverableError.constructor
-```
+`RecoverableError.constructor`
 
 ## Properties
 

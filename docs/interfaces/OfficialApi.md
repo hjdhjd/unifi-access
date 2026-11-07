@@ -48,7 +48,7 @@ Send a mutation to an official endpoint this library does not model, where succe
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `path` | `string` | The endpoint path below the application prefix, with its leading slash. |
-| `opts` | [`AccessOfficialRequestOptions`](AccessOfficialRequestOptions.md) | Per-request options, encoded and threaded exactly as they are for a typed method. |
+| `opts?` | [`AccessOfficialRequestOptions`](AccessOfficialRequestOptions.md) | Per-request options, encoded and threaded exactly as they are for a typed method. |
 
 #### Returns
 
@@ -69,7 +69,7 @@ Fetch raw bytes from an official endpoint this library does not model.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `path` | `string` | The endpoint path below the application prefix, with its leading slash. |
-| `opts` | [`AccessOfficialRequestOptions`](AccessOfficialRequestOptions.md) | Per-request options, encoded and threaded exactly as they are for a typed method. |
+| `opts?` | [`AccessOfficialRequestOptions`](AccessOfficialRequestOptions.md) | Per-request options, encoded and threaded exactly as they are for a typed method. |
 
 #### Returns
 
@@ -91,14 +91,14 @@ Send a request to an official endpoint this library does not model, and unwrap i
 
 | Type Parameter | Description |
 | ------ | ------ |
-| `T` | The payload shape the endpoint returns. The caller asserts it, exactly as it does on the typed domain methods. |
+| <a id="type-parameter-t"></a> `T` | The payload shape the endpoint returns. The caller asserts it, exactly as it does on the typed domain methods. |
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `path` | `string` | The endpoint path below the application prefix, with its leading slash. |
-| `opts` | [`AccessOfficialRequestOptions`](AccessOfficialRequestOptions.md) | Per-request options, encoded and threaded exactly as they are for a typed method. |
+| `opts?` | [`AccessOfficialRequestOptions`](AccessOfficialRequestOptions.md) | Per-request options, encoded and threaded exactly as they are for a typed method. |
 
 #### Returns
 

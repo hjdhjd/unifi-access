@@ -25,7 +25,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialSystemLogExportOptions`](AccessOfficialSystemLogExportOptions.md) | The topic, the window, and the timezone to render timestamps in. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -55,7 +55,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialSystemLogFetchOptions`](AccessOfficialSystemLogFetchOptions.md) | The topic to query, the window to query it over, and the page to fetch. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -82,7 +82,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The resource's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -110,7 +110,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `path` | `string` | The resource path, exactly as a log record spelled it. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -138,7 +138,7 @@ Composed over [OfficialSystemLogs.fetch](#fetch); the endpoint is live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialSystemLogFetchOptions`](AccessOfficialSystemLogFetchOptions.md) | The topic to query, the window to query it over, and the page size to walk it in. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 

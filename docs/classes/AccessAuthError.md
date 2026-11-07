@@ -40,9 +40,7 @@ new AccessAuthError(message, options?): AccessAuthError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`
 
 ## Properties
 

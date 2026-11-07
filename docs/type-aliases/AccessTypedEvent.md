@@ -66,7 +66,7 @@ type AccessTypedEvent =
   eventName: string;
   kind: "doorStateChanged";
   states: readonly [AccessDoorStateEntry, ...AccessDoorStateEntry[]];
-} & 
+} & (
   | {
   device: {
      id: string;
@@ -80,7 +80,7 @@ type AccessTypedEvent =
      id: string;
      payload: NotifiedLocationPayload;
   };
-}
+})
   | {
   eventName: string;
   id: string;

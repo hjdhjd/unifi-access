@@ -28,8 +28,8 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialDeviceListOptions`](AccessOfficialDeviceListOptions.md) | Whether to bypass the controller's device cache. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialDeviceListOptions`](AccessOfficialDeviceListOptions.md) | Whether to bypass the controller's device cache. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -56,7 +56,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `deviceId` | `string` | The device's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -85,8 +85,8 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `deviceId` | `string` | The reader's identifier. |
-| `opts` | [`AccessOfficialDoorbellTriggerOptions`](AccessOfficialDoorbellTriggerOptions.md) | The Intercom directory name to ring, or whether to cancel a call already in progress. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialDoorbellTriggerOptions`](AccessOfficialDoorbellTriggerOptions.md) | The Intercom directory name to ring, or whether to cancel a call already in progress. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -120,7 +120,7 @@ Live-verified.
 | ------ | ------ | ------ |
 | `deviceId` | `string` | The device's identifier. |
 | `opts` | [`AccessOfficialDeviceSettingsUpdate`](AccessOfficialDeviceSettingsUpdate.md) | The methods to change. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 

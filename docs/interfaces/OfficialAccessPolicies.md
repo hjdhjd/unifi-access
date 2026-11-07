@@ -25,7 +25,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialAccessPolicyCreate`](AccessOfficialAccessPolicyCreate.md) | The policy to create. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -50,7 +50,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialHolidayGroupCreate`](AccessOfficialHolidayGroupCreate.md) | The group to create. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -78,7 +78,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialScheduleCreate`](AccessOfficialScheduleCreate.md) | The schedule to create. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -103,7 +103,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The policy's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -126,7 +126,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -149,7 +149,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The schedule's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -172,7 +172,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The policy's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -196,7 +196,7 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -222,7 +222,7 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -248,7 +248,7 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -273,7 +273,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -298,7 +298,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The schedule's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -328,7 +328,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The policy's identifier. |
 | `opts` | [`AccessOfficialAccessPolicyUpdate`](AccessOfficialAccessPolicyUpdate.md) | The members to change; anything omitted is left as it stands. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -358,7 +358,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The group's identifier. |
 | `opts` | [`AccessOfficialHolidayGroupUpdate`](AccessOfficialHolidayGroupUpdate.md) | The members to change. Omitting `holidays` leaves the group's holidays as they stand. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -388,7 +388,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The schedule's identifier. |
 | `opts` | [`AccessOfficialScheduleUpdate`](AccessOfficialScheduleUpdate.md) | The members to change; anything omitted is left as it stands. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 

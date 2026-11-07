@@ -37,6 +37,4 @@ new AccessConfigurationError(message, options?): AccessConfigurationError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`

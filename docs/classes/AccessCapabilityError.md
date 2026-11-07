@@ -43,6 +43,4 @@ new AccessCapabilityError(message, options?): AccessCapabilityError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`

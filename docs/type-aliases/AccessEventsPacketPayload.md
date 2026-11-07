@@ -10,14 +10,14 @@
 type AccessEventsPacketPayload = {
   eventName: string;
   host: string;
-} & 
+} & (
   | {
   id: string;
   kind: AccessEventsPacketIdKind;
 }
   | {
   kind: AccessEventsPacketNoIdKind;
-};
+});
 ```
 
 Payload published on [channels.eventsPacket](../variables/channels.md#property-eventspacket). `eventName` is the notification name exactly as the controller sent it, which is what a consumer needs to

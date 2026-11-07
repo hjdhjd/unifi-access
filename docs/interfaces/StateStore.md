@@ -18,7 +18,7 @@ one documented exception, the factory a test harness uses to drive the real engi
 ### \[asyncDispose\]()
 
 ```ts
-asyncDispose: Promise<void>;
+[asyncDispose](): Promise<void>;
 ```
 
 Stop the refresh failsafe and terminate every open observer. Safe to call more than once. After it resolves the store is inert: nothing dispatches, nothing is
@@ -30,9 +30,7 @@ notified, and a later observation completes immediately rather than registering.
 
 #### Implementation of
 
-```ts
-AsyncDisposable.[asyncDispose]
-```
+`AsyncDisposable.[asyncDispose]`
 
 ***
 
@@ -53,14 +51,14 @@ unregisters the observer. An already-aborted signal yields nothing, and so does 
 
 | Type Parameter | Description |
 | ------ | ------ |
-| `T` | The selector's output type. |
+| <a id="type-parameter-t"></a> `T` | The selector's output type. |
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `selector` | (`state`) => `T` | A pure function from state to the value of interest. Use the memoized selectors in `state/selectors.ts` so unchanged collections compare equal. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns

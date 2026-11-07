@@ -32,7 +32,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The visitor's identifier. |
 | `plates` | readonly `string`[] | The plate numbers to register. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -60,7 +60,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The visitor's identifier. |
 | `opts` | [`AccessOfficialVisitorNfcCardAssign`](AccessOfficialVisitorNfcCardAssign.md) | The card's token, and whether to take it from its current holder. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -88,7 +88,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The visitor's identifier. |
 | `pinCode` | `string` | The code, minted through the credentials domain. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -113,7 +113,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The visitor's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -136,7 +136,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `opts` | [`AccessOfficialVisitorCreate`](AccessOfficialVisitorCreate.md) | The visitor to invite. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -168,8 +168,8 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The visitor's identifier. |
-| `opts` | [`AccessOfficialVisitorDeleteOptions`](AccessOfficialVisitorDeleteOptions.md) | Whether to remove the record rather than cancel the visit. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialVisitorDeleteOptions`](AccessOfficialVisitorDeleteOptions.md) | Whether to remove the record rather than cancel the visit. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -192,7 +192,7 @@ Live-verified.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The visitor's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -216,8 +216,8 @@ Live-verified.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialVisitorListOptions`](AccessOfficialVisitorListOptions.md) | The page to fetch, the status to narrow to, and the expansions to request. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialVisitorListOptions`](AccessOfficialVisitorListOptions.md) | The page to fetch, the status to narrow to, and the expansions to request. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -242,8 +242,8 @@ Composed over [OfficialVisitors.fetchAll](#fetchall); the endpoint is live-verif
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`AccessOfficialVisitorListOptions`](AccessOfficialVisitorListOptions.md) | The status to narrow to, the expansions to request, and the page size to walk the listing in. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `opts?` | [`AccessOfficialVisitorListOptions`](AccessOfficialVisitorListOptions.md) | The status to narrow to, the expansions to request, and the page size to walk the listing in. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -274,7 +274,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `visitorId` | `string` | The visitor's identifier. |
 | `licensePlateId` | `string` | The plate's identifier, from the visitor's own record. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -305,7 +305,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The visitor's identifier. |
 | `token` | `string` | The card's token. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -328,7 +328,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The visitor's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -351,7 +351,7 @@ Documentation-derived.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `id` | `string` | The visitor's identifier. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 
@@ -379,7 +379,7 @@ Documentation-derived.
 | ------ | ------ | ------ |
 | `id` | `string` | The visitor's identifier. |
 | `opts` | [`AccessOfficialVisitorUpdate`](AccessOfficialVisitorUpdate.md) | The members to change; anything omitted is left as it stands. |
-| `call` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
+| `call?` | [`AccessOfficialCallOptions`](AccessOfficialCallOptions.md) | The per-call options - an optional abort signal. |
 
 #### Returns
 

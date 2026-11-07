@@ -10,9 +10,9 @@
 type AccessDoorExtrasConfigInterface = {
   door_thumbnail?: string;
   door_thumbnail_last_update?: number;
-  uah-input_state_dps?: string;
-  uah-wiring_state_dps-neg?: string;
-  uah-wiring_state_dps-pos?: string;
+  "uah-input_state_dps"?: string;
+  "uah-wiring_state_dps-neg"?: string;
+  "uah-wiring_state_dps-pos"?: string;
 };
 ```
 

@@ -78,9 +78,7 @@ The current configuration.
 
 #### Inherited from
 
-```ts
-Projection.config
-```
+`Projection.config`
 
 ***
 
@@ -216,7 +214,7 @@ it. Pair it with the synchronous getters: those answer "what is it now", this an
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -227,9 +225,7 @@ An async iterable of this projection, yielding once per change.
 
 #### Inherited from
 
-```ts
-Projection.observe
-```
+`Projection.observe`
 
 ***
 
@@ -257,9 +253,7 @@ The current configuration, or `undefined` when the record is not in the controll
 
 #### Inherited from
 
-```ts
-Projection.peek
-```
+`Projection.peek`
 
 ***
 
@@ -279,7 +273,7 @@ non-2xx classifies and throws, and a 2xx whose envelope reports anything other t
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -322,7 +316,7 @@ hardware, as [isCamera](../functions/isCamera.md) answers it, takes its rows on 
 | ------ | ------ | ------ |
 | `method` | `"face"` \| `"mobile"` \| `"nfc"` \| `"pin"` \| `"qr"` \| `"touchPass"` \| `"wave"` | The access method, by the library's own name for it. |
 | `enabled` | `boolean` | `true` to switch the method on, `false` to switch it off. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -358,7 +352,7 @@ classifies and throws, and a 2xx is the echoed record.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `payload` | [`AccessDeviceConfigPayload`](../type-aliases/AccessDeviceConfigPayload.md) | The configuration to apply. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns

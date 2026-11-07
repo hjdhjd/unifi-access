@@ -20,7 +20,7 @@ A semi-complete description of the UniFi Access controller JSON.
 | ------ | ------ |
 | <a id="adopted_by_ucs"></a> `adopted_by_ucs` | `boolean` |
 | <a id="adopted_by_uid"></a> `adopted_by_uid` | `boolean` |
-| <a id="agent_info"></a> `agent_info` | \{ `admin_portal`: `Nullable`\<`string`\>; `company_id`: `string`; `company_logo`: `string`; `company_name`: `string`; `configured`: `boolean`; `controller_id`: `string`; `current_admin_portal`: `Nullable`\<`string`\>; `endpoints`: \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `core-login`: `string`; \}; `host_device_id`: `string`; `is_access_kua`: `boolean`; `is_install`: `boolean`; `is_kua`: `boolean`; `is_migrating`: `boolean`; `is_running`: `boolean`; `is_setup`: `boolean`; `is_workspace_consistent`: `boolean`; `mqtt_connected`: `boolean`; `site_info`: `Nullable`\<`string`\>; `software_version`: `string`; `token_valid`: `boolean`; \} |
+| <a id="agent_info"></a> `agent_info` | \{ `admin_portal`: `Nullable`\<`string`\>; `company_id`: `string`; `company_logo`: `string`; `company_name`: `string`; `configured`: `boolean`; `controller_id`: `string`; `current_admin_portal`: `Nullable`\<`string`\>; `endpoints`: \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `"core-login"`: `string`; \}; `host_device_id`: `string`; `is_access_kua`: `boolean`; `is_install`: `boolean`; `is_kua`: `boolean`; `is_migrating`: `boolean`; `is_running`: `boolean`; `is_setup`: `boolean`; `is_workspace_consistent`: `boolean`; `mqtt_connected`: `boolean`; `site_info`: `Nullable`\<`string`\>; `software_version`: `string`; `token_valid`: `boolean`; \} |
 | `agent_info.admin_portal` | `Nullable`\<`string`\> |
 | `agent_info.company_id` | `string` |
 | `agent_info.company_logo` | `string` |
@@ -28,7 +28,7 @@ A semi-complete description of the UniFi Access controller JSON.
 | `agent_info.configured` | `boolean` |
 | `agent_info.controller_id` | `string` |
 | `agent_info.current_admin_portal` | `Nullable`\<`string`\> |
-| `agent_info.endpoints` | \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `core-login`: `string`; \} |
+| `agent_info.endpoints` | \{ `admin`: `string`; `api`: `string`; `cell_name`: `string`; `"core-login"`: `string`; \} |
 | `agent_info.endpoints.admin` | `string` |
 | `agent_info.endpoints.api` | `string` |
 | `agent_info.endpoints.cell_name` | `string` |

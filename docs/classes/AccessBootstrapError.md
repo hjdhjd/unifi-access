@@ -40,9 +40,7 @@ new AccessBootstrapError(message, options): AccessBootstrapError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`
 
 ## Properties
 

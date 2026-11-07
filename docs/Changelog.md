@@ -1,6 +1,24 @@
 # Changelog
 
-All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
+All notable changes to this project will be documented in this file.
+
+## 2.1.0 (2026-11-06)
+  * New feature: access-method switching. `device.setAccessMethod()` turns face, mobile, NFC, PIN, QR, Touch Pass, or wave unlock on or off over either API, `device.accessMethodStates` reads them back, and a change the controller quietly declines raises `AccessDeclinedError`.
+  * New feature: `client.connection.isLost` reports whether the connection is currently lost.
+  * New feature: port bindings carry each port's relay and door-position sensor keys as `relayKey` and `dpsKey`.
+  * New feature: `isIdentityRefusal`, `isSignInRefusal`, `isControllerRefusal`, and `controllerReadinessOf` tell a refused credential, a rate limit, or a controller that isn't ready yet apart from an unreachable one, by the same rules the library's own recovery uses.
+  * Improvement: a client holding both credentials and a token falls back to its credentials when the controller refuses the token, at connect or on any later command.
+  * Improvement: recovery retries a refused sign-in or a rate limit on a slower schedule to stay clear of UniFi OS's account lockout, and a wrong password now costs one sign-in attempt rather than two.
+  * Improvement: connection faults log at a level that matches whether they need attention - an error for what stays broken, a warning for what heals itself, and nothing for an ordinary teardown.
+  * Improvement: connect timeouts and stalled replies raise `AccessTimeoutError` rather than `AccessNetworkError`.
+  * Fix: IPv6 controller addresses are supported, and an address that cannot be used is refused at connect with the new `AccessConfigurationError`.
+  * Fix: a request in flight during a connection pool reset or shutdown no longer crashes the process on HTTP/2, and a request its caller cancels no longer counts toward the throttle breaker.
+  * Fix: aborting the `connect()` signal after the client is up no longer tears down the realtime channel, and the stall watchdog is unaffected by system clock changes.
+  * Fix: official API refusals answered with a 4xx status raise `AccessApiError` with the controller's own code.
+  * Fix: realtime device and location updates no longer flip a device's name, version fields, and uplink back and forth against the topology...renames now land on the next refresh.
+  * Fix: `wallClock` delays longer than about 24.8 days fire on time.
+  * Fix: `--scrub` covers IPv6 addresses and object keys, and `ufa`'s hub and reader filters match every model.
+  * Housekeeping.
 
 ## 2.0.1 (2026-09-22)
   * Fix: a floor sent without a doors key, as UniFi Access 4.3.12 does for a floor with no doors, no longer fails the connect.

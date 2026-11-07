@@ -41,9 +41,7 @@ new AccessTimeoutError(message, options): AccessTimeoutError;
 
 #### Overrides
 
-```ts
-RecoverableError.constructor
-```
+`RecoverableError.constructor`
 
 ## Properties
 

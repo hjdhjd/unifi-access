@@ -15,7 +15,7 @@ paginated endpoint from an unpaginated one by what it received, and nothing here
 
 | Type Parameter | Description |
 | ------ | ------ |
-| `T` | The payload shape the calling endpoint documents. |
+| <a id="type-parameter-t"></a> `T` | The payload shape the calling endpoint documents. |
 
 ## Properties
 

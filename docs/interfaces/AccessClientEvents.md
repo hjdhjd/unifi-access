@@ -19,5 +19,5 @@ the library does not model and the payload fields the translation drops. It is n
 
 | Property | Type |
 | ------ | ------ |
-| <a id="packet"></a> `packet` | \[[`AccessWireEvent`](../type-aliases/AccessWireEvent.md)\] |
-| <a id="rawpacket"></a> `rawPacket` | \[[`AccessEventPacketInterface`](AccessEventPacketInterface.md)\] |
+| <a id="packet"></a> `packet` | \[`event`: [`AccessWireEvent`](../type-aliases/AccessWireEvent.md)\] |
+| <a id="rawpacket"></a> `rawPacket` | \[`packet`: [`AccessEventPacketInterface`](AccessEventPacketInterface.md)\] |

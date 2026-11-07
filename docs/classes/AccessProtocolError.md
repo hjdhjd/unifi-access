@@ -36,6 +36,4 @@ new AccessProtocolError(message, options?): AccessProtocolError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`

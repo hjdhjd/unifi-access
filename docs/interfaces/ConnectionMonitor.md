@@ -101,7 +101,7 @@ The current connection state, derived live from the recovery phase and the trans
 ### \[asyncDispose\]()
 
 ```ts
-asyncDispose: Promise<void>;
+[asyncDispose](): Promise<void>;
 ```
 
 Dispose the monitor: end the uptime-observation loop and any recovery wait, release the initial handshake, detach the throttle subscriptions, and tear the
@@ -126,7 +126,7 @@ on the caller's own abort.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -149,7 +149,7 @@ Subscribe to a connection event. Returns a `Disposable`; prefer `using sub = con
 
 | Type Parameter |
 | ------ |
-| `K` *extends* keyof [`ConnectionEvents`](ConnectionEvents.md) |
+| <a id="type-parameter-k"></a> `K` *extends* keyof [`ConnectionEvents`](ConnectionEvents.md) |
 
 #### Parameters
 
@@ -178,14 +178,14 @@ Wait for the next emission of a connection event.
 
 | Type Parameter |
 | ------ |
-| `K` *extends* keyof [`ConnectionEvents`](ConnectionEvents.md) |
+| <a id="type-parameter-k-1"></a> `K` *extends* keyof [`ConnectionEvents`](ConnectionEvents.md) |
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `event` | `K` | The event to await. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -228,14 +228,14 @@ Stream every subsequent emission of a connection event until the signal aborts.
 
 | Type Parameter |
 | ------ |
-| `K` *extends* keyof [`ConnectionEvents`](ConnectionEvents.md) |
+| <a id="type-parameter-k-2"></a> `K` *extends* keyof [`ConnectionEvents`](ConnectionEvents.md) |
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `event` | `K` | The event to stream. |
-| `opts` | [`StreamOptions`](StreamOptions.md) | Stream options, including the abort signal. |
+| `opts?` | [`StreamOptions`](StreamOptions.md) | Stream options, including the abort signal. |
 
 #### Returns
 
@@ -258,7 +258,7 @@ exposed so a consumer can ask the question itself.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns

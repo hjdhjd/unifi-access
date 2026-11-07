@@ -16,8 +16,8 @@ the action to someone, which it does not for a doorbell press or a sensor transi
 
 | Type Parameter | Description |
 | ------ | ------ |
-| `TEvent` *extends* `string` | The event name, which is what tells the members of [AccessWebhookEvent](../type-aliases/AccessWebhookEvent.md) apart. |
-| `TObject` | The event-specific payload. |
+| <a id="type-parameter-tevent"></a> `TEvent` *extends* `string` | The event name, which is what tells the members of [AccessWebhookEvent](../type-aliases/AccessWebhookEvent.md) apart. |
+| <a id="type-parameter-tobject"></a> `TObject` | The event-specific payload. |
 
 ## Properties
 
