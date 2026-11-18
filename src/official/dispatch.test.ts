@@ -6,17 +6,20 @@
  *
  * Everything runs against an undici MockAgent through the real transport, so the request travels the same path a live official call would, without a controller.
  */
-import { AccessApiError, AccessAuthorizationError, AccessProtocolError, AccessRequestError } from "../errors.ts";
+import { AccessApiError, AccessAuthError, AccessAuthorizationError, AccessProtocolError, AccessRequestError, isIdentityRefusal,
+  isPrivilegeRefusal } from "../errors.ts";
 import { HOST, RecordingTransport, captureRequest, officialPath, parseMultipart } from "./domain.helpers.ts";
 import { TestClock, expectAt } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import { officialEndpoint, officialHost } from "./endpoints.ts";
 import { ACCESS_API_RETRY_PROFILE } from "../settings.ts";
 import type { AccessKnownJsonValue } from "../types/index.ts";
+import type { IdentityVerdict } from "../transport/http.ts";
 import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
 import { OfficialDispatch } from "./dispatch.ts";
 import { Transport } from "../transport/http.ts";
+import { accessOfficialTokenRefusalFixture } from "./refusals.fixtures.ts";
 import assert from "node:assert/strict";
 import { createHttpsLoopback } from "../transport/loopback.helpers.ts";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
@@ -33,6 +36,21 @@ function officialRig(): { dispatch: OfficialDispatch; pool: Interceptable } {
 
   return { dispatch: new OfficialDispatch({ transport }), pool };
 }
+
+/* Build a dispatch over a mocked official controller reached with a token, whose 401 hook answers the verdict a row names. The hook stands where the token session's
+ * door listing stands, so a row asserts what each arm throws for that verdict without a listing of its own to intercept.
+ */
+function tokenRig(verdict: IdentityVerdict): { dispatch: OfficialDispatch; pool: Interceptable } {
+
+  const { pool, transport } = makeMockTransport({ host: officialHost(HOST), identity: "token", onUnauthorized: async () => verdict });
+
+  return { dispatch: new OfficialDispatch({ transport }), pool };
+}
+
+// The transport's own sentences for a token's privilege refusal and for a refused token, which an identity-leg error keeps when it gains the refusal as its cause.
+const TOKEN_FORBIDDEN = "The configured API token lacks the permissions this operation requires on the UniFi Access controller.";
+const TOKEN_REFUSED = "The UniFi Access controller refused the configured API token. Please check that the token is valid, has not been revoked, and is allowed to " +
+  "view doors, which this library requires of every token.";
 
 /* The sentence the dispatch composes when a refusal arrives carrying no message of its own. It is spelled once here so the tests that assert it - one per dialect -
  * measure sameness against a single literal rather than each asserting that some message or other was produced.
@@ -394,15 +412,92 @@ describe("OfficialDispatch", () => {
       /* This is the regression net for the boundary between the two error vocabularies. The official API's codes describe requests the controller understood and
        * refused; an HTTP status describes one it did not get to answer, and the library already has one place that turns a status into a typed error. A dispatch
        * that classified statuses itself would be a second such place, disagreeing with the first the day either changed. The 403 carries a refusal envelope, and
-       * still keeps the identity leg's own error, because the dispatch reads an envelope only beside a request error and never in place of a refused identity.
+       * still keeps the identity leg's own error, the refusal carried as its cause, because the dispatch never reads an envelope in place of an identity-leg error.
        */
       const { dispatch, pool } = officialRig();
 
       pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(403, { "code": "CODE_UNAUTHORIZED", "msg": "You are not allowed." });
       pool.intercept({ method: "GET", path: officialPath("/users") }).reply(500, "upstream failure");
 
-      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), AccessAuthorizationError);
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), (error: unknown) => {
+
+        assert.ok(error instanceof AccessAuthorizationError, "the 403 keeps the identity leg's own error");
+        assert.equal(error.statusCode, 403);
+        assert.ok(error.cause instanceof AccessApiError, "and carries the envelope's refusal as its cause");
+        assert.equal(error.cause.code, "CODE_UNAUTHORIZED");
+        assert.equal(error.cause.message, "You are not allowed.");
+
+        return true;
+      });
       await assert.rejects(dispatch.request(officialEndpoint(HOST, "/users")), AccessRequestError);
+    });
+
+    test("a token 401 carrying the captured refusal throws the class its verdict settles on every arm, the controller's refusal its cause", async () => {
+
+      /* The controller answers a refused token and a token missing a permission with this same status and body, so the class each arm throws is the door listing's
+       * verdict rather than anything the body says, and the refusal the body states travels as the cause. The copy keeps the transport's class, sentence, identity
+       * and status, and its cause is read with no cause of its own, so the chain ends at the controller's refusal rather than leading back to the error it stands for.
+       */
+      const rows = [
+
+        { message: TOKEN_FORBIDDEN, name: "AccessAuthorizationError", reading: isPrivilegeRefusal, verdict: "authenticated" },
+        { message: TOKEN_REFUSED, name: "AccessAuthError", reading: isIdentityRefusal, verdict: "refused" }
+      ] as const;
+
+      for(const row of rows) {
+
+        const { dispatch, pool } = tokenRig(row.verdict);
+        const arms = [
+
+          { call: async (): Promise<unknown> => dispatch.request(officialEndpoint(HOST, "/doors")), name: "request" },
+          { call: async (): Promise<unknown> => dispatch.command(officialEndpoint(HOST, "/doors/abc/unlock"), { method: "PUT" }), name: "command" },
+          { call: async (): Promise<unknown> => dispatch.download(officialEndpoint(HOST, "/system/logs/resource/abc")), name: "download" }
+        ];
+
+        pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(accessOfficialTokenRefusalFixture.statusCode, accessOfficialTokenRefusalFixture.body);
+        pool.intercept({ method: "PUT", path: officialPath("/doors/abc/unlock") })
+          .reply(accessOfficialTokenRefusalFixture.statusCode, accessOfficialTokenRefusalFixture.body);
+        pool.intercept({ method: "GET", path: officialPath("/system/logs/resource/abc") })
+          .reply(accessOfficialTokenRefusalFixture.statusCode, accessOfficialTokenRefusalFixture.body);
+
+        for(const { call, name } of arms) {
+
+          const label = row.verdict + " on the " + name + " arm";
+
+          // eslint-disable-next-line no-await-in-loop
+          await assert.rejects(call(), (error: unknown) => {
+
+            assert.ok((error instanceof AccessAuthError) || (error instanceof AccessAuthorizationError), label + " throws an identity-leg error");
+            assert.equal(error.name, row.name, label + " throws the class its verdict settles");
+            assert.equal(error.message, row.message, label + " keeps the transport's sentence");
+            assert.equal(error.identity, "token", label + " names the token");
+            assert.equal(error.statusCode, 401, label + " keeps the status the controller answered with");
+            assert.equal(row.reading(error), true, label + " reads as the refusal its class reports");
+            assert.ok(error.cause instanceof AccessApiError, label + " carries the controller's refusal as its cause");
+            assert.equal(error.cause.code, "CODE_UNAUTHORIZED");
+            assert.equal(error.cause.message, "You do not have permission to perform this action.");
+            assert.equal(error.cause.cause, undefined, label + " ends the chain at the controller's refusal");
+
+            return true;
+          });
+        }
+      }
+    });
+
+    test("a 401 whose body states no refusal keeps its identity error with no cause", async () => {
+
+      const { dispatch, pool } = tokenRig("refused");
+
+      pool.intercept({ method: "GET", path: officialPath("/doors") }).reply(401, "");
+
+      await assert.rejects(dispatch.request(officialEndpoint(HOST, "/doors")), (error: unknown) => {
+
+        assert.ok(error instanceof AccessAuthError);
+        assert.equal(error.message, TOKEN_REFUSED);
+        assert.equal(error.cause, undefined, "an empty body says nothing in the controller's vocabulary, so nothing is carried");
+
+        return true;
+      });
     });
 
     test("a 4xx carrying a refusal envelope throws the controller's own refusal on every arm, the status error its cause", async () => {

@@ -26,7 +26,8 @@ import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
 import { refuseRefresh } from "../testing.helpers.ts";
 
 // The transport's own sentence for each refusal of the token, which the closure's warning carries as it stands.
-const TOKEN_REJECTED = "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.";
+const TOKEN_REFUSED = "The UniFi Access controller refused the configured API token. Please check that the token is valid, has not been revoked, and is allowed to " +
+  "view doors, which this library requires of every token.";
 const TOKEN_FORBIDDEN = "The configured API token lacks the permissions this operation requires on the UniFi Access controller.";
 
 // The controller's own sentence for a refusal it answers inside a successful response. The closure's warning carries it as it stands, as it does the transport's.
@@ -697,7 +698,7 @@ describe("the session revocation latch", () => {
 
       attempts++;
 
-      return new AccessAuthError(TOKEN_REJECTED, { identity: "token", statusCode: 401 });
+      return new AccessAuthError(TOKEN_REFUSED, { identity: "token", statusCode: 401 });
     } });
 
     await service.routedUnlock({ deviceId: UAH_ID, direct: direct(calls, "first"), doorId: DOOR_HUB });
@@ -707,7 +708,7 @@ describe("the session revocation latch", () => {
     assert.deepEqual(calls.direct, [ "first", "second" ], "each unlock completed on the direct path");
     assert.deepEqual(warnings(log).map((entry) => entry.params), [[{ identity: "token", statusCode: 401 }]],
       "the closure is reported once, however many commands follow it");
-    assert.ok(loggedAt(log.entries, "warn", "rejected the configured API token"), "the report carries the transport's own sentence, which sends the reader to the token");
+    assert.ok(loggedAt(log.entries, "warn", "refused the configured API token"), "the report carries the transport's own sentence, which sends the reader to the token");
     assert.ok(loggedAt(log.entries, "warn", "own endpoints"), "and tells the reader the commands take the direct path");
   });
 
@@ -795,7 +796,7 @@ describe("the session revocation latch", () => {
     /* Routed commands issued together each take the official path before any refusal arrives, so each refusal reaches the closure. The latch records that the
      * closure was reported, so the first refusal to arrive is the one that speaks and the rest close nothing new.
      */
-    const refusals = [ { error: new AccessAuthError(TOKEN_REJECTED, { identity: "token", statusCode: 401 }), label: "a rejected token" },
+    const refusals = [ { error: new AccessAuthError(TOKEN_REFUSED, { identity: "token", statusCode: 401 }), label: "a rejected token" },
       { error: new AccessApiError("not supported", { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED" }), label: "the Identity Enterprise code" } ];
 
     for(const refusal of refusals) {
@@ -1505,7 +1506,7 @@ describe("the access-method write", () => {
     // A rejected token is refused whatever it asks, so the write's refusal speaks for every routed command after it.
     const calls = newCalls();
     const log = capturingLog();
-    const { service } = makeService({ calls, log, refuse: () => new AccessAuthError(TOKEN_REJECTED, { identity: "token", statusCode: 401 }) });
+    const { service } = makeService({ calls, log, refuse: () => new AccessAuthError(TOKEN_REFUSED, { identity: "token", statusCode: 401 }) });
 
     await write(service, calls);
 
@@ -1555,7 +1556,7 @@ describe("the access-method write", () => {
 
         settingsAttempts++;
 
-        return new AccessAuthError(TOKEN_REJECTED, { identity: "token", statusCode: 401 });
+        return new AccessAuthError(TOKEN_REFUSED, { identity: "token", statusCode: 401 });
       }
 
       return undefined;
@@ -1618,7 +1619,7 @@ describe("the access-method write", () => {
 
       settingsAttempts++;
 
-      return new AccessAuthError(TOKEN_REJECTED, { identity: "token", statusCode: 401 });
+      return new AccessAuthError(TOKEN_REFUSED, { identity: "token", statusCode: 401 });
     });
 
     // The unlock is held until the write's rejected token has closed the path, and only then answers with its own refusal.

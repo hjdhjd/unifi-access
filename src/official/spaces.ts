@@ -3,8 +3,8 @@
  * spaces.ts: The official API's spaces domain - the door topology, door groups, and the unlock, lock-rule, and emergency controls on the doors themselves.
  */
 import type { AccessOfficialCallOptions, OfficialDispatch, OfficialDomainOptions } from "./dispatch.ts";
+import { officialDoorListingUrl, officialEndpoint } from "./endpoints.ts";
 import type { AccessKnownJsonValue } from "../types/index.ts";
-import { officialEndpoint } from "./endpoints.ts";
 
 /**
  * A door within the topology, as the floor above it lists it.
@@ -354,7 +354,7 @@ export class OfficialSpaces {
    */
   async fetchAll(call: AccessOfficialCallOptions = {}): Promise<AccessOfficialDoor[]> {
 
-    return (await this.#dispatch.request<AccessOfficialDoor[]>(officialEndpoint(this.#host, "/doors"), {}, call)).data;
+    return (await this.#dispatch.request<AccessOfficialDoor[]>(officialDoorListingUrl(this.#host), {}, call)).data;
   }
 
   /**

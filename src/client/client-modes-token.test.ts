@@ -3,8 +3,8 @@
  * client-modes-token.test.ts: Tests for what a client that connects with a token alone can reach - which endpoints it touches, what it seeds door state from,
  * which of its accessors answer, and what it tears down.
  */
-import { DEVICES_PATH, DOORS_PATH, HOST, connectCapturing, connectCapturingWithDispatch, devicesBody, doorsBody, identityEnterpriseBody, interceptOfficialPass,
-  mockController, officialDoor } from "./client-modes.helpers.ts";
+import { DEVICES_PATH, DOORS_PATH, HOST, connectCapturing, connectCapturingWithDispatch, countDoorReads, devicesBody, doorsBody, identityEnterpriseBody,
+  interceptOfficialPass, mockController, officialDoor } from "./client-modes.helpers.ts";
 import { DOOR_HUB, DOOR_MINI, DOOR_ULTRA, EAH_ID, MINI_ID, READER_ID, UAH_ID, ULTRA_ID } from "../protocol/capture.helpers.ts";
 import { TestClock, capturingLog, logCount, present, settle, settleUntil } from "homebridge-plugin-utils/testing";
 import { accessOfficialDevicesFixture, accessOfficialDoorsFixture } from "../official/devices.fixtures.ts";
@@ -14,6 +14,7 @@ import { AccessCapabilityError } from "../errors.ts";
 import type { AccessHttpRequestStartPayload } from "../diagnostics.ts";
 import type { AccessOfficialDevice } from "../official/devices.ts";
 import type { Interceptable } from "undici";
+import { accessOfficialTokenRefusalFixture } from "../official/refusals.fixtures.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { selectHubs } from "../state/selectors.ts";
@@ -334,11 +335,17 @@ describe("a token-only client", () => {
   test("connects with an empty inventory when the token is refused the device listing, saying so once", async () => {
 
     /* A token is scoped per endpoint, so one that reads doors may still be refused devices. That is a smaller client rather than a failed connection, and every spelling
-     * this library reads as a privilege refusal folds the same way. The cases below are a refused status and the envelope's own code.
+     * this library reads as a privilege refusal folds the same way. The cases below are a refused status, the 401 the controller answers a missing permission with,
+     * which the token session settles by a second door listing the token can still read, and the envelope's own code.
      */
     const refusals = [
-      { label: "a refused status", reply: (target: Interceptable): void => void target.intercept({ method: "GET", path: DEVICES_PATH }).reply(403, "") },
-      { label: "the envelope's own code", reply: (target: Interceptable): void => void target.intercept({ method: "GET", path: DEVICES_PATH })
+      { doorReads: 1, label: "a refused status", reply: (target: Interceptable): void => void target.intercept({ method: "GET", path: DEVICES_PATH }).reply(403, "") },
+      { doorReads: 2, label: "a 401 the door listing settles as a missing permission", reply: (target: Interceptable): void => {
+
+        target.intercept({ method: "GET", path: DEVICES_PATH }).reply(accessOfficialTokenRefusalFixture.statusCode, accessOfficialTokenRefusalFixture.body);
+        target.intercept({ method: "GET", path: DOORS_PATH }).reply(200, doorsBody(accessOfficialDoorsFixture));
+      } },
+      { doorReads: 1, label: "the envelope's own code", reply: (target: Interceptable): void => void target.intercept({ method: "GET", path: DEVICES_PATH })
         .reply(200, JSON.stringify({ code: "CODE_OPERATION_FORBIDDEN", msg: "insufficient permission" })) }
     ];
 
@@ -346,6 +353,8 @@ describe("a token-only client", () => {
 
       const { agent, official } = mockController();
       const log = capturingLog();
+
+      using doorReads = countDoorReads();
 
       official.intercept({ method: "GET", path: DOORS_PATH }).reply(200, doorsBody(accessOfficialDoorsFixture));
       refusal.reply(official);
@@ -357,6 +366,8 @@ describe("a token-only client", () => {
       assert.equal(client.state.snapshot().doorStates.size, 3, "while the doors the token could read are still seeded");
       assert.equal(client.state.snapshot().doors.size, 3);
       assert.equal(logCount(log.entries, "warn", "refused this token the device listing"), 1, refusal.label + " is reported exactly once");
+      assert.equal(doorReads.count(), refusal.doorReads, refusal.label + " reads the door listing " + String(refusal.doorReads) + " time(s)");
+      agent.assertNoPendingInterceptors();
     }
   });
 
@@ -408,24 +419,48 @@ describe("a token-only client", () => {
     await assert.rejects(async () => connectCapturing(agent, { token: "t0ken" }), { code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED", name: "AccessApiError" });
   });
 
-  test("takes a rejected token as terminal, because a token cannot re-authenticate itself", async () => {
+  test("takes a token refused the door listing as fatal, once the listing it is settled by refuses it too", async () => {
 
-    /* A credential session answers a 401 by re-running its handshake; a token has no handshake to re-run, so its unauthorized hook declines and the status
-     * classifies terminally. That is the honest outcome - a rejected token stays rejected until a new one is issued - and it means connect fails rather than
-     * retrying against a controller that has already refused.
+    /* A credential session answers a 401 by re-running its handshake; a token has no handshake to re-run, so its 401 hook asks the door listing instead, and a
+     * listing refused as well is the token itself refused. The settling listing is sent with the hook disabled, so it is the one extra door read, and its own 401
+     * comes back as the answer rather than asking again. Connect then fails rather than retrying against a controller that has already refused.
      */
     const { agent, official } = mockController();
 
-    official.intercept({ method: "GET", path: DOORS_PATH }).reply(401, "");
+    using doorReads = countDoorReads();
+
+    official.intercept({ method: "GET", path: DOORS_PATH }).reply(401, "").times(2);
 
     await assert.rejects(async () => connectCapturing(agent, { token: "t0ken" }), {
 
       identity: "token",
 
       // The refusal reaches the caller through the whole official stack, so this asserts the exact sentence a consumer rendering the message verbatim shows a user.
-      message: "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.",
-      name: "AccessAuthError"
+      message: "The UniFi Access controller refused the configured API token. Please check that the token is valid, has not been revoked, and is allowed to view " +
+        "doors, which this library requires of every token.",
+      name: "AccessAuthError",
+      statusCode: 401
     });
+
+    assert.equal(doorReads.count(), 2, "the refused read, and the one listing that settled it");
+  });
+
+  test("takes the reachability probe's own 401 as the token refused, sending no listing to settle it", async () => {
+
+    // The probe goes out through the same send the token session settles a 401 by, with the hook disabled, so its 401 is the refusal itself and nothing re-asks.
+    const { agent, official } = mockController();
+
+    interceptOfficialPass(official);
+
+    await using client = (await connectCapturing(agent, { token: "t0ken" })).client;
+
+    using doorReads = countDoorReads();
+
+    official.intercept({ method: "GET", path: DOORS_PATH }).reply(401, "");
+
+    await assert.rejects(client.connection.verify(), { identity: "token", name: "AccessAuthError", statusCode: 401 });
+
+    assert.equal(doorReads.count(), 1, "the probe alone reached the door listing");
   });
 
   test("propagates a failure that is not the capability signal as itself", async () => {

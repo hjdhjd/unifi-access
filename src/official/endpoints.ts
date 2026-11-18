@@ -118,6 +118,23 @@ export function officialEndpoint(host: string, path: string, query?: AccessOffic
 }
 
 /**
+ * The door listing's address, `GET /doors`.
+ *
+ * It is named because more than one request addresses it for more than one reason: the spaces domain's listing, the read the token session settles a refused
+ * request by, and the reachability probe a token-only client recovers through. One builder keeps them all on the same endpoint.
+ *
+ * @param host - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed, with the official API's own port in place of any it carries.
+ *
+ * @returns The fully-qualified door listing URL.
+ *
+ * @category Official
+ */
+export function officialDoorListingUrl(host: string): string {
+
+  return officialEndpoint(host, "/doors");
+}
+
+/**
  * The wire-spelled pagination query for a paginated endpoint, from the caller's camelCase options.
  *
  * Paginated methods spread the result into their own query record, so the `pageNum`/`pageSize` to `page_num`/`page_size` rename is written once here instead of at

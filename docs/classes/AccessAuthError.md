@@ -12,6 +12,11 @@ one, so a caller reporting the failure can point at the right one. At connect an
 token into credentials-only operation with a warning, so a consumer meets this error for a token only from a token-only client, from a client held to the official
 API, or from the official facade called directly.
 
+The controller answers a token it refuses and a token missing the permission an endpoint requires with the same 401, so the library asks it for the door listing,
+which every token must be allowed, to tell the two apart. A token refused that listing as well is refused here, whether the controller rejects it outright or it
+may not view doors, while one the listing still serves is refused a permission and reported as [AccessAuthorizationError](AccessAuthorizationError.md). Where the official API's
+refusal carries its result envelope, the error carries that refusal as an [AccessApiError](AccessApiError.md) in its `cause`.
+
 ## Extends
 
 - [`FatalError`](FatalError.md)

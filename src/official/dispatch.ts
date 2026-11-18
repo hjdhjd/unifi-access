@@ -2,7 +2,7 @@
  *
  * dispatch.ts: The official API's single request path - the result envelope read through the protocol tier, the outbound encoding, and the page report carried through.
  */
-import { AccessApiError, AccessProtocolError, AccessRequestError, controllerReadinessOf } from "../errors.ts";
+import { AccessApiError, AccessAuthError, AccessAuthorizationError, AccessProtocolError, AccessRequestError, controllerReadinessOf } from "../errors.ts";
 import type { AccessResponse, RequestOptions, Transport } from "../transport/http.ts";
 import { isPlainObject } from "../protocol/plain-object.ts";
 import { readResultEnvelope } from "../protocol/envelope.ts";
@@ -128,10 +128,11 @@ export interface OfficialDomainOptions {
  *
  * The outcomes, and where each is decided:
  *
- * - A non-2xx classifies through the transport's own status mapping, so an official 401 or 403 raises the same typed error an Access-application request would,
- *   and there is one HTTP-status vocabulary in the library rather than two. The one reading beside it is a refusal the controller answered at a 4xx in its own
- *   vocabulary as well: a 4xx other than 401, 403 and 429 whose body is a refusal envelope throws {@link AccessApiError}, the status error its cause, because its
- *   code is what a caller branches on.
+ * - A non-2xx classifies through the transport's own status mapping, so there is one HTTP-status vocabulary in the library rather than two: a 401 raises the
+ *   identity error, or the privilege error where the token session's door listing found the token holding, and a 403 the privilege error. The readings beside it
+ *   are a refusal the controller answered at a 4xx in its own vocabulary as well: a 401 or a 403 whose body is a refusal envelope keeps its identity-leg error with
+ *   that refusal, an {@link AccessApiError}, as its cause, and a 4xx other than 401, 403 and 429 whose body is one throws the {@link AccessApiError} itself, the
+ *   status error its cause, because its code is what a caller branches on.
  * - A 2xx whose code is not success throws {@link AccessApiError}, carrying the controller's own code as a typed field and its message as the error's.
  * - A 2xx whose code is success returns the payload, with pagination beside it when the endpoint sent some.
  *
@@ -165,6 +166,7 @@ export class OfficialDispatch {
    * @returns The endpoint's payload, and its pagination when it paginates.
    *
    * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, at a 2xx or at a 4xx other than 401, 403 and 429,
+   *   {@link AccessAuthError} or {@link AccessAuthorizationError} at a 401 or a 403, carrying the controller's own refusal as its cause when the body states one,
    *   {@link AccessProtocolError} when a 2xx response is not the envelope every official endpoint answers in, or the transport's own typed errors for every other
    *   non-2xx and for every transport-level failure.
    */
@@ -201,6 +203,7 @@ export class OfficialDispatch {
    * @param call - The per-call options every domain method forwards, merged into the request options here.
    *
    * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, at a 2xx or at a 4xx other than 401, 403 and 429,
+   *   {@link AccessAuthError} or {@link AccessAuthorizationError} at a 401 or a 403, carrying the controller's own refusal as its cause when the body states one,
    *   {@link AccessProtocolError} when a 2xx response is not the envelope every official endpoint answers in, or the transport's own typed errors for every other
    *   non-2xx and for every transport-level failure.
    */
@@ -226,6 +229,7 @@ export class OfficialDispatch {
    * @returns The response body as raw bytes.
    *
    * @throws {@link AccessApiError} when the controller refuses the request in its own vocabulary, at a 2xx or at a 4xx other than 401, 403 and 429,
+   *   {@link AccessAuthError} or {@link AccessAuthorizationError} at a 401 or a 403, carrying the controller's own refusal as its cause when the body states one,
    *   {@link AccessProtocolError} when a JSON answer arrives where bytes were expected, or the transport's own typed errors for every other non-2xx and for every
    *   transport-level failure.
    */
@@ -355,14 +359,19 @@ async function encodeMultipart(parts: readonly AccessOfficialFormPart[]): Promis
   return { body: await response.bytes(), contentType };
 }
 
-/* The official surface's one reading of a response's status, which every arm makes in place of a bare ensureOk. A 2xx comes back for the arm to read. A 4xx the
- * transport classifies as a request error, which is any but the identity leg's 401 and 403, is read for a refusal envelope first unless it is a controller
- * limiting requests: a refusal the controller answered at such a status in its own vocabulary as well is that refusal, so a caller branching on its code - the
- * routing tier's floor fallback and the CLI's by-id lookup among them - meets it whatever status it came at, with the status error as its cause.
+/* The official surface's one reading of a response's status, which every arm makes in place of a bare ensureOk. A 2xx comes back for the arm to read.
  *
- * Every other non-2xx throws the status error the transport classifies it as. A 401 and a 403 keep their identity-leg errors, which name the leg and its remedy and
- * which the token-only connect folds a refused listing by, and a 429 and every 5xx keep the status error, which is what the readers of a controller limiting
- * requests or not ready yet read, Retry-After included. A 4xx whose body is not a refusal envelope throws its status error as well.
+ * A 401 or a 403 keeps the identity leg's error the transport classifies it as, which names the leg and its remedy and which routing, the connect fold and the
+ * token-only inventory read the class of. A refusal envelope in its body is carried as that error's cause rather than thrown in its place, so the controller's own
+ * code and message stay reachable without a caller that branches on the class meeting anything else. The copy keeps the class, the message, the identity and the
+ * status, and its cause is the envelope's refusal read with no cause of its own, so the chain stops there rather than leading back to the error it replaces.
+ *
+ * A 4xx the transport classifies as a request error is read for a refusal envelope first unless it is a controller limiting requests: a refusal the controller
+ * answered at such a status in its own vocabulary as well is that refusal, so a caller branching on its code - the routing tier's floor fallback and the CLI's
+ * by-id lookup among them - meets it whatever status it came at, with the status error as its cause.
+ *
+ * Every other non-2xx throws the status error the transport classifies it as: a 429 and every 5xx keep the status error, which is what the readers of a controller
+ * limiting requests or not ready yet read, Retry-After included. A 4xx whose body is not a refusal envelope throws its status error as well.
  */
 function ensureAnswered(response: AccessResponse): AccessResponse {
 
@@ -371,24 +380,44 @@ function ensureAnswered(response: AccessResponse): AccessResponse {
     return response.ensureOk();
   } catch(statusError) {
 
+    if((statusError instanceof AccessAuthError) || (statusError instanceof AccessAuthorizationError)) {
+
+      const refusal = envelopeRefusal(response);
+
+      if(refusal !== undefined) {
+
+        const IdentityError = (statusError instanceof AccessAuthError) ? AccessAuthError : AccessAuthorizationError;
+
+        throw new IdentityError(statusError.message, { cause: refusal, identity: statusError.identity, statusCode: statusError.statusCode });
+      }
+    }
+
     if((statusError instanceof AccessRequestError) && (statusError.statusCode >= 400) && (statusError.statusCode <= 499) &&
       (controllerReadinessOf(statusError) !== "limiting")) {
 
-      // A body that does not decode, that is no envelope, or that reports success raises no refusal here, so each falls through to the status error below.
-      try {
-
-        readResultEnvelope(response.json<unknown>(), OFFICIAL_REFUSAL_FALLBACK, statusError);
-      } catch(error) {
-
-        if(error instanceof AccessApiError) {
-
-          throw error;
-        }
-      }
+      throw envelopeRefusal(response, statusError) ?? statusError;
     }
 
     throw statusError;
   }
+}
+
+// The refusal a non-2xx body states in the controller's own vocabulary, carrying the cause it is handed, or undefined when the body does not decode, is no
+// envelope, or reports success, because none of those says anything in that vocabulary.
+function envelopeRefusal(response: AccessResponse, cause?: unknown): AccessApiError | undefined {
+
+  try {
+
+    readResultEnvelope(response.json<unknown>(), OFFICIAL_REFUSAL_FALLBACK, cause);
+  } catch(error) {
+
+    if(error instanceof AccessApiError) {
+
+      return error;
+    }
+  }
+
+  return undefined;
 }
 
 // Read the pagination member, or undefined when the response carried none - or carried something that is not a page report. Every member is required because a

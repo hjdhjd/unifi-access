@@ -96,8 +96,8 @@ export function directPathServes(capabilities: Pick<AccessCapabilities, "mode" |
 }
 
 /* How far a closure of the official path reaches: every command, or the door commands alone. A controller with no official API refuses whatever it is asked, and so does
- * one that rejected the token, so each closes the path to every command, while a refused permission speaks only for the commands that need it, and every door command
- * needs the same one.
+ * one that rejected the token - a token refused the door listing counts as rejected, because every token must be allowed to read it - so each closes the path to every
+ * command, while a refused permission speaks only for the commands that need it, and every door command needs the same one.
  */
 type OfficialPathReach = "door" | "every";
 
@@ -425,12 +425,13 @@ function isDoorCommand(operation: RoutedOfficialOperation): operation is RoutedO
  *
  * **The session revocation.** An Identity Enterprise controller has no official API at all, and reports that as a refusal on the first routed call that reaches it. A
  * controller can also refuse the token on a routed call after accepting it at connect, rejecting it outright or refusing it a permission, and on a client with a direct
- * path to fall back to, each refusal closes the official path as far as it speaks: a rejected token is refused whatever it asks, so it closes the path to every command,
- * and a door command's refused permission is the one every door command needs, so it closes the path to door commands and leaves the access-method write its official
- * write and read-back. A permission refused to an access-method write closes nothing, because that write needs a permission no door command does, so the refusal speaks
- * for the write alone. A client with nowhere else to go keeps the refusal as the error it arrived as, because the token is then the one thing to fix. Once seen, a
- * revocation holds for this client's life - a later refusal that speaks for more widens it, and nothing narrows or lifts it partway through - so it is latched rather
- * than re-probed on every command, and a fresh connect is what re-derives it.
+ * path to fall back to, each refusal closes the official path as far as it speaks: a rejected token - and a token refused the door listing counts as one, because
+ * every token must be allowed to read it - is one this library cannot use whatever it asks, so it closes the path to every command, and a door command's refused
+ * permission is the one every door command needs, so it closes the path to door commands and leaves the access-method write its official write and read-back.
+ * A permission refused to an access-method write closes nothing, because that write needs a permission no door command does, so the refusal speaks for the write
+ * alone. A client with nowhere else to go keeps the refusal as the error it arrived as, because the token is then the one thing to fix. Once seen, a revocation
+ * holds for this client's life - a later refusal that speaks for more widens it, and nothing narrows or lifts it partway through - so it is latched rather than
+ * re-probed on every command, and a fresh connect is what re-derives it.
  *
  * Both verdicts govern ROUTED commands only. A consumer calling the facade directly gets that channel's own typed errors, which is that channel's contract and not
  * something this should reach into.
@@ -765,20 +766,22 @@ export class AccessRoutingService implements AccessRoutingView {
      * is a fact about the controller that every later official call would meet again.
      *
      * Either refusal of the token comes next, and is a verdict learned by trying on the official path: the controller rejecting the token outright, or authenticating it
-     * and refusing it this operation, in whichever spelling it answered. A token is granted its permissions when it is issued and keeps them for its life, so either
-     * refusal is a fact about this client rather than about the moment it asked. The official surface is assembled over the token session at the composition root, so
-     * every refusal it answers is of the token and no identity check is needed. On a client that holds another path, this command takes that path, and so does every
-     * routed command after it that the refusal speaks for. The latch records how far a closure reaches rather than which endpoint a refusal spoke about, because one
-     * field is the single record of the path being closed, where a per-endpoint memo would be another mechanism recording the same verdict. What a dual client gives up
-     * on a closure is what the official API alone can express for the commands it reaches - an attributed unlock, an entry direction, a gate stop, and on a closure of
-     * every command the access-method write's read-back - because the direct path carries every routed command that has a direct expression. A client with nowhere else
-     * to go keeps the refusal as the error it arrived as, which points at the token as the thing to fix, rather than a capability error on every call after it.
+     * and refusing it this operation, in whichever spelling it answered, a 401 the token session has already settled between the two by the door listing. A token is
+     * granted its permissions when it is issued and keeps them for its life, so either refusal is a fact about this client rather than about the moment it asked. The
+     * official surface is assembled over the token session at the composition root, so every refusal it answers is of the token and no identity check is needed. On a
+     * client that holds another path, this command takes that path, and so does every routed command after it that the refusal speaks for. The latch records how far a
+     * closure reaches rather than which endpoint a refusal spoke about, because one field is the single record of the path being closed, where a per-endpoint memo would
+     * be another mechanism recording the same verdict. What a dual client gives up on a closure is what the official API alone can express for the commands it reaches -
+     * an attributed unlock, an entry direction, a gate stop, and on a closure of every command the access-method write's read-back - because the direct path carries
+     * every routed command that has a direct expression. A client with nowhere else to go keeps the refusal as the error it arrived as, which points at the token as the
+     * thing to fix, rather than a capability error on every call after it.
      *
      * A refused permission speaks for the permission the refused call needs, which is what keeps that reading to the door commands. Every door command needs the same
      * one, so a door command's refusal is a verdict on every door command after it, and it closes the path to door commands alone, leaving the access-method write its
      * official write and the read-back only that path takes. An access-method write needs one no door command does, so its refusal says nothing about them: it closes
-     * nothing, and the write reaches its direct half as a command safe to repeat. A rejected token is refused whatever it asks, so it closes the path to every command
-     * whichever command drew it, widening a closure of door commands already in force.
+     * nothing, and the write reaches its direct half as a command safe to repeat. A rejected token - and a token refused the door listing counts as one, because
+     * every token must be allowed to read it - is one this library cannot use whatever it asks, so it closes the path to every command whichever command drew it,
+     * widening a closure of door commands already in force.
      *
      * The firmware floor comes last, and speaks for one command on one device rather than for the path.
      */

@@ -29,12 +29,13 @@ import { AccessAbortedError, AccessApiError, AccessBootstrapError, AccessCapabil
 import type { AccessApiMode, AccessApiOverride, AccessCapabilities } from "./routing.ts";
 import type { AccessBootstrapConfig, AccessControllerConfig, AccessDoorStateEntry, AccessEventPacket, Nullable } from "../types/index.ts";
 import type { AccessConnectionTransitionPayload, AccessStoreDispatchPayload } from "../diagnostics.ts";
+import type { AccessResponse, UnauthorizedVerdict } from "../transport/http.ts";
 import { AccessRoutingService, directPathServes, isOfficialApiAbsent, isTokenRefusal, officialPathClosureSentence } from "./routing.ts";
 import type { AccessTypedEvent, AccessWireEvent } from "../protocol/events.ts";
 import type { ConnectionTransition, ThrottleSource } from "./connection.ts";
 import { EventStream, directNotificationUrl } from "../transport/events-stream.ts";
 import { doorStateEntry, officialDeviceRecord, officialDoorRecord } from "./census.ts";
-import { officialEndpoint, officialHost, officialNotificationUrl } from "../official/endpoints.ts";
+import { officialDoorListingUrl, officialHost, officialNotificationUrl } from "../official/endpoints.ts";
 import { selectController, selectControllerName, selectDoorStates } from "../state/selectors.ts";
 import { ACCESS_API_PATH_PREFIX } from "../settings.ts";
 import type { AccessDevice } from "../devices/device.ts";
@@ -183,6 +184,16 @@ function topologyUrl(host: string): string {
 function controllerUrl(host: string): string {
 
   return "https://" + host + ACCESS_API_PATH_PREFIX + "/access/info";
+}
+
+/* Send the door listing a token's standing is settled by: the read the token session sends to tell a refused token from a missing permission, and the reachability
+ * probe a token-only client recovers through. It is sent with the 401 hook disabled, so its own 401 comes back as the answer rather than re-entering the session -
+ * the session reads that 401 as the token refused, and the probe throws it as the refusal it is. The mark it is handed travels with it, so a listing a recovery
+ * trial sends reaches the controller through an open breaker as the trial does.
+ */
+async function sendDoorListing(transport: Transport, host: string, opts: { probe: boolean; signal?: AbortSignal }): Promise<AccessResponse> {
+
+  return transport.send(officialDoorListingUrl(host), { authRetry: false, probe: opts.probe, ...((opts.signal !== undefined) && { signal: opts.signal }) });
 }
 
 /* The sentences a bootstrap read speaks, each held once. The configuration and topology subjects are the tail every message reporting a failure to read a document
@@ -386,18 +397,19 @@ export class AccessClient implements AsyncDisposable {
    * **Credentials, a token, or both.** Credentials reach the Access application's own endpoints and are what the topology document and the privilege verdict come
    * from. A token reaches the published API and is what `official`, the routed commands' preferred path, and a credential-less client's own inventory come from.
    * Supplying both gives a client everything: state seeded from the topology and corrected by the official read, with each routed command taking whichever path
-   * serves it.
+   * serves it. A token must be allowed to view doors: the door listing is the read that verifies a token at connect, and the read that tells a token the controller
+   * refuses from one it refuses a single permission, so a token that may not view doors is refused as a whole.
    *
    * **A token-only client is a first-class client with a smaller surface, not a degraded one.** What a token reaches on the wire is exactly what it exposes. Its
    * device and door inventory is seeded from the official API's own listings, so `devices`, `hubs`, `device()`, and `hub()` answer with records carrying what those
    * listings establish and the members a device notification may write onto them, and nothing else. `accessPoints` reads empty and an Enterprise Access Hub is
    * withheld from the hub views, because the per-port expansion and the hub's own placement are read from topology the listing does not carry. A hub's door
    * commands take the official path, `close()` among them as the gate control command, while `restart()`, `updateDevice()`, and `fetchBootstrap` refuse with a
-   * capability error. A token refused the device listing connects with an empty inventory and says so once in the log. `isAdmin`, `controllerName`, and
-   * `controllerInfo` read `null`, because a token has no account whose privilege could be determined and the controller document is not something the published API
-   * serves. Restart detection is inert for that same reason - it watches the controller document's uptime, and there is none - while recovery from a dropped
-   * notification channel runs exactly as it does in any other mode. Door state and the inventory are seeded from the official reads, corrected live by the official
-   * notification socket, and re-read by the refresh failsafe and on recovery.
+   * capability error. The device listing needs device viewing as well, and a token refused it connects with an empty inventory and says so once in the log.
+   * `isAdmin`, `controllerName`, and `controllerInfo` read `null`, because a token has no account whose privilege could be determined and the controller document
+   * is not something the published API serves. Restart detection is inert for that same reason - it watches the controller document's uptime, and there is none -
+   * while recovery from a dropped notification channel runs exactly as it does in any other mode. Door state and the inventory are seeded from the official reads,
+   * corrected live by the official notification socket, and re-read by the refresh failsafe and on recovery.
    *
    * @param opts - The controller address, at least one identity, and the optional injected dependencies.
    *
@@ -454,7 +466,8 @@ export class AccessClient implements AsyncDisposable {
 
     /* The direct half: the credential session and the transport that carries it, built together or not at all so that neither can exist without the other. The
      * authentication hooks are closures that run only when a request is dispatched, which is strictly after the session exists - which is what lets the transport
-     * stamp credentials and trigger a relogin without importing upward.
+     * stamp credentials and trigger a relogin without importing upward. The 401 hook speaks the transport's verdicts: a relogin that re-established the session has
+     * the request retried, and one that did not hands the 401 back as the credentials refused.
      */
     const direct = ((): Nullable<{ auth: AuthSession; transport: Transport }> => {
 
@@ -472,7 +485,7 @@ export class AccessClient implements AsyncDisposable {
         host: opts.host,
         identity: "credentials",
         log,
-        onUnauthorized: (relogin): Promise<boolean> => session.reauthenticate(relogin),
+        onUnauthorized: async (relogin): Promise<UnauthorizedVerdict> => ((await session.reauthenticate(relogin)) ? "recovered" : "refused"),
         origin: "https://" + authority,
         ...((opts.dispatcher !== undefined) && { dispatcher: opts.dispatcher }),
         ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls })
@@ -484,23 +497,44 @@ export class AccessClient implements AsyncDisposable {
     })();
     const transport = direct?.transport ?? null;
 
-    /* The official half: the token session, a transport whose origin is the official address, and the facade over it. The origin matters rather than being
-     * cosmetic - a pool takes its origin from what it was built with, so a transport built against the console's authority would pool against an origin no official
-     * request reaches. Its `host` is the address as configured, the same one the direct half's diagnostics carry, so every diagnostic names one controller.
+    /* The official half: the token session and a transport whose origin is the official address, built together or not at all as the direct half is, and the
+     * facade over them. The origin matters rather than being cosmetic - a pool takes its origin from what it was built with, so a transport built against the
+     * console's authority would pool against an origin no official request reaches. Its `host` is the address as configured, the same one the direct half's
+     * diagnostics carry, so every diagnostic names one controller. The hooks close over the session before it is assigned, on the direct half's terms, and the
+     * session's door listing goes out through the transport they are wired into, so a 401 is settled on the same pool and breaker as the request that met it.
      */
-    const tokenSession = (opts.token === undefined) ? null : new TokenSession({ token: opts.token });
-    const officialTransport = (tokenSession === null) ? null : new Transport({
+    const officialHalf = ((): Nullable<{ session: TokenSession; transport: Transport }> => {
 
-      clock,
-      getAuthHeaders: (): Record<string, string> => tokenSession.authHeaders(),
-      host: opts.host,
-      identity: "token",
-      log,
-      onUnauthorized: (): Promise<boolean> => tokenSession.unauthorized(),
-      origin: "https://" + officialHost(authority),
-      ...((opts.dispatcher !== undefined) && { dispatcher: opts.dispatcher }),
-      ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls })
-    });
+      if(opts.token === undefined) {
+
+        return null;
+      }
+
+      // eslint-disable-next-line prefer-const
+      let session: TokenSession;
+      const tokenTransport = new Transport({
+
+        clock,
+        getAuthHeaders: (): Record<string, string> => session.authHeaders(),
+        host: opts.host,
+        identity: "token",
+        log,
+        onUnauthorized: (listing): Promise<UnauthorizedVerdict> => session.unauthorized(listing),
+        origin: "https://" + officialHost(authority),
+        ...((opts.dispatcher !== undefined) && { dispatcher: opts.dispatcher }),
+        ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls })
+      });
+
+      session = new TokenSession({
+
+        sendDoorListing: (listing): Promise<AccessResponse> => sendDoorListing(tokenTransport, authority, listing),
+        token: opts.token
+      });
+
+      return { session, transport: tokenTransport };
+    })();
+    const tokenSession = officialHalf?.session ?? null;
+    const officialTransport = officialHalf?.transport ?? null;
     const official = (officialTransport === null) ? null : new OfficialApi({ host: authority, transport: officialTransport });
 
     // Everything built so far, torn down together when a stage below fails. Nothing else exists yet, so this is the whole cleanup at that point.
@@ -734,7 +768,8 @@ export class AccessClient implements AsyncDisposable {
      * The verification probe is a transport-level act on both legs: one marked send against a single endpoint - the topology document where there are credentials,
      * the doors listing where there are not - whose only question is whether the controller answers. The mark is what carries it through an open breaker, so a
      * controller that has come back is found at the recovery loop's own cadence rather than after the full cooldown, and the outcome books through the ordinary
-     * path either way. The body is discarded, which leaves the seed above the one place a door listing becomes state.
+     * path either way. The body is discarded, which leaves the seed above the one place a door listing becomes state. The doors listing goes through the same send
+     * the token session settles a refused request by, so a probe's 401 is the token refused rather than a question put to the session about itself.
      *
      * The monitor's throttle source follows the same rule: it is whichever transport backs the channel these probes go through, and the monitor is none the wiser.
      */
@@ -765,7 +800,7 @@ export class AccessClient implements AsyncDisposable {
         throttleSource: officialTransport,
         verify: async (signal?: AbortSignal): Promise<void> => {
 
-          const response = await officialTransport.send(officialEndpoint(authority, "/doors"), { probe: true, ...((signal !== undefined) && { signal }) });
+          const response = await sendDoorListing(officialTransport, authority, { probe: true, ...((signal !== undefined) && { signal }) });
 
           response.ensureOk();
         }

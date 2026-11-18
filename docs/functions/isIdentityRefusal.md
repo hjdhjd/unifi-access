@@ -18,9 +18,10 @@ The following spellings qualify:
 
 1. An [AccessAuthError](../classes/AccessAuthError.md), the transport's classification of a refused status.
 2. An [AccessApiError](../classes/AccessApiError.md) whose `code` is `CODE_ACCESS_TOKEN_INVALID`, `CODE_AUTH_FAILED`, or `CODE_UNAUTHORIZED`, the controller's own refusal answered
-   inside a successful response. These are the codes the vendor's reference documents for a refused identity, and none has yet been captured from a live
-   controller. `CODE_UNAUTHORIZED` is read as a refused identity by this library's ruling, following its name, which is the HTTP vocabulary for a failed
-   authentication, although the reference words its message as a refused permission and no capture has settled which it is.
+   inside a successful response. These are the codes the vendor's reference documents for a refused identity, and none has yet been captured inside a successful
+   response. `CODE_UNAUTHORIZED` has been captured at a 401, answering an invalid, a deleted and an under-scoped token alike, so the code settles nothing about
+   which refusal it was: there the 401 is classified, the door listing deciding which identity-leg error it is, and the envelope travels as its `cause`. Inside a
+   successful response it is read as a refused identity by this library's ruling, following its name, which is the HTTP vocabulary for a failed authentication.
 
 What is read is the error handed in, never its `cause` chain, so a wrapper around a refusal answers false, on the same terms as [isPrivilegeRefusal](isPrivilegeRefusal.md). A caller
 that wants a refused identity and a refused permission read together through an [AccessBootstrapError](../classes/AccessBootstrapError.md) hands the wrapper to [isSignInRefusal](isSignInRefusal.md) instead. A

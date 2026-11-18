@@ -1,9 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * http.test.ts: Unit tests for the HTTP transport - the send/request surface, AccessResponse decoding and ensureOk classification, the status predicates, the base
- * and auth headers, the 401-relogin retry, transport-error classification (timeout vs caller-abort vs network), the connection dial, a request in flight at a
- * teardown, the full throttle circuit-breaker state machine (closed -> open -> half-open -> closed), the diagnostics channels, dispatcher ownership, certificate
- * verification, the owned pool's retry policy and its handling of the statuses it retries, and the event rails.
+ * and auth headers, the 401 hook's retry and verdicts, transport-error classification (timeout vs caller-abort vs network), the connection dial, a request in
+ * flight at a teardown, the full throttle circuit-breaker state machine (closed -> open -> half-open -> closed), the diagnostics channels, dispatcher ownership,
+ * certificate verification, the owned pool's retry policy and its handling of the statuses it retries, and the event rails.
  *
  * Most groups are driven deterministically: an undici MockAgent injects responses and failures without a live controller, and a fake Clock advances breaker time
  * without real-time waits. The injected dispatcher and clock let these tests assert the controller's throttle and retry behavior - the established behavioral
@@ -224,7 +224,7 @@ describe("Transport", () => {
       });
     });
 
-    test("401 on a token transport names the API token rather than the credentials", async () => {
+    test("401 on a token transport no hook answered names the API token rather than the credentials", async () => {
 
       const { host, pool, transport } = makeMockTransport({ identity: "token" });
 
@@ -232,15 +232,50 @@ describe("Transport", () => {
 
       const response = await transport.send(url(host, "/token-401"));
 
+      assert.equal(response.verdict, undefined, "no hook was wired, so the response carries no verdict");
       assert.throws(() => response.ensureOk(), {
 
         identity: "token",
 
-        // Each leg has its own remedy, so each gets its own sentence: this one sends the reader to the issued token rather than to an account password.
-        message: "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked.",
+        // Each leg has its own remedy, so each gets its own sentence: this one sends the reader to the issued token rather than to an account password, and a 401
+        // no hook settled is the token refused, the same reading the reachability probe's own 401 gets.
+        message: "The UniFi Access controller refused the configured API token. Please check that the token is valid, has not been revoked, and is allowed to view " +
+          "doors, which this library requires of every token.",
         name: "AccessAuthError",
         statusCode: 401
       });
+    });
+
+    test("a 401 classifies by the hook's verdict on its identity, keeping the status the controller answered with", async () => {
+
+      /* The hook's verdict is what tells a refused identity from a refused operation when the controller answers them alike with a 401. An identity found holding
+       * makes the 401 the leg's privilege refusal, with that leg's 403 sentence, and an identity refused makes it the leg's identity refusal. The rule reads the
+       * verdict alone, so it holds the same on every leg, and each error keeps the 401 rather than the status whose meaning it carries.
+       */
+      const rows = [
+
+        { identity: "token", message: "The configured API token lacks the permissions this operation requires on the UniFi Access controller.",
+          name: "AccessAuthorizationError", verdict: "authenticated" },
+        { identity: "token", message: "The UniFi Access controller refused the configured API token. Please check that the token is valid, has not been revoked, " +
+          "and is allowed to view doors, which this library requires of every token.", name: "AccessAuthError", verdict: "refused" },
+        { identity: "credentials", message: "The account lacks the privileges this operation requires on the UniFi Access controller.",
+          name: "AccessAuthorizationError", verdict: "authenticated" },
+        { identity: "credentials", message: "Authentication with the UniFi Access controller failed.", name: "AccessAuthError", verdict: "refused" }
+      ] as const;
+
+      for(const row of rows) {
+
+        const { host, pool, transport } = makeMockTransport({ identity: row.identity, onUnauthorized: async () => row.verdict });
+
+        pool.intercept({ method: "GET", path: "/verdict" }).reply(401, "denied");
+
+        // eslint-disable-next-line no-await-in-loop
+        const response = await transport.send(url(host, "/verdict"));
+
+        assert.equal(response.verdict, row.verdict, row.identity + " " + row.verdict + ": the response carries the hook's verdict");
+        assert.throws(() => response.ensureOk(), { identity: row.identity, message: row.message, name: row.name, statusCode: 401 },
+          row.identity + " " + row.verdict + " classifies by the verdict");
+      }
     });
 
     test("403 classifies as AccessAuthorizationError carrying the status and the credential leg", async () => {
@@ -387,14 +422,14 @@ describe("Transport", () => {
       assert.deepEqual(await transport.request<{ ok: number }>(url(host, "/secure")), { ok: 1 });
     });
 
-    test("a 401 invokes onUnauthorized and retries once when relogin succeeds", async () => {
+    test("a 401 invokes onUnauthorized and retries once when the hook recovers the identity", async () => {
 
       let calls = 0;
       const { host, pool, transport } = makeMockTransport({ onUnauthorized: async () => {
 
         calls++;
 
-        return true;
+        return "recovered";
       } });
 
       pool.intercept({ method: "GET", path: "/x" }).reply(401, "stale");
@@ -411,7 +446,7 @@ describe("Transport", () => {
 
         calls++;
 
-        return false;
+        return "refused";
       } });
 
       pool.intercept({ method: "GET", path: "/x" }).reply(401, "stale");
@@ -430,7 +465,7 @@ describe("Transport", () => {
 
         calls++;
 
-        return true;
+        return "recovered";
       } });
 
       pool.intercept({ method: "GET", path: "/x" }).reply(401, "stale");
@@ -438,6 +473,7 @@ describe("Transport", () => {
       const response = await transport.send(url(host, "/x"), { authRetry: false });
 
       assert.equal(response.statusCode, 401);
+      assert.equal(response.verdict, undefined, "a 401 the hook was never asked about carries no verdict");
       assert.equal(calls, 0, "the handshake escape hatch must not recurse into relogin");
     });
 
@@ -448,7 +484,7 @@ describe("Transport", () => {
 
         calls++;
 
-        return true;
+        return "recovered";
       } });
 
       pool.intercept({ method: "GET", path: "/x" }).reply(401, "stale").times(2);
@@ -456,7 +492,9 @@ describe("Transport", () => {
       const response = await transport.send(url(host, "/x"));
 
       assert.equal(response.statusCode, 401, "the second 401 is returned rather than triggering another relogin");
+      assert.equal(response.verdict, undefined, "and the retry's own 401, which no hook answered, carries no verdict");
       assert.equal(calls, 1, "relogin must not spin on a 401 the controller keeps returning");
+      assert.throws(() => response.ensureOk(), AccessAuthError);
     });
 
     test("tells the relogin hook whether the request that met the 401 was the recovery probe", async () => {
@@ -466,7 +504,7 @@ describe("Transport", () => {
 
         asked.push(relogin);
 
-        return false;
+        return "refused";
       } });
 
       pool.intercept({ method: "GET", path: "/x" }).reply(401, "stale").times(2);

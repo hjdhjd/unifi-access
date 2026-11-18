@@ -72,13 +72,13 @@ export interface RequestOptions {
 /**
  * The lower-level {@link Transport.send} options. Both flags follow the same pattern: a special caller opting out of one default send behavior.
  *
- * - `authRetry` controls the injected 401-relogin hook: the authenticated request path leaves it at its default of `true`, while the {@link AuthSession} login
- *   handshake passes `false` so its own 401 cannot recurse back into relogin.
+ * - `authRetry` controls the injected 401 hook: the authenticated request path leaves it at its default of `true`, while a request the hook itself sends - the
+ *   {@link AuthSession} login handshake, or the token session's door listing - passes `false` so its own 401 cannot recurse back into the hook.
  * - `probe` marks a request as the connection-recovery reachability trial. It skips the open breaker's cooldown gate so the trial can dispatch at the recovering
  *   coordinator's cadence rather than waiting out the full cooldown, while still booking its outcome through the normal path - so a successful probe closes the
  *   breaker exactly as the autonomous half-open trial would, and a probe its caller cancels books nothing, like any cancelled request. A 401 the trial meets hands
- *   the mark to the relogin it triggers, so that relogin reaches the controller as the trial did. Only recovery passes `true`; ordinary requests leave it `false`
- *   and stay gated, so the breaker still guards against operational hammering.
+ *   the mark to the hook it triggers, so the request the hook sends reaches the controller as the trial did. Only recovery passes `true`; ordinary requests leave
+ *   it `false` and stay gated, so the breaker still guards against operational hammering.
  *
  * @category Transport
  */
@@ -89,6 +89,23 @@ export interface SendOptions extends RequestOptions {
 }
 
 /**
+ * What the 401 hook found out about the identity a refused request carried, which is what a response carries for its 401 to be classified by. `"authenticated"`
+ * is the identity holding - the controller accepted it on a read it requires of that identity - so the 401 refused this operation rather than the identity, and
+ * `"refused"` is the identity itself refused.
+ *
+ * @category Transport
+ */
+export type IdentityVerdict = "authenticated" | "refused";
+
+/**
+ * What the 401 hook answers: the identity's verdict, or `"recovered"` when the hook re-established the identity, which has the refused request retried once
+ * instead. A recovered identity is never a response's verdict, because the retry's own response is the one returned.
+ *
+ * @category Transport
+ */
+export type UnauthorizedVerdict = IdentityVerdict | "recovered";
+
+/**
  * Construction options for {@link Transport}. `host` is the controller address exactly as configured, which every request and throttle diagnostics payload carries
  * verbatim, and `origin` is the URL origin the owned pool connects to: the scheme and the URL authority of the listener this transport reaches, an IPv6 literal
  * bracketed (`https://[fe80::1]`). Everything else is injected.
@@ -97,10 +114,11 @@ export interface SendOptions extends RequestOptions {
  *   rebuilds it - lifecycle stays with the injector, so `reset()` and disposal are no-ops on the dispatcher. It also brings its own connector and its own retry
  *   policy, so a connection attempt a settled request leaves behind runs on that dispatcher's terms rather than the owned pool's; the request itself settles at
  *   once either way.
- * - `getAuthHeaders` supplies the cookie and CSRF headers stamped onto every request. `onUnauthorized` is the relogin hook invoked on a 401, told whether the
- *   request that met it was a recovery probe so the relogin can carry the probe's mark: it resolves `true` to have the request retried once, resolves `false` to
- *   have the 401 handed back, and rejects with the relogin's own failure, which the request then throws. Both point upward at {@link AuthSession}, so they are
- *   passed as plain functions (dependency inversion) rather than as an `AuthSession` import.
+ * - `getAuthHeaders` supplies the identity's headers stamped onto every request. `onUnauthorized` is the hook invoked on a 401, told whether the request that met
+ *   it was a recovery probe so the request the hook sends can carry the probe's mark: it resolves `"recovered"` to have the request retried once, resolves
+ *   `"authenticated"` or `"refused"` to have the 401 handed back carrying that verdict, and rejects with the hook's own failure, which the request then throws.
+ *   Both point upward at the session the composition root built for this identity, so they are passed as plain functions (dependency inversion) rather than as a
+ *   session import.
  * - `identity` names which identity leg authenticates these requests, and is what words a 401 refusal - the credential session's sentence or the API token's. It
  *   defaults to `"credentials"`. The composition root builds one transport per identity it holds, so which one a transport carries is a fact settled where it is
  *   constructed rather than one re-derived from each URL at the moment a request is refused.
@@ -118,7 +136,7 @@ export interface TransportOptions {
   host: string;
   identity?: AccessIdentityLeg;
   log?: AccessLogging;
-  onUnauthorized?: (opts: { probe: boolean }) => Promise<boolean>;
+  onUnauthorized?: (opts: { probe: boolean }) => Promise<UnauthorizedVerdict>;
   origin: string;
   verifyTls?: boolean;
 }
@@ -225,28 +243,37 @@ function flattenHeaders(headers: IncomingHttpHeaders): Record<string, string> {
 }
 
 /**
- * Map a non-2xx status to the single typed `FatalError` it represents. This is the one place in the library that turns an HTTP status into an error class, so the
- * mapping cannot drift between callers: 401 is an authentication failure, 403 an authorization failure, and everything else carries the controller's own status,
- * body, and headers for the caller to inspect.
+ * Map a non-2xx response to the single typed `FatalError` it represents. This is the one place in the library that turns an HTTP status into an error class, so the
+ * mapping cannot drift between callers: a 401 is an authentication failure unless the 401 hook found the identity holding, a 403 and such an authenticated 401 an
+ * authorization failure, and everything else carries the controller's own status, body, and headers for the caller to inspect.
  *
- * @param statusCode - The non-2xx status code.
- * @param headers    - The response headers, preserved on {@link AccessRequestError}.
- * @param body       - The response body bytes, surfaced as text on {@link AccessRequestError}.
- * @param identity   - The identity leg that authenticated the refused request, which words both the 401 and the 403 and is carried on the error each raises.
+ * @param response - The non-2xx response: its status, the headers and body bytes {@link AccessRequestError} preserves, the identity leg that words a refusal and
+ *   is carried on the error it raises, and the 401 hook's verdict on that identity.
  *
  * @returns The classified `FatalError`.
  */
-function classifyStatus(statusCode: number, headers: IncomingHttpHeaders, body: Buffer, identity: AccessIdentityLeg): FatalError {
+function classifyStatus(response: AccessResponse): FatalError {
 
-  switch(statusCode) {
+  const { body, headers, identity, statusCode } = response;
+
+  /* The status is read for what it means rather than for its number. A 401 whose identity the hook found holding is the controller refusing this operation, which
+   * is a 403's meaning, so it takes the 403's class and sentence while the error keeps the status the controller answered with. Every other 401 is the identity
+   * refused, a 401 no hook answered included.
+   */
+  const meaning = ((statusCode === 401) && (response.verdict === "authenticated")) ? 403 : statusCode;
+
+  switch(meaning) {
 
     case 401:
 
       /* Each identity leg gets its own sentence because each has its own remedy, and a consumer that renders the message verbatim is the reason the distinction has
        * to live in the words rather than only in the field: a user holding good credentials and a revoked token must be sent to the token, not to their password.
+       * The token's sentence names door viewing because the composition root reads the door listing to tell a refused token from a missing permission, so a token
+       * that may not view doors is refused along with one the controller rejects outright.
        */
       return new AccessAuthError((identity === "token") ?
-        "The UniFi Access controller rejected the configured API token. Please check that the token is valid and has not been revoked." :
+        "The UniFi Access controller refused the configured API token. Please check that the token is valid, has not been revoked, " +
+        "and is allowed to view doors, which this library requires of every token." :
         "Authentication with the UniFi Access controller failed.", { identity, statusCode });
 
     case 403:
@@ -294,12 +321,16 @@ export class AccessResponse {
   /** The identity leg of the transport that produced this response, read by the 401 classification in {@link AccessResponse.ensureOk}. */
   readonly identity: AccessIdentityLeg;
 
-  constructor(statusCode: number, headers: IncomingHttpHeaders, body: Buffer, identity: AccessIdentityLeg) {
+  /** The 401 hook's verdict on the identity this response's 401 met, read by the same classification, or `undefined` when no hook answered one. */
+  readonly verdict: IdentityVerdict | undefined;
 
-    this.body = body;
-    this.headers = headers;
-    this.identity = identity;
-    this.statusCode = statusCode;
+  constructor(parts: { body: Buffer; headers: IncomingHttpHeaders; identity: AccessIdentityLeg; statusCode: number; verdict?: IdentityVerdict }) {
+
+    this.body = parts.body;
+    this.headers = parts.headers;
+    this.identity = parts.identity;
+    this.statusCode = parts.statusCode;
+    this.verdict = parts.verdict;
   }
 
   /**
@@ -362,8 +393,9 @@ export class AccessResponse {
    *
    * @returns `this`, for chaining.
    *
-   * @throws {@link AccessAuthError} on 401, {@link AccessAuthorizationError} on 403, {@link AccessRequestError} on any other non-2xx, carrying the status, body
-   *   and headers the controller answered with: a retried status's last answer, a 429 and an answer carrying a Retry-After hint among them.
+   * @throws {@link AccessAuthError} on a 401 whose identity the 401 hook did not confirm, {@link AccessAuthorizationError} on a 403 and on a 401 whose identity it
+   *   confirmed, {@link AccessRequestError} on any other non-2xx, carrying the status, body and headers the controller answered with: a retried status's last answer,
+   *   a 429 and an answer carrying a Retry-After hint among them.
    */
   ensureOk(): this {
 
@@ -372,7 +404,7 @@ export class AccessResponse {
       return this;
     }
 
-    throw classifyStatus(this.statusCode, this.headers, this.body, this.identity);
+    throw classifyStatus(this);
   }
 }
 
@@ -394,8 +426,8 @@ export class AccessResponse {
  *   `throttleExited` only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
  *
  * Whether the controller is serving lives here; session validity lives in {@link AuthSession} and a missing resource with its caller. The breaker never calls login
- * to probe recovery - the next real request is the probe, and the independent 401-relogin concern is the injected `onUnauthorized` hook. The clock is injected so
- * every transition is deterministically testable.
+ * to probe recovery - the next real request is the probe, and the independent 401 concern is the injected `onUnauthorized` hook. The clock is injected so every
+ * transition is deterministically testable.
  *
  * @category Transport
  */
@@ -411,7 +443,7 @@ export class Transport implements AsyncDisposable {
   readonly #host: string;
   readonly #identity: AccessIdentityLeg;
   readonly #log: AccessLogging;
-  readonly #onUnauthorized: ((opts: { probe: boolean }) => Promise<boolean>) | undefined;
+  readonly #onUnauthorized: TransportOptions["onUnauthorized"];
   readonly #origin: string;
   readonly #verifyTls: boolean;
 
@@ -470,7 +502,7 @@ export class Transport implements AsyncDisposable {
   /**
    * Send a request and return the {@link AccessResponse} for any HTTP status. Throttle-gates before dispatching, answers a caller that has already aborted without
    * sending a request, composes the caller's signal with the timeout deadline, classifies transport failures into typed errors, books the breaker outcome unless the
-   * caller cancelled the request, and runs the 401-relogin retry (once) when a hook is wired.
+   * caller cancelled the request, and asks a wired hook about a 401, retrying the request once when the hook recovers the identity.
    *
    * This is the transport primitive. Callers that want the ergonomic "throw on non-2xx and parse JSON" path use {@link Transport.request}; callers that need raw
    * status, headers, or bytes (the auth handshake among them) use `send` directly.
@@ -481,8 +513,8 @@ export class Transport implements AsyncDisposable {
    * @returns The response.
    *
    * @throws {@link AccessThrottledError} while the breaker is open and cooling; {@link AccessTimeoutError}, {@link AccessAbortedError}, or
-   *   {@link AccessNetworkError} on transport-level failures; and whatever the relogin hook rejects with, when a 401's relogin fails on anything but a refused
-   *   sign-in, the status error its handshake was answered with among them. A status the controller answered this request with is never thrown here: on the owned
+   *   {@link AccessNetworkError} on transport-level failures; and whatever the 401 hook rejects with, when the request it sends meets anything but a verdict on the
+   *   identity, the status error that request was answered with among them. A status the controller answered this request with is never thrown here: on the owned
    *   pool it returns as the response, a retried status after its last attempt and a 429 or an answer carrying a Retry-After hint at once, for
    *   {@link AccessResponse.ensureOk} to classify.
    */
@@ -503,11 +535,11 @@ export class Transport implements AsyncDisposable {
       }
     }
 
-    /* Relogin retry loop. The body of the loop runs at most twice: the original attempt, and - if it returns 401 and a relogin hook is wired and succeeds - one
-     * retry with relogin disabled so a persistent 401 cannot spin. Only the attempt whose outcome we return can book, and it books nothing when its caller cancelled
-     * it or had already aborted before it was sent. An attempt whose relogin throws books nothing either: the handshake's own sends booked what the controller
-     * answered them, so booking the 401 beside them would count a controller that failed its relogin as one that served. The hook is told whether this request is
-     * the recovery probe, so a relogin the probe triggers carries its mark.
+    /* The 401 retry loop. The body of the loop runs at most twice: the original attempt, and - if it returns 401 and a wired hook recovers the identity - one
+     * retry with the hook disabled so a persistent 401 cannot spin. Only the attempt whose outcome we return can book, and it books nothing when its caller cancelled
+     * it or had already aborted before it was sent. An attempt whose hook throws books nothing either: the hook's own sends booked what the controller answered
+     * them, so booking the 401 beside them would count a controller that failed the hook's request as one that served. The hook is told whether this request is
+     * the recovery probe, so a request the probe's 401 makes the hook send carries its mark.
      */
     let allowAuthRetry = opts.authRetry ?? true;
 
@@ -543,8 +575,11 @@ export class Transport implements AsyncDisposable {
         throw error;
       }
 
+      // A 401 the hook can answer is asked about once per attempt, and the verdict it reaches travels on the response for the classification to read.
       // eslint-disable-next-line no-await-in-loop
-      if((result.statusCode === 401) && allowAuthRetry && (this.#onUnauthorized !== undefined) && (await this.#onUnauthorized({ probe: opts.probe === true }))) {
+      const verdict = ((result.statusCode === 401) && allowAuthRetry) ? await this.#onUnauthorized?.({ probe: opts.probe === true }) : undefined;
+
+      if(verdict === "recovered") {
 
         allowAuthRetry = false;
 
@@ -553,7 +588,7 @@ export class Transport implements AsyncDisposable {
 
       this.#book(controllerServing(result.statusCode));
 
-      return new AccessResponse(result.statusCode, result.headers, result.body, this.#identity);
+      return new AccessResponse({ ...result, identity: this.#identity, ...((verdict !== undefined) && { verdict }) });
     }
   }
 

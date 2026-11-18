@@ -59,10 +59,10 @@ export interface AuthSessionOptions {
  * used when a request comes back 401, and whether the account holds administrative privilege.
  *
  * The session composes {@link Transport} - it sends its handshake requests through the transport (so login traffic is pooled, timed, throttle-aware, and observable
- * like any other request) using `authRetry: false` so a handshake 401 cannot recurse back into relogin. It exposes two functions the transport wires in at the
- * composition root: {@link AuthSession.authHeaders} (the cookie and CSRF headers stamped onto every authenticated request) and {@link AuthSession.reauthenticate}
- * (the `onUnauthorized` hook). Because the transport invokes those through injected function references, `Transport` never imports `AuthSession`: the dependency
- * flows in one direction only.
+ * like any other request) using `authRetry: false` so a handshake 401 cannot recurse back into relogin. It exposes two functions the composition root wires into
+ * the transport: {@link AuthSession.authHeaders} (the cookie and CSRF headers stamped onto every authenticated request) and {@link AuthSession.reauthenticate}
+ * (the relogin behind the `onUnauthorized` hook, whose outcome the root maps onto the hook's verdicts). Because the transport invokes those through injected
+ * function references, `Transport` never imports `AuthSession`: the dependency flows in one direction only.
  *
  * State is invalid-by-default: {@link AuthSession.isAuthenticated} is true only once both a cookie and a CSRF token are in hand. There is no `Nullable` return on
  * the login path - {@link AuthSession.login} resolves on success and throws {@link AccessAuthError} on credential failure.
@@ -202,8 +202,9 @@ export class AuthSession {
   }
 
   /**
-   * Re-run the handshake with the retained credentials. Wired into the transport as its `onUnauthorized` hook: the transport invokes it when a request returns 401,
-   * then retries the original request once if this resolves `true`, hands the 401 back if it resolves `false`, and throws whatever this rejects with.
+   * Re-run the handshake with the retained credentials. The composition root wires it behind the transport's `onUnauthorized` hook, which the transport invokes
+   * when a request returns 401: the hook answers `"recovered"` when this resolves `true`, so the original request is retried once, and `"refused"` when it resolves
+   * `false`, so the 401 is handed back as the credentials refused, and the request throws whatever this rejects with.
    *
    * Concurrent calls coalesce into one handshake through the gate this delegates to. Two requests in flight through one transport can both come back 401 and both
    * invoke this hook, and running two handshakes against each other would leave the cookie and CSRF token written by whichever finished last, which need not be the

@@ -61,13 +61,15 @@ function makeAuth(options: Omit<AuthSessionOptions, "transport"> = {}): AuthFixt
   return { ...mock, auth: new AuthSession({ ...options, transport: mock.transport }) };
 }
 
-// A session wired to its transport exactly as the composition root wires them - the transport stamps the session's headers and calls back into it on a 401. The
-// closures capture the binding before it is assigned, which is safe because they run only when a request is dispatched, strictly after the assignment below.
+// A session wired to its transport exactly as the composition root wires them - the transport stamps the session's headers and calls back into it on a 401, the
+// relogin's outcome mapped onto the hook's verdicts. The closures capture the binding before it is assigned, which is safe because they run only when a request is
+// dispatched, strictly after the assignment below.
 function makeWiredAuth(): AuthFixture {
 
   // eslint-disable-next-line prefer-const
   let session: AuthSession;
-  const mock = makeMockTransport({ getAuthHeaders: () => session.authHeaders(), onUnauthorized: (relogin) => session.reauthenticate(relogin) });
+  const mock = makeMockTransport({ getAuthHeaders: () => session.authHeaders(),
+    onUnauthorized: async (relogin) => ((await session.reauthenticate(relogin)) ? "recovered" : "refused") });
 
   session = new AuthSession({ transport: mock.transport });
 

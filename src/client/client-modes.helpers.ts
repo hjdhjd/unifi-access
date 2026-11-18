@@ -59,6 +59,18 @@ export function interceptOfficialPass(official: Interceptable, bodies: { devices
   official.intercept({ method: "GET", path: DEVICES_PATH }).reply(200, bodies.devices ?? devicesBody());
 }
 
+/* Count the door listings sent while the returned handle is held. A token 401 is settled by a second door listing, so a row asserts the settling read went out
+ * exactly as often as it should: once beside a refused read, and never beside the reachability probe's own 401 or beside a listing the hook itself sent. The
+ * count is read off the request-start channel, which publishes a request the mock goes on to refuse as well, so a request no interceptor answered is counted too.
+ */
+export function countDoorReads(): Disposable & { count: () => number } {
+
+  const paths: string[] = [];
+  const subscription = subscribeTo(channels.httpRequestStart, (message) => void paths.push(new URL(message.url).pathname));
+
+  return { count: (): number => paths.filter((path) => (path === DOORS_PATH)).length, [Symbol.dispose]: (): void => subscription[Symbol.dispose]() };
+}
+
 // The refusal an Identity Enterprise controller answers every official call with: a 2xx whose envelope declines in the API's own vocabulary.
 export const identityEnterpriseBody = (): string => JSON.stringify({ code: "CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED", msg: "not supported on this controller" });
 

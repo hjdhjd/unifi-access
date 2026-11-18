@@ -45,7 +45,7 @@ for(const device of client.devices) {
 await client.hubs[0]?.unlock();
 ```
 
-A client connects with credentials, a token, or both. Credentials reach the Access application's own endpoints, which is where the topology and the realtime notification stream come from. A token reaches the published developer API, exposed complete at `client.official` with a typed method for every documented endpoint, and seeds the same state model from that API's own device and door listings. So the device and door projections answer in every mode, each carrying what that mode's census established. Supplying both is the fullest client: door commands route official-first, and `client.capabilities` says what the connection established.
+A client connects with credentials, a token, or both. Credentials reach the Access application's own endpoints, which is where the topology and the realtime notification stream come from. A token reaches the published developer API, exposed complete at `client.official` with a typed method for every documented endpoint, and seeds the same state model from that API's own device and door listings. So the device and door projections answer in every mode, each carrying what that mode's census established. A token must be allowed to view doors, because the door listing is how the library tells a refused token from one missing a permission, and a token-only client's device inventory also needs device viewing. Supplying both is the fullest client: door commands route official-first, and `client.capabilities` says what the connection established.
 
 ```ts
 // The published developer API alone: the devices and doors it lists are seeded into the same state model, with users, visitors, logs, webhooks, and door control through client.official.

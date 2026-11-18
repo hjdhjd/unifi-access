@@ -222,6 +222,11 @@ export class AccessStallError extends RecoverableError {
  * token into credentials-only operation with a warning, so a consumer meets this error for a token only from a token-only client, from a client held to the official
  * API, or from the official facade called directly.
  *
+ * The controller answers a token it refuses and a token missing the permission an endpoint requires with the same 401, so the library asks it for the door listing,
+ * which every token must be allowed, to tell the two apart. A token refused that listing as well is refused here, whether the controller rejects it outright or it
+ * may not view doors, while one the listing still serves is refused a permission and reported as {@link AccessAuthorizationError}. Where the official API's
+ * refusal carries its result envelope, the error carries that refusal as an {@link AccessApiError} in its `cause`.
+ *
  * @category Errors
  */
 export class AccessAuthError extends FatalError {
@@ -259,11 +264,16 @@ export class AccessAuthError extends FatalError {
 export type AccessIdentityLeg = "credentials" | "token";
 
 /**
- * The identity authenticated but lacks the privilege the operation requires (typically a `403`; Access reserves many operations for administrator accounts). Fatal
- * because the same identity will keep being refused. {@link AccessAuthorizationError.identity} names which one fell short, so a caller reporting the failure can point
- * at the remedy that applies. At connect, a client whose direct path can serve folds a token refused a permission into credentials-only operation with a warning; on a
- * routed door command the same client sends its door commands to that path with a warning, and a routed access-method write refused one takes its own direct path
- * instead, so a consumer meets this error for a token only from a token-only client, from a client held to the official API, or from the official facade called directly.
+ * The identity authenticated but lacks the privilege the operation requires (a `403`, or a token's `401` the library settled as a missing permission; Access reserves
+ * many operations for administrator accounts). Fatal because the same identity will keep being refused. {@link AccessAuthorizationError.identity} names which one fell
+ * short, so a caller reporting the failure can point at the remedy that applies. At connect, a client whose direct path can serve folds a token refused a permission
+ * into credentials-only operation with a warning; on a routed door command the same client sends its door commands to that path with a warning, and a routed
+ * access-method write refused one takes its own direct path instead, so a consumer meets this error for a token only from a token-only client, from a client held to
+ * the official API, or from the official facade called directly.
+ *
+ * The controller answers a token missing a permission with the same 401 it answers a refused token with, so the library asks it for the door listing, which every
+ * token must be allowed, and reports the 401 here, at that status, when the listing still serves the token. Where the official API's refusal carries its result
+ * envelope, the error carries that refusal as an {@link AccessApiError} in its `cause`.
  *
  * @category Errors
  */
@@ -273,12 +283,13 @@ export class AccessAuthorizationError extends FatalError {
    * Which identity leg the controller refused - `"credentials"` when the signed-in account lacks the privilege, typically a role short of administrator, `"token"`
    * when the official API's bearer token was not issued the permission the endpoint requires - or `undefined` when the constructing caller attributed none.
    *
-   * The leg is what splits the remedy: grant the account the role, versus reissue the token with the permission. And a `403` implies something a `401` does not,
-   * whichever leg it names - that identity authenticated, because a controller refusing an operation on privilege grounds has already accepted who is asking.
+   * The leg is what splits the remedy: grant the account the role, versus reissue the token with the permission. And this error implies something an
+   * {@link AccessAuthError} does not, whichever leg it names and whichever status it carries - that identity authenticated, because a controller refusing an
+   * operation on privilege grounds has already accepted who is asking.
    */
   readonly identity: AccessIdentityLeg | undefined;
 
-  /** The HTTP status that triggered the classification, when the failure originated from a response (typically `403`). */
+  /** The HTTP status that triggered the classification, when the failure originated from a response (a `403`, or a `401` for a token refused a permission). */
   readonly statusCode: number | undefined;
 
   constructor(message: string, options?: { cause?: unknown; identity?: AccessIdentityLeg; statusCode?: number }) {
@@ -436,7 +447,8 @@ export type AccessBootstrapStage = "apply" | "fetch" | "parse";
  * envelope between them. The envelope carries a `code` on every response, and a code other than success is the controller declining in its own vocabulary rather
  * than through an HTTP status: the status on such a response is a 2xx, so nothing below this layer can classify it. Where the official API answers a refusal at a
  * 4xx other than 401, 403 and 429 with an envelope as well, this error carries that refusal's code too, and the {@link AccessRequestError} the status classifies
- * as is its `cause`. Fatal because the refusal describes the request rather than the moment: the same call will be refused the same way.
+ * as is its `cause`; at a 401 or a 403 the identity error the status classifies as is thrown instead, with this error as its `cause`. Fatal because the refusal
+ * describes the request rather than the moment: the same call will be refused the same way.
  *
  * The controller's own `msg` is the error's message, carried through the message channel rather than duplicated into a second field, and `code` is the typed vocabulary a
  * caller branches on. Some of those codes are capability signals rather than faults, worth naming here because a consumer will want to route them rather than report
@@ -698,9 +710,10 @@ const IDENTITY_REFUSAL_CODES = [ "CODE_ACCESS_TOKEN_INVALID", "CODE_AUTH_FAILED"
  *
  * 1. An {@link AccessAuthError}, the transport's classification of a refused status.
  * 2. An {@link AccessApiError} whose `code` is `CODE_ACCESS_TOKEN_INVALID`, `CODE_AUTH_FAILED`, or `CODE_UNAUTHORIZED`, the controller's own refusal answered
- *    inside a successful response. These are the codes the vendor's reference documents for a refused identity, and none has yet been captured from a live
- *    controller. `CODE_UNAUTHORIZED` is read as a refused identity by this library's ruling, following its name, which is the HTTP vocabulary for a failed
- *    authentication, although the reference words its message as a refused permission and no capture has settled which it is.
+ *    inside a successful response. These are the codes the vendor's reference documents for a refused identity, and none has yet been captured inside a successful
+ *    response. `CODE_UNAUTHORIZED` has been captured at a 401, answering an invalid, a deleted and an under-scoped token alike, so the code settles nothing about
+ *    which refusal it was: there the 401 is classified, the door listing deciding which identity-leg error it is, and the envelope travels as its `cause`. Inside a
+ *    successful response it is read as a refused identity by this library's ruling, following its name, which is the HTTP vocabulary for a failed authentication.
  *
  * What is read is the error handed in, never its `cause` chain, so a wrapper around a refusal answers false, on the same terms as {@link isPrivilegeRefusal}. A caller
  * that wants a refused identity and a refused permission read together through an {@link AccessBootstrapError} hands the wrapper to {@link isSignInRefusal} instead. A

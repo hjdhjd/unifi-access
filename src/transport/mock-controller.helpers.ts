@@ -10,6 +10,7 @@ import { MockAgent } from "undici";
 import type { MockInterceptor } from "undici/types/mock-interceptor.js";
 import { TestClock } from "homebridge-plugin-utils/testing";
 import { Transport } from "./http.ts";
+import type { TransportOptions } from "./http.ts";
 
 // The bundle a test drives: the agent (for intercept setup and teardown), the interceptable pool bound to the controller origin, the transport under test, the
 // `TestClock` that advances breaker time, and the host string for building request URLs.
@@ -29,7 +30,7 @@ export function makeMockTransport(options: {
   host?: string;
   identity?: AccessIdentityLeg;
   log?: AccessLogging;
-  onUnauthorized?: (opts: { probe: boolean }) => Promise<boolean>;
+  onUnauthorized?: TransportOptions["onUnauthorized"];
 } = {}): MockTransport {
 
   const host = options.host ?? "10.0.0.1";
