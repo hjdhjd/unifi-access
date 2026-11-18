@@ -57,7 +57,7 @@ const rawHandler: CommandHandler = async (ctx) => {
   // describes a system rather than a crowd of strangers.
   const scrubPacket = createDocumentScrubber(values.scrub === true);
 
-  for await (const packet of (limit >= 1) ? take(source, limit) : source) {
+  for await(const packet of (limit >= 1) ? take(source, limit) : source) {
 
     renderDocument(ctx.output, scrubPacket(packet), "json");
   }

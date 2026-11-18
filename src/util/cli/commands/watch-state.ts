@@ -121,7 +121,7 @@ const stateHandler: CommandHandler = async (ctx) => {
 
   const observation = client.state.observe(selectDoorStates, { signal: deadline });
 
-  for await (const states of (limit >= 1) ? take(observation, limit) : observation) {
+  for await(const states of (limit >= 1) ? take(observation, limit) : observation) {
 
     renderStates(ctx.output, client, states, json);
   }

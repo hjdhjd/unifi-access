@@ -65,7 +65,7 @@ describe("makeFakeClient", () => {
     const drained: unknown[] = [];
     const draining = (async (): Promise<void> => {
 
-      for await (const packet of stream({ signal: controller.signal })) {
+      for await(const packet of stream({ signal: controller.signal })) {
 
         drained.push(packet);
       }

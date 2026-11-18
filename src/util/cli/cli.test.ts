@@ -341,7 +341,7 @@ describe("the shared predicates", () => {
 
     const taken: number[] = [];
 
-    for await (const value of take(source(), 0)) {
+    for await(const value of take(source(), 0)) {
 
       taken.push(value);
     }
@@ -350,7 +350,7 @@ describe("the shared predicates", () => {
 
     const bounded: number[] = [];
 
-    for await (const value of take(source(), 1)) {
+    for await(const value of take(source(), 1)) {
 
       bounded.push(value);
     }

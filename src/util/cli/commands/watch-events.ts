@@ -187,7 +187,7 @@ function renderStats(output: Output, counts: Map<string, number>): void {
 // firehose, ending the subscription.
 async function *filterPackets(source: AsyncIterable<AccessEventPacket>, filters: EventPredicate[]): AsyncGenerator<AccessEventPacket> {
 
-  for await (const packet of source) {
+  for await(const packet of source) {
 
     if(filters.every((filter) => filter(packet))) {
 
@@ -252,7 +252,7 @@ const eventsHandler: CommandHandler = async (ctx) => {
    */
   const scrubPacket = createDocumentScrubber(values.scrub === true);
 
-  for await (const packet of (limit >= 1) ? take(matching, limit) : matching) {
+  for await(const packet of (limit >= 1) ? take(matching, limit) : matching) {
 
     if(values.stats === true) {
 

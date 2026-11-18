@@ -428,7 +428,7 @@ export class EventStream implements AsyncDisposable {
     // Any other error still propagates.
     try {
 
-      for await (const [event] of this.#bus.stream("packet", opts)) {
+      for await(const [event] of this.#bus.stream("packet", opts)) {
 
         yield event;
       }

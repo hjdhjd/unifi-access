@@ -659,7 +659,7 @@ describe("AccessClient.connect", () => {
       const wakes: number[] = [];
       const watching = (async (): Promise<void> => {
 
-        for await (const _state of client.state.observe((state) => state, { signal: ac.signal })) {
+        for await(const _state of client.state.observe((state) => state, { signal: ac.signal })) {
 
           wakes.push(1);
         }
@@ -797,7 +797,7 @@ describe("AccessClient.connect", () => {
       const seen: string[] = [];
       const watching = (async (): Promise<void> => {
 
-        for await (const updated of hub.observe({ signal: ac.signal })) {
+        for await(const updated of hub.observe({ signal: ac.signal })) {
 
           seen.push(updated.name);
         }
@@ -829,7 +829,7 @@ describe("AccessClient.connect", () => {
       const raw: string[] = [];
       const task = (async (): Promise<void> => {
 
-        for await (const packet of client.rawPackets({ signal: controller.signal })) {
+        for await(const packet of client.rawPackets({ signal: controller.signal })) {
 
           raw.push(packet.event);
         }
@@ -862,7 +862,7 @@ describe("AccessClient.connect", () => {
       const collected: AccessWireEvent[] = [];
       const task = (async (): Promise<void> => {
 
-        for await (const event of client.events({ signal: controller.signal })) {
+        for await(const event of client.events({ signal: controller.signal })) {
 
           collected.push(event);
         }
@@ -958,7 +958,7 @@ describe("AccessClient.connect", () => {
 
         try {
 
-          for await (const [packet] of client.stream("packet", { signal: controller.signal })) {
+          for await(const [packet] of client.stream("packet", { signal: controller.signal })) {
 
             seen.push(packet.kind);
           }
@@ -993,12 +993,12 @@ describe("AccessClient.connect", () => {
       const events: unknown[] = [];
       const raw: unknown[] = [];
 
-      for await (const event of client.events({ signal: controller.signal })) {
+      for await(const event of client.events({ signal: controller.signal })) {
 
         events.push(event);
       }
 
-      for await (const packet of client.rawPackets({ signal: controller.signal })) {
+      for await(const packet of client.rawPackets({ signal: controller.signal })) {
 
         raw.push(packet);
       }

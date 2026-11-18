@@ -98,7 +98,7 @@ async function observeFirstPacket(client: AccessClient, signal: AbortSignal): Pr
 
   const deadline = AbortSignal.any([ signal, AbortSignal.timeout(DOCTOR_EVENT_WAIT_MS) ]);
 
-  for await (const packet of client.rawPackets({ signal: deadline })) {
+  for await(const packet of client.rawPackets({ signal: deadline })) {
 
     return packet;
   }

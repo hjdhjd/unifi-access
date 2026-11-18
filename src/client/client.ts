@@ -1064,7 +1064,7 @@ export class AccessClient implements AsyncDisposable {
     // firehose ends quietly rather than forcing every consumer to wrap it. Any other error still propagates.
     try {
 
-      for await (const [event] of this.#bus.stream("packet", opts)) {
+      for await(const [event] of this.#bus.stream("packet", opts)) {
 
         yield event;
       }
@@ -1092,7 +1092,7 @@ export class AccessClient implements AsyncDisposable {
 
     try {
 
-      for await (const [packet] of this.#bus.stream("rawPacket", opts)) {
+      for await(const [packet] of this.#bus.stream("rawPacket", opts)) {
 
         yield packet;
       }

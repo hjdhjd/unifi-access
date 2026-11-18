@@ -82,7 +82,7 @@ describe("liveness and read-through", () => {
     const seen: string[] = [];
     const done = (async (): Promise<void> => {
 
-      for await (const updated of device.observe({ signal: ac.signal })) {
+      for await(const updated of device.observe({ signal: ac.signal })) {
 
         seen.push(updated.name);
       }

@@ -899,7 +899,7 @@ export async function *take<T>(source: AsyncIterable<T>, count: number): AsyncGe
 
   let taken = 0;
 
-  for await (const value of source) {
+  for await(const value of source) {
 
     yield value;
 

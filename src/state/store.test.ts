@@ -70,7 +70,7 @@ function collect<T>(iterable: AsyncIterable<T>): { done: Promise<void>; values: 
   const values: T[] = [];
   const done = (async (): Promise<void> => {
 
-    for await (const value of iterable) {
+    for await(const value of iterable) {
 
       values.push(value);
     }
@@ -344,7 +344,7 @@ describe("StateStore", () => {
       // A deliberately slow consumer: it parks on the first value it receives, so everything dispatched while it is parked accumulates in its queue.
       const done = (async (): Promise<void> => {
 
-        for await (const value of store.observe((state) => state)) {
+        for await(const value of store.observe((state) => state)) {
 
           values.push(value);
 
@@ -881,7 +881,7 @@ describe("StateStore", () => {
       const ac = new AbortController();
       const done = (async (): Promise<void> => {
 
-        for await (const _doors of store.observe((state) => state.doors, { signal: ac.signal })) {
+        for await(const _doors of store.observe((state) => state.doors, { signal: ac.signal })) {
 
           order.push("observer");
         }

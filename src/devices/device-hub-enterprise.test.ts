@@ -97,7 +97,7 @@ describe("the Enterprise Access Hub port matrix", () => {
     const seen: string[] = [];
     const done = (async (): Promise<void> => {
 
-      for await (const updated of port2.observe({ signal: ac.signal })) {
+      for await(const updated of port2.observe({ signal: ac.signal })) {
 
         seen.push(updated.config.ip ?? "");
       }
