@@ -512,6 +512,45 @@ describe("ConnectionMonitor", () => {
       await assert.rejects(handshake, AccessAbortedError);
     });
 
+    test("an open after disposal rejects with the disposal and builds no stream", async () => {
+
+      let calls = 0;
+
+      const monitor = unopenedMonitor({ eventStreamFactory: (): EventStream => {
+
+        calls++;
+
+        return assert.fail("a disposed monitor must not build a stream");
+      } });
+
+      await monitor[Symbol.asyncDispose]();
+
+      // A stream built after disposal would have no owner left to close it, so the open refuses before it reaches the factory.
+      await assert.rejects(monitor.open(), { constructor: AccessAbortedError, message: "The UniFi Access connection monitor was disposed." });
+      assert.equal(calls, 0, "no stream was built");
+    });
+
+    test("a second open joins the channel already open, so every frame still arrives once", async () => {
+
+      const rig = await harness();
+
+      await using monitor = rig.monitor;
+      const { rawSunk, streams, sunk } = rig;
+
+      await monitor.opened;
+      await monitor.open();
+
+      assert.equal(streams.length, 1, "the second open built no second socket");
+
+      // A second stream would bridge into the same sinks beside the first, so one frame would arrive twice.
+      streams[0]?.emitMessage(deviceFrame());
+
+      await settle();
+
+      assert.equal(sunk.length, 1, "the frame is sunk once");
+      assert.equal(rawSunk.length, 1, "and reaches the raw sink once");
+    });
+
     test("a socket error before the first open rejects the handshake and starts no recovery", async () => {
 
       const clock = new TestClock();

@@ -205,7 +205,8 @@ open(): Promise<void>;
 
 Open the realtime notification channel. This is the composition root's call, made once inside the guard that owns teardown: everything the socket allocates is
 built here rather than while the monitor is being assembled, so a failure always has an owner that can dispose it. Either outcome settles
-[ConnectionMonitor.opened](#opened).
+[ConnectionMonitor.opened](#opened). The channel opens once: a later call waits on the channel already open or opening rather than opening a second, and a call
+after disposal opens nothing.
 
 #### Returns
 
@@ -213,7 +214,8 @@ built here rather than while the monitor is being assembled, so a failure always
 
 #### Throws
 
-[AccessAbortedError](../classes/AccessAbortedError.md) if the connect signal cancels the handshake, or a transport-level `AccessError` when the socket cannot be opened.
+[AccessAbortedError](../classes/AccessAbortedError.md) if the connect signal cancels the handshake or the monitor has been disposed, or a transport-level `AccessError` when the
+  socket cannot be opened.
 
 ***
 

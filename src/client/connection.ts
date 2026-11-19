@@ -265,11 +265,17 @@ class ManagedEventStream implements AsyncDisposable {
 
   /**
    * Build the first stream and wait for it to open. The caller's signal binds to this connect alone and is never carried into a relaunch, which must not inherit a
-   * signal that may already have fired.
+   * signal that may already have fired. The owner holds one stream at a time, so a later call waits on the stream already built rather than building a second whose
+   * bridges would deliver every frame twice, and a disposed owner builds nothing, since a stream built then would have no owner left to close it.
    */
   async open(signal?: AbortSignal): Promise<void> {
 
-    const stream = this.#build(signal);
+    if(this.#disposed) {
+
+      throw new AccessAbortedError("The UniFi Access connection monitor was disposed.");
+    }
+
+    const stream = this.#stream ?? this.#build(signal);
 
     this.#stream = stream;
 
@@ -467,9 +473,11 @@ export class ConnectionMonitor {
   /**
    * Open the realtime notification channel. This is the composition root's call, made once inside the guard that owns teardown: everything the socket allocates is
    * built here rather than while the monitor is being assembled, so a failure always has an owner that can dispose it. Either outcome settles
-   * {@link ConnectionMonitor.opened}.
+   * {@link ConnectionMonitor.opened}. The channel opens once: a later call waits on the channel already open or opening rather than opening a second, and a call
+   * after disposal opens nothing.
    *
-   * @throws {@link AccessAbortedError} if the connect signal cancels the handshake, or a transport-level `AccessError` when the socket cannot be opened.
+   * @throws {@link AccessAbortedError} if the connect signal cancels the handshake or the monitor has been disposed, or a transport-level `AccessError` when the
+   *   socket cannot be opened.
    */
   async open(): Promise<void> {
 
