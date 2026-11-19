@@ -39,8 +39,9 @@ export interface TokenSessionOptions {
  * shows the token holding, so the refused request was a missing permission, and a listing it refuses shows the token itself refused. A door read that is refused
  * therefore costs a second, identical listing, which is one more read on a path that already ends in a refusal.
  *
- * The session has no ended state. A 401 that lands after the client is disposed still sends its listing, which fails at once on the transport's released pool, and
- * on an injected dispatcher goes out as one read bounded by the request deadline.
+ * The session has no ended state, because its transport has one. A 401 that lands after the client is disposed still asks for its listing, which the disposed
+ * transport refuses at entry with an `AccessAbortedError`, so no listing is dispatched, on the owned pool or an injected dispatcher alike, and the refused
+ * request throws that error.
  */
 export class TokenSession {
 

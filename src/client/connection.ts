@@ -500,10 +500,11 @@ export class ConnectionMonitor {
   }
 
   /**
-   * Wait for the next emission of a connection event.
+   * Wait for the next emission of a connection event. A wait still pending when the monitor is disposed rejects with an {@link AccessAbortedError}, so a wait that is
+   * never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to await.
-   * @param opts  - Optional abort signal.
+   * @param opts  - Optional abort signal that cancels the wait.
    *
    * @returns A promise resolving to the event's argument tuple.
    */
@@ -513,7 +514,8 @@ export class ConnectionMonitor {
   }
 
   /**
-   * Stream every subsequent emission of a connection event until the signal aborts.
+   * Stream every subsequent emission of a connection event until the signal aborts or the monitor is disposed. The disposal ends the iteration cleanly once every
+   * emission made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to stream.
    * @param opts  - Stream options, including the abort signal.
@@ -526,8 +528,8 @@ export class ConnectionMonitor {
   }
 
   /**
-   * Observe the state machine: every transition until the signal aborts. Sugar over the `stateChanged` rail that unwraps the single-element tuple and ends quietly
-   * on the caller's own abort.
+   * Observe the state machine: every transition until the signal aborts or the monitor is disposed. Sugar over the `stateChanged` rail that unwraps the
+   * single-element tuple and ends quietly on the caller's own abort.
    *
    * @param opts - Optional abort signal that terminates the iteration.
    *
@@ -566,8 +568,8 @@ export class ConnectionMonitor {
   }
 
   /**
-   * Dispose the monitor: end the uptime-observation loop and any recovery wait, release the initial handshake, detach the throttle subscriptions, and tear the
-   * notification stream down. Safe to call more than once.
+   * Dispose the monitor: end the uptime-observation loop and any recovery wait, release the initial handshake, detach the throttle subscriptions, tear the
+   * notification stream down, and end every stream and pending wait on the monitor's events. Safe to call more than once.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 
@@ -584,6 +586,9 @@ export class ConnectionMonitor {
     }
 
     await this.#managed[Symbol.asyncDispose]();
+
+    // The bus closes last, after the notification stream's teardown has settled, so the close follows every emission the monitor makes.
+    this.#bus.close(new AccessAbortedError("The UniFi Access connection monitor was disposed."));
   }
 
   // The one derivation of the observable state. The throttle verdict surfaces only while the recovery phase is healthy - that is, while the breaker is the only
@@ -903,6 +908,13 @@ export class ConnectionMonitor {
     try {
 
       for await(const uptime of this.#store.observe(selectControllerUptime, { signal: this.#controller.signal })) {
+
+        // The observer drains a value it queued before the abort, so a disposal that lands between an uptime change and its delivery still reaches this loop with
+        // a value. The lifetime signal is read first, so a disposed monitor ends detection with no further line or event.
+        if(this.#controller.signal.aborted) {
+
+          return;
+        }
 
         const previousUptime = this.#lastUptime;
 

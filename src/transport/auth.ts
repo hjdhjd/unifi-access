@@ -231,17 +231,17 @@ export class AuthSession {
    * controller that is flapping produces overlapping cycles; coalescing means the checks cannot resolve out of order and overwrite each other with staler answers.
    *
    * The check never disrupts its caller. A transport failure keeps the recorded verdict and reports at debug, because a privilege check that could not reach the
-   * controller has learned nothing - it has not learned that the account is unprivileged. The one exception is the caller's own cancellation, which is returned to
-   * it as the abort it asked for. The verdict is the credentials' own and is reported only while a session is held, so a check whose session was lost under it -
-   * its own relogin failing, or another request's relogin failing before its answer landed - returns `null`, and what it recorded reads again once a relogin
-   * re-establishes the session.
+   * controller has learned nothing - it has not learned that the account is unprivileged. The one exception is a cancellation, the caller's own or a transport
+   * already disposed, which is returned to the caller as the abort it is. The verdict is the credentials' own and is reported only while a session is held, so a
+   * check whose session was lost under it - its own relogin failing, or another request's relogin failing before its answer landed - returns `null`, and what it
+   * recorded reads again once a relogin re-establishes the session.
    *
    * @param opts - Optional abort signal for the request.
    *
    * @returns The privilege verdict as {@link AuthSession.isAdmin} reports it once the check settles: the recorded verdict while a session is held, whether or not
    *   the check established a new one, and `null` while none is.
    *
-   * @throws {@link AccessAbortedError} if the caller's signal aborts the request.
+   * @throws {@link AccessAbortedError} if the caller's signal aborts the request or the transport has been disposed.
    */
   async refreshAdminStatus(opts: { signal?: AbortSignal } = {}): Promise<Nullable<boolean>> {
 
@@ -327,9 +327,9 @@ export class AuthSession {
         { method: "GET", ...((opts.signal !== undefined) && { signal: opts.signal }) });
     } catch(error) {
 
-      // A cancellation is the caller's own decision and belongs back with the caller. Every other failure means we did not learn anything, which is not the same as
-      // learning the account is unprivileged, so the recorded verdict stands. It is returned as the session reports it, which is `null` when the failure was this
-      // request's own relogin, because that relogin dropped the session's cookie.
+      // A cancellation, the caller's own decision or a transport already disposed, belongs back with the caller. Every other failure means we did not learn
+      // anything, which is not the same as learning the account is unprivileged, so the recorded verdict stands. It is returned as the session reports it, which is
+      // `null` when the failure was this request's own relogin, because that relogin dropped the session's cookie.
       if(error instanceof AccessAbortedError) {
 
         throw error;

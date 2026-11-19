@@ -131,7 +131,10 @@ export interface FakeClientSpec {
   doorStates?: Map<string, AccessDoorStateEntry>;
   doorStatesError?: Error;
   fetchError?: Error;
-  /** The stream yields nothing until the signal it was handed aborts, which is how a test proves a bound ended the stream without depending on when it fires. */
+  /**
+   * The stream yields nothing until the signal it was handed aborts or the fake is disposed, which is how a test proves a bound ended the stream without depending
+   * on when it fires.
+   */
   holdUntilAborted?: boolean;
   hubIds?: string[];
   isAdmin?: boolean | null;
@@ -576,6 +579,9 @@ export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; c
     root: spec.snapshot?.root ?? null };
   const official = ((spec.official !== undefined) && capabilities.official) ? makeFakeOfficial(calls, spec.official) : null;
 
+  // The fake's lifetime, which its disposal ends, releasing a held stream as the real client's disposal ends its rails.
+  const lifetime = new AbortController();
+
   const client: Record<string, unknown> = {
 
     accessPoint: (id: string): unknown => accessPointHandles.find((device) => device["id"] === id),
@@ -623,8 +629,8 @@ export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; c
         throw spec.streamError;
       }
 
-      /* A stream held until its bound fires. The fake yields nothing while it waits, so a test establishes that a bound ended the stream without depending on
-       * when the bound's own timer fires. The loop's abort check below is what then ends the stream with nothing yielded.
+      /* A stream held until its bound fires or the fake is disposed. The fake yields nothing while it waits, so a test establishes that a bound ended the stream
+       * without depending on when the bound's own timer fires. The loop's check below is what then ends the stream with nothing yielded.
        */
       if(spec.holdUntilAborted === true) {
 
@@ -635,14 +641,16 @@ export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; c
           throw new Error("A held stream needs the signal the command runs under, but the caller passed none.");
         }
 
-        await (signal.aborted ? Promise.resolve() : new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true })));
+        const released = AbortSignal.any([ signal, lifetime.signal ]);
+
+        await (released.aborted ? Promise.resolve() : new Promise<void>((resolve) => released.addEventListener("abort", () => resolve(), { once: true })));
       }
 
       for(const packet of spec.packets ?? []) {
 
-        // A real stream ends when its signal fires rather than yielding into an aborted consumer, so the fake stops here too - which is what lets a test tell an
-        // armed bound from an unarmed one by counting what arrived.
-        if(opts.signal?.aborted === true) {
+        // A real stream ends when its signal fires or its client is disposed rather than yielding into a consumer it has let go, so the fake stops here too - which
+        // is what lets a test tell an armed bound from an unarmed one by counting what arrived.
+        if((opts.signal?.aborted === true) || lifetime.signal.aborted) {
 
           return;
         }
@@ -671,6 +679,7 @@ export function makeFakeClient(spec: FakeClientSpec = {}): { calls: FakeCalls; c
     [Symbol.asyncDispose]: async (): Promise<void> => {
 
       calls.disposals += 1;
+      lifetime.abort();
 
       return Promise.resolve();
     }

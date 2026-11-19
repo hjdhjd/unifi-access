@@ -104,8 +104,8 @@ The current connection state, derived live from the recovery phase and the trans
 [asyncDispose](): Promise<void>;
 ```
 
-Dispose the monitor: end the uptime-observation loop and any recovery wait, release the initial handshake, detach the throttle subscriptions, and tear the
-notification stream down. Safe to call more than once.
+Dispose the monitor: end the uptime-observation loop and any recovery wait, release the initial handshake, detach the throttle subscriptions, tear the
+notification stream down, and end every stream and pending wait on the monitor's events. Safe to call more than once.
 
 #### Returns
 
@@ -119,8 +119,8 @@ notification stream down. Safe to call more than once.
 observe(opts?): AsyncGenerator<ConnectionTransition>;
 ```
 
-Observe the state machine: every transition until the signal aborts. Sugar over the `stateChanged` rail that unwraps the single-element tuple and ends quietly
-on the caller's own abort.
+Observe the state machine: every transition until the signal aborts or the monitor is disposed. Sugar over the `stateChanged` rail that unwraps the
+single-element tuple and ends quietly on the caller's own abort.
 
 #### Parameters
 
@@ -172,7 +172,8 @@ A `Disposable` that removes the listener when disposed.
 once<K>(event, opts?): Promise<ConnectionEvents[K]>;
 ```
 
-Wait for the next emission of a connection event.
+Wait for the next emission of a connection event. A wait still pending when the monitor is disposed rejects with an [AccessAbortedError](../classes/AccessAbortedError.md), so a wait that is
+never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
 
 #### Type Parameters
 
@@ -185,7 +186,7 @@ Wait for the next emission of a connection event.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `event` | `K` | The event to await. |
-| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that cancels the wait. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -222,7 +223,8 @@ built here rather than while the monitor is being assembled, so a failure always
 stream<K>(event, opts?): AsyncIterable<ConnectionEvents[K]>;
 ```
 
-Stream every subsequent emission of a connection event until the signal aborts.
+Stream every subsequent emission of a connection event until the signal aborts or the monitor is disposed. The disposal ends the iteration cleanly once every
+emission made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
 
 #### Type Parameters
 

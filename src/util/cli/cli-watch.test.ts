@@ -604,7 +604,9 @@ describe("the watch raw command", () => {
 
     assert.equal(rendered(bounded.lines).length, 2);
 
-    const unbounded = makeCommandContext({ args: ["--count=0"], calls, client });
+    // The bounded run disposed its client, as every command does, so the unbounded run opens a fresh one.
+    const fresh = makeFakeClient({ packets: [ RING, CANCEL, REMOTE_UNLOCK ] });
+    const unbounded = makeCommandContext({ args: ["--count=0"], calls: fresh.calls, client: fresh.client });
 
     await watchRaw.run(unbounded.ctx);
 

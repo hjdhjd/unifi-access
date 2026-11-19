@@ -208,7 +208,8 @@ get transport(): Nullable<Transport>;
 
 The HTTP transport for the Access application's own endpoints - the documented escape hatch for calls the typed surface does not cover - or `null` on a client
 with no credentials, which never reaches those endpoints at all. The escape hatch belongs to the credential surface; the official API's own untyped endpoints
-are reachable through [AccessClient.official](#official)'s request hatches.
+are reachable through [AccessClient.official](#official)'s request hatches. The client's disposal disposes it, so a request sent through it afterwards rejects with
+an [AccessAbortedError](AccessAbortedError.md).
 
 ##### Returns
 
@@ -223,9 +224,9 @@ are reachable through [AccessClient.official](#official)'s request hatches.
 ```
 
 Dispose the client: tear down the connection monitor, stopping recovery and closing the realtime channel; stop the refresh failsafe and end every observation;
-end the session; and destroy every connection pool this client built - in that order, so what feeds the state and the transports stops before they do. A client
-holding both identities destroys both pools; one holding either destroys the one it built. Safe to call more than once, and the canonical teardown through
-`await using client = await AccessClient.connect(...)`.
+end the session; and destroy every connection pool this client built - in that order, so what feeds the state and the transports stops before they do - and
+then end every stream and pending wait on the client's events, `events()` and `rawPackets()` among them. A client holding both identities destroys both pools;
+one holding either destroys the one it built. Safe to call more than once, and the canonical teardown through `await using client = await AccessClient.connect(...)`.
 
 #### Returns
 
@@ -396,7 +397,8 @@ A `Disposable` that removes the listener when disposed.
 once<K>(event, opts?): Promise<AccessClientEvents[K]>;
 ```
 
-Wait for the next emission of a client event.
+Wait for the next emission of a client event. A wait still pending when the client is disposed rejects with an [AccessAbortedError](AccessAbortedError.md), so a wait that is
+never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
 
 #### Type Parameters
 
@@ -409,7 +411,7 @@ Wait for the next emission of a client event.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `event` | `K` | The event to await. |
-| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that cancels the wait. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -426,9 +428,9 @@ A promise resolving to the event's argument tuple.
 rawPackets(opts?): AsyncGenerator<AccessEventPacketInterface>;
 ```
 
-The raw firehose: every well-formed frame the controller sent, before classification, so it carries the notifications the library does not model and the
-payload fields the translation drops. Pure observability - a raw frame is never folded into state, so reading `client.state` inside this loop carries no
-ordering guarantee relative to the frame.
+The raw firehose: every well-formed frame the controller sends until the signal aborts or the client is disposed, taken before classification, so it carries the
+notifications the library does not model and the payload fields the translation drops. Pure observability - a raw frame is never folded into state, so reading
+`client.state` inside this loop carries no ordering guarantee relative to the frame.
 
 #### Parameters
 
@@ -451,7 +453,8 @@ An async iterable of raw notification packets.
 stream<K>(event, opts?): AsyncIterable<AccessClientEvents[K]>;
 ```
 
-Stream every subsequent emission of a client event until the signal aborts.
+Stream every subsequent emission of a client event until the signal aborts or the client is disposed. The disposal ends the iteration cleanly once every emission
+made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
 
 #### Type Parameters
 

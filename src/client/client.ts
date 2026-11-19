@@ -893,7 +893,8 @@ export class AccessClient implements AsyncDisposable {
   /**
    * The HTTP transport for the Access application's own endpoints - the documented escape hatch for calls the typed surface does not cover - or `null` on a client
    * with no credentials, which never reaches those endpoints at all. The escape hatch belongs to the credential surface; the official API's own untyped endpoints
-   * are reachable through {@link AccessClient.official}'s request hatches.
+   * are reachable through {@link AccessClient.official}'s request hatches. The client's disposal disposes it, so a request sent through it afterwards rejects with
+   * an {@link AccessAbortedError}.
    */
   get transport(): Nullable<Transport> {
 
@@ -1026,10 +1027,11 @@ export class AccessClient implements AsyncDisposable {
   }
 
   /**
-   * Wait for the next emission of a client event.
+   * Wait for the next emission of a client event. A wait still pending when the client is disposed rejects with an {@link AccessAbortedError}, so a wait that is
+   * never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to await.
-   * @param opts  - Optional abort signal.
+   * @param opts  - Optional abort signal that cancels the wait.
    *
    * @returns A promise resolving to the event's argument tuple.
    */
@@ -1039,7 +1041,8 @@ export class AccessClient implements AsyncDisposable {
   }
 
   /**
-   * Stream every subsequent emission of a client event until the signal aborts.
+   * Stream every subsequent emission of a client event until the signal aborts or the client is disposed. The disposal ends the iteration cleanly once every emission
+   * made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to stream.
    * @param opts  - Stream options, including the abort signal.
@@ -1061,8 +1064,8 @@ export class AccessClient implements AsyncDisposable {
    */
   async *events(opts: { signal?: AbortSignal } = {}): AsyncGenerator<AccessWireEvent> {
 
-    // The underlying rail rejects with the abort reason when its signal fires; this sugar smooths the caller's own abort into a clean return, so a loop over the
-    // firehose ends quietly rather than forcing every consumer to wrap it. Any other error still propagates.
+    // The underlying rail rejects with an `AbortError` when its signal fires and ends cleanly when the client is disposed; this sugar smooths the caller's own abort
+    // into a clean return, so a loop over the firehose ends quietly rather than forcing every consumer to wrap it. Any other error still propagates.
     try {
 
       for await(const [event] of this.#bus.stream("packet", opts)) {
@@ -1081,9 +1084,9 @@ export class AccessClient implements AsyncDisposable {
   }
 
   /**
-   * The raw firehose: every well-formed frame the controller sent, before classification, so it carries the notifications the library does not model and the
-   * payload fields the translation drops. Pure observability - a raw frame is never folded into state, so reading `client.state` inside this loop carries no
-   * ordering guarantee relative to the frame.
+   * The raw firehose: every well-formed frame the controller sends until the signal aborts or the client is disposed, taken before classification, so it carries the
+   * notifications the library does not model and the payload fields the translation drops. Pure observability - a raw frame is never folded into state, so reading
+   * `client.state` inside this loop carries no ordering guarantee relative to the frame.
    *
    * @param opts - Optional abort signal that terminates the iteration.
    *
@@ -1152,9 +1155,9 @@ export class AccessClient implements AsyncDisposable {
 
   /**
    * Dispose the client: tear down the connection monitor, stopping recovery and closing the realtime channel; stop the refresh failsafe and end every observation;
-   * end the session; and destroy every connection pool this client built - in that order, so what feeds the state and the transports stops before they do. A client
-   * holding both identities destroys both pools; one holding either destroys the one it built. Safe to call more than once, and the canonical teardown through
-   * `await using client = await AccessClient.connect(...)`.
+   * end the session; and destroy every connection pool this client built - in that order, so what feeds the state and the transports stops before they do - and
+   * then end every stream and pending wait on the client's events, `events()` and `rawPackets()` among them. A client holding both identities destroys both pools;
+   * one holding either destroys the one it built. Safe to call more than once, and the canonical teardown through `await using client = await AccessClient.connect(...)`.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 
@@ -1171,5 +1174,8 @@ export class AccessClient implements AsyncDisposable {
     // mode, so a client with one identity tears down one pool by the same code that tears down two.
     await this.#direct?.transport[Symbol.asyncDispose]();
     await this.#official?.transport[Symbol.asyncDispose]();
+
+    // The client emits only through the sinks the monitor's teardown has already detached, so the bus closes after every emission the client makes.
+    this.#bus.close(new AccessAbortedError("The UniFi Access client was disposed."));
   }
 }

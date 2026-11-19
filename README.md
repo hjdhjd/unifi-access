@@ -59,7 +59,7 @@ When the scope exits, including on a thrown error, `await using` closes the noti
 
 ## The realtime firehose
 
-`client.events()` is an async iterable of every typed event the controller emits, ending cleanly when its signal aborts. Each event has already been folded into the state model by the time it reaches you, so reading `client.state` inside the loop sees the post-event state:
+`client.events()` is an async iterable of every typed event the controller emits, ending cleanly when its signal aborts or the client is disposed. Each event has already been folded into the state model by the time it reaches you, so reading `client.state` inside the loop sees the post-event state:
 
 ```ts
 for await (const event of client.events({ signal })) {

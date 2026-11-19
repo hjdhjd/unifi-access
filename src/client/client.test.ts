@@ -4,7 +4,7 @@
  * real controller document, the typed error for each failure stage, the diagnostics the client publishes, and clean teardown. Driven against a mocked controller
  * and an injected notification socket, so the whole composition runs without a live controller.
  */
-import { AccessApiError, AccessBootstrapError, AccessNetworkError, AccessProtocolError } from "../errors.ts";
+import { AccessAbortedError, AccessApiError, AccessBootstrapError, AccessNetworkError, AccessProtocolError } from "../errors.ts";
 import type { AccessConnectionTransitionPayload, AccessStoreDispatchPayload } from "../diagnostics.ts";
 import { CONTROLLER_PATH, HOST, LOGIN_PATH, SELF_PATH, TOPOLOGY_PATH, mockController } from "./client-modes.helpers.ts";
 import { DOOR_HUB, UAH_ID } from "../protocol/capture.helpers.ts";
@@ -14,6 +14,7 @@ import { accessBootstrap2026Fixture, accessControllerInfoFixture } from "../prot
 import { describe, test } from "node:test";
 import { ACCESS_API_ERROR_LIMIT } from "../settings.ts";
 import { AccessClient } from "./client.ts";
+import type { AccessEventPacket } from "../types/index.ts";
 import type { AccessLogging } from "../logging.ts";
 import type { AccessWireEvent } from "../protocol/events.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
@@ -951,7 +952,7 @@ describe("AccessClient.connect", () => {
 
       assert.equal(event.kind, "deviceChanged");
 
-      // The raw stream rail rejects with the abort reason when its signal fires - the contract the firehose sugar smooths, and which a direct consumer handles.
+      // The raw stream rail rejects with an `AbortError` when its signal fires - the contract the firehose sugar smooths, and which a direct consumer handles.
       const controller = new AbortController();
       const seen: string[] = [];
       const consumer = (async (): Promise<void> => {
@@ -964,7 +965,7 @@ describe("AccessClient.connect", () => {
           }
         } catch {
 
-          // The abort reason ends the iteration.
+          // The `AbortError` ends the iteration.
         }
       })();
 
@@ -1249,6 +1250,56 @@ describe("AccessClient.connect", () => {
 
       // The session was ended, so the privilege verdict it earned is gone with it rather than being reported as still held.
       assert.equal(client.isAdmin, null);
+    });
+
+    test("disposal ends events() and rawPackets() once they have delivered what came before it, and rejects a pending wait", async () => {
+
+      const { agent, pool } = mockController();
+
+      interceptLogin(pool);
+      interceptPass(pool);
+
+      const { client, ws } = await connectCapturing(agent);
+      const events: AccessWireEvent[] = [];
+      const raw: AccessEventPacket[] = [];
+
+      // Neither firehose is handed a signal, so only the disposal can end them.
+      const eventsLoop = (async (): Promise<void> => {
+
+        for await(const event of client.events()) {
+
+          events.push(event);
+        }
+      })();
+      const rawLoop = (async (): Promise<void> => {
+
+        for await(const packet of client.rawPackets()) {
+
+          raw.push(packet);
+        }
+      })();
+
+      // One frame reaches each firehose before the disposal, and the wait begins after it, so only the disposal can settle the wait.
+      ws.emitMessage(deviceFrame(UAH_ID));
+
+      const wait = client.once("packet");
+      let eventsEnded = false;
+      let rawEnded = false;
+      let settled = false;
+
+      void Promise.allSettled([eventsLoop]).then(() => { eventsEnded = true; });
+      void Promise.allSettled([rawLoop]).then(() => { rawEnded = true; });
+      void Promise.allSettled([wait]).then(() => { settled = true; });
+
+      await client[Symbol.asyncDispose]();
+
+      await settleUntil(() => eventsEnded, { description: "events() to end at the disposal" });
+      await settleUntil(() => rawEnded, { description: "rawPackets() to end at the disposal" });
+      await settleUntil(() => settled, { description: "the pending wait to settle at the disposal" });
+      await Promise.all([ eventsLoop, rawLoop ]);
+      assert.deepEqual(events.map(({ kind }) => kind), ["deviceChanged"], "events() delivered the frame that came before the disposal");
+      assert.equal(raw.length, 1, "and so did rawPackets()");
+      await assert.rejects(wait, { constructor: AccessAbortedError, message: "The UniFi Access client was disposed." });
     });
   });
 });

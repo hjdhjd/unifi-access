@@ -16,17 +16,19 @@ import { AccessAbortedError, AccessAuthError, AccessCertificateError, AccessNetw
   AccessTimeoutError } from "../errors.ts";
 import type { AccessHttpRequestEndPayload, AccessHttpRequestStartPayload, AccessHttpThrottleEnteredPayload,
   AccessHttpThrottleExitedPayload } from "../diagnostics.ts";
+import type { AccessResponse, UnauthorizedVerdict } from "./http.ts";
 import { DIAL_SETTLE_BOUND_MS, createHttpsLoopback, createResettingLoopback, createSilentLoopback, createUnansweringHttpsLoopback, elapsedSince,
   pendingThroughRedialWait } from "./loopback.helpers.ts";
 import { RetryHandler, errors } from "undici";
 import { TestClock, capturingLog, errnoError, expectAt, loggedAt, settle, silentLog, waitUntil } from "homebridge-plugin-utils/testing";
 import { Transport, controllerServing, responseOk, retryUnlessHinted } from "./http.ts";
 import { describe, test } from "node:test";
-import { makeMockTransport, url } from "./mock-controller.helpers.ts";
+import { heldReply, makeMockTransport, url } from "./mock-controller.helpers.ts";
 import type { Dispatcher } from "undici";
 import type { IncomingHttpHeaders } from "node:http";
 import type { MockTimers } from "node:test";
 import type { MockTransport } from "./mock-controller.helpers.ts";
+import { TokenSession } from "../official/session.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { setTimeout as setTimeoutAsync } from "node:timers/promises";
@@ -534,6 +536,63 @@ describe("Transport", () => {
       await transport.send(url(host, "/f"));
 
       assert.equal(transport.isThrottled, true, "so the next failure is the one that crosses the threshold");
+    });
+
+    test("a 401 whose hook recovers the identity after disposal rejects with the disposal's error and dispatches no retry", async () => {
+
+      const hookAsked = Promise.withResolvers<undefined>();
+      const hookAnswer = Promise.withResolvers<UnauthorizedVerdict>();
+      const { host, pool, transport } = makeMockTransport({ onUnauthorized: async (): Promise<UnauthorizedVerdict> => {
+
+        hookAsked.resolve(undefined);
+
+        return hookAnswer.promise;
+      } });
+      const starts: AccessHttpRequestStartPayload[] = [];
+
+      using startSub = subscribeTo(channels.httpRequestStart, (message) => void starts.push(message));
+
+      // The injected dispatcher would still serve the retry, so only the transport's own refusal keeps it from going out. The hook recovers the identity only once
+      // the disposal has landed, the order a relogin that outlives its transport takes.
+      pool.intercept({ method: "GET", path: "/x" }).reply(401, "stale");
+      pool.intercept({ method: "GET", path: "/x" }).reply(200, { ok: 1 });
+
+      const pending = transport.send(url(host, "/x"));
+
+      await hookAsked.promise;
+      await transport[Symbol.asyncDispose]();
+      hookAnswer.resolve("recovered");
+
+      await assert.rejects(pending, { constructor: AccessAbortedError, message: "The UniFi Access transport was disposed." });
+      assert.equal(starts.length, 1, "the retry was never dispatched, only the attempt that met the 401");
+    });
+
+    test("a token transport's 401 that lands after disposal sends no listing, and the request throws the disposal's error", async () => {
+
+      const held = heldReply(401, "stale");
+      const { host, pool, transport } = makeMockTransport({ identity: "token",
+        onUnauthorized: async (listing): Promise<UnauthorizedVerdict> => session.unauthorized(listing) });
+
+      // The session settles the 401 by a listing sent through the transport that met it, with the 401 hook disabled, as the composition root wires a token.
+      const listingUrl = url(host, "/doors");
+      const sendDoorListing = async (listing: { probe: boolean }): Promise<AccessResponse> => transport.send(listingUrl, { authRetry: false, probe: listing.probe });
+      const session = new TokenSession({ sendDoorListing, token: "a-token" });
+      const starts: AccessHttpRequestStartPayload[] = [];
+
+      using startSub = subscribeTo(channels.httpRequestStart, (message) => void starts.push(message));
+
+      // The injected dispatcher would still serve the listing, so only the transport's own refusal keeps it from going out. The 401 is held until the disposal
+      // has completed, so the session asks for its listing from a transport already disposed.
+      pool.intercept({ method: "GET", path: "/x" }).reply(held.reply);
+      pool.intercept({ method: "GET", path: "/doors" }).reply(200, []);
+
+      const pending = transport.send(url(host, "/x"));
+
+      await transport[Symbol.asyncDispose]();
+      held.release();
+
+      await assert.rejects(pending, { constructor: AccessAbortedError, message: "The UniFi Access transport was disposed." });
+      assert.deepEqual(starts.map((start) => start.url), [url(host, "/x")], "the listing was refused at entry, so only the request that met the 401 was dispatched");
     });
   });
 
@@ -1598,6 +1657,74 @@ describe("Transport", () => {
 
       assert.ok(loggedAt(log.entries, "info", "Resumed"), "the recovery should log at info level");
     });
+
+    test("a request in flight at disposal that fails afterwards trips nothing, though its failure would cross the threshold", async () => {
+
+      let entered = 0;
+      const { host, pool, transport } = makeMockTransport();
+      const held = heldReply(500, "x");
+
+      using enteredSub = transport.on("throttleEntered", () => entered++);
+
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT - 1);
+
+      await sendFailures(transport, url(host, "/f"), ACCESS_API_ERROR_LIMIT - 1);
+
+      // One more failure would cross the threshold. Its reply is held until the disposal has completed, so it settles on a terminal transport, which books nothing,
+      // where a booking would trip the breaker and announce the trip.
+      pool.intercept({ method: "GET", path: "/f" }).reply(held.reply);
+
+      const pending = transport.send(url(host, "/f"));
+
+      await transport[Symbol.asyncDispose]();
+      held.release();
+
+      assert.equal((await pending).statusCode, 500, "the controller answered the request in flight with a failure");
+      assert.equal(transport.isThrottled, false, "the breaker stays closed");
+      assert.equal(entered, 0, "no trip reached a listener registered before the disposal");
+    });
+
+    test("a request in flight on an owned HTTP/2 pool at disposal books nothing, though its failure lands before the release settles", async () => {
+
+      await using peer = await createUnansweringHttpsLoopback();
+
+      const clock = new TestClock();
+      const transport = new Transport({ clock, host: peer.host, log: silentLog(), origin: "https://" + peer.host });
+      let entered = 0;
+
+      using enteredSub = transport.on("throttleEntered", () => entered++);
+
+      // Each request times out on the injected clock and books one failure, and a PATCH is never retried, so each send books exactly one. Each failure books before
+      // the next request goes out, so the sends run one at a time.
+      for(let index = 0; index < (ACCESS_API_ERROR_LIMIT - 1); index++) {
+
+        const failing = assert.rejects(transport.send(url(peer.host, "/f"), { method: "PATCH" }));
+
+        // eslint-disable-next-line no-await-in-loop
+        await peer.request(index);
+        clock.advance(ACCESS_API_TIMEOUT);
+        // eslint-disable-next-line no-await-in-loop
+        await failing;
+      }
+
+      assert.equal(transport.isThrottled, false, "the breaker sits one failure short of its threshold");
+
+      /* One more failure would cross the threshold. The release fails an HTTP/2 stream in flight while the release itself is still pending, so this row tells a
+       * terminal state set before the release from one set after it: set after, this failure books, trips the breaker and announces the trip.
+       */
+      const arriving = peer.connection(0);
+      const failing = assert.rejects(transport.send(url(peer.host, "/f"), { method: "PATCH" }));
+
+      await peer.request(ACCESS_API_ERROR_LIMIT - 1);
+
+      assert.equal((await arriving).alpnProtocol, "h2", "the request is in flight on an HTTP/2 connection");
+
+      await transport[Symbol.asyncDispose]();
+      await failing;
+
+      assert.equal(transport.isThrottled, false, "the breaker stays closed");
+      assert.equal(entered, 0, "no trip was announced");
+    });
   });
 
   describe("diagnostics channels", () => {
@@ -2048,6 +2175,60 @@ describe("Transport", () => {
       await collector;
 
       assert.equal(received, 1, "the stream should surface the throttle trip");
+    });
+
+    test("disposal ends a stream opened without a signal once it has delivered the trip, and rejects a pending wait with the disposal's error", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      let received = 0;
+
+      const streamed = (async (): Promise<void> => {
+
+        for await(const _entered of transport.stream("throttleEntered")) {
+
+          received++;
+        }
+      })();
+
+      // The breaker trips before the disposal, so the stream holds that emission when the disposal lands, and it stays open, so nothing ever fires throttleExited.
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT);
+      await sendFailures(transport, url(host, "/f"), ACCESS_API_ERROR_LIMIT);
+
+      const wait = transport.once("throttleExited");
+      let ended = false;
+      let settled = false;
+
+      void Promise.allSettled([streamed]).then(() => { ended = true; });
+      void Promise.allSettled([wait]).then(() => { settled = true; });
+
+      await transport[Symbol.asyncDispose]();
+
+      await waitUntil(() => ended, { description: "the stream opened without a signal to end at the disposal" });
+      await waitUntil(() => settled, { description: "the pending wait to settle at the disposal" });
+      await streamed;
+      assert.equal(received, 1, "the stream delivered the trip made before the disposal");
+      await assert.rejects(wait, { constructor: AccessAbortedError, message: "The UniFi Access transport was disposed." });
+    });
+
+    test("a send after disposal rejects with the disposal's error ahead of the breaker, before anything is dispatched", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const starts: AccessHttpRequestStartPayload[] = [];
+
+      // The breaker is open before the disposal, so a refusal by the breaker would answer with its own error rather than the disposal's.
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(ACCESS_API_ERROR_LIMIT);
+      await sendFailures(transport, url(host, "/f"), ACCESS_API_ERROR_LIMIT);
+
+      using startSub = subscribeTo(channels.httpRequestStart, (message) => void starts.push(message));
+
+      // The injected dispatcher would still serve this request, and a probe skips the breaker's gate, so only the transport's own refusal keeps a send from going out.
+      pool.intercept({ method: "GET", path: "/x" }).reply(200, { ok: 1 });
+
+      await transport[Symbol.asyncDispose]();
+
+      await assert.rejects(transport.send(url(host, "/x")), { constructor: AccessAbortedError, message: "The UniFi Access transport was disposed." });
+      await assert.rejects(transport.send(url(host, "/x"), { probe: true }), { constructor: AccessAbortedError, message: "The UniFi Access transport was disposed." });
+      assert.equal(starts.length, 0, "the refused requests were never dispatched");
     });
   });
 });

@@ -14,9 +14,9 @@
 import { asAccessClient, assertNothingPlantedSurvives, makeCommandContext, makeFakeClient, officialCallSignal, parsedJson, rendered, withExitCode,
   withStderr } from "./cli.helpers.ts";
 import { describe, test } from "node:test";
+import { settle, waitUntil } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { findPacket } from "../../protocol/capture.helpers.ts";
-import { settle } from "homebridge-plugin-utils/testing";
 
 /** The fake's raw-packet stream as a command calls it, narrowed to the shape the held-stream tests drive. */
 type HeldStream = (opts?: { signal?: AbortSignal }) => AsyncGenerator;
@@ -81,6 +81,37 @@ describe("makeFakeClient", () => {
 
     assert.deepEqual(drained, [], "the abort ends the stream with the packet behind the hold never reached");
     assert.deepEqual(calls.consumed, []);
+  });
+
+  test("a held stream with a live signal ends when the fake is disposed, with nothing yielded", async () => {
+
+    const controller = new AbortController();
+    const { calls, client } = makeFakeClient({ holdUntilAborted: true, packets: [HELD_PACKET] });
+    const stream = client["rawPackets"] as HeldStream;
+    const drained: unknown[] = [];
+    const draining = (async (): Promise<void> => {
+
+      for await(const packet of stream({ signal: controller.signal })) {
+
+        drained.push(packet);
+      }
+    })();
+    let ended = false;
+
+    void Promise.allSettled([draining]).then(() => { ended = true; });
+    await settle();
+
+    // The signal stays live, so the stream holds as a controller with nothing more to say would, and only the fake's disposal ends it, as the real client's
+    // rails end at its disposal.
+    assert.equal(ended, false, "the stream holds while the signal is live");
+
+    await asAccessClient(client)[Symbol.asyncDispose]();
+
+    await waitUntil(() => ended, { description: "the held stream to end at the fake's disposal" });
+    await draining;
+    assert.deepEqual(drained, [], "the disposal ends the stream with the packet behind the hold never reached");
+    assert.deepEqual(calls.consumed, []);
+    assert.equal(controller.signal.aborted, false, "the signal stayed live, so the disposal alone ended the stream");
   });
 });
 

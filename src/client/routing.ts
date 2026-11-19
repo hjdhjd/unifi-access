@@ -631,9 +631,9 @@ export class AccessRoutingService implements AccessRoutingView {
    * establishes no reading of what the command addresses sends the command on the same way a capability refusal does.
    *
    * Any other official failure is a genuine fault about this request and propagates as itself, with one exception: a command safe to repeat is issued on its
-   * direct half instead, on a client whose direct path can take it, with the failure logged at debug so it is not lost. A decline and the caller's abort are never
-   * that exception, because the controller has answered the one and the caller asked for the other, and a client with no direct path keeps the failure as itself,
-   * because the failure is then the one thing that says why the command did not happen.
+   * direct half instead, on a client whose direct path can take it, with the failure logged at debug so it is not lost. A decline and a cancellation - the caller's
+   * abort, or a disposal that refused the request - are never that exception, because the controller has answered the one and the consumer asked for the other, and
+   * a client with no direct path keeps the failure as itself, because the failure is then the one thing that says why the command did not happen.
    *
    * An operation reaching here with no official half is not a special case, merely one whose official half is absent for this client: it reaches the direct path
    * or the capability error by the same two steps everything else does.
@@ -726,8 +726,9 @@ export class AccessRoutingService implements AccessRoutingView {
   }
 
   /* Whether an official failure that is no capability verdict still sends a command on to its direct half: the command is safe to repeat, the failure is neither the
-   * controller's decline nor the caller's abort, and the client holds a direct path the command can take. The abort is read by its class rather than by the caller's
-   * signal, because the class is the transport's own verdict that the caller's signal is what ended the request.
+   * controller's decline nor a cancellation, and the client holds a direct path the command can take. The cancellation is read by its class rather than by the
+   * caller's signal, because the class is the transport's own verdict that the request was cancelled rather than failed - by the caller's signal, or by a disposal
+   * that refused it - and neither is a reason to repeat it.
    */
   #repeatsOnDirect(error: unknown, operation: RoutedOfficialOperation): boolean {
 

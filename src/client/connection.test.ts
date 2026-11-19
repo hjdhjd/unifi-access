@@ -42,10 +42,10 @@ const UNREACHABLE_SENTENCE = "appears unreachable";
 type RecoveryStep = "probe" | "reBootstrap" | "relaunch";
 
 // A throttle source a test can drive: the narrow surface the monitor consumes, plus a knob that flips the verdict and fires the matching rail - which mirrors the
-// real breaker, whose rails fire only on an actual edge.
+// real breaker, whose rails fire only on an actual edge - and reports whether the edge it fired found a listener.
 interface ThrottleControl extends ThrottleSource {
 
-  set(next: boolean): void;
+  set(next: boolean): boolean;
 }
 
 function fakeThrottle(initial = false): ThrottleControl {
@@ -66,15 +66,16 @@ function fakeThrottle(initial = false): ThrottleControl {
       return bus.on(event, handler);
     },
 
-    set(next: boolean): void {
+    set(next: boolean): boolean {
 
       if(next === throttled) {
 
-        return;
+        return false;
       }
 
       throttled = next;
-      bus.emit(next ? "throttleEntered" : "throttleExited");
+
+      return bus.emit(next ? "throttleEntered" : "throttleExited");
     }
   };
 }
@@ -2249,7 +2250,7 @@ describe("ConnectionMonitor", () => {
           }
         } catch {
 
-          // The raw rail rejects with the abort reason, which is its own contract - the observe sugar is what smooths that.
+          // The raw rail rejects with an `AbortError`, which is its own contract - the observe sugar is what smooths that.
         }
       })();
 
@@ -2393,7 +2394,8 @@ describe("ConnectionMonitor", () => {
 
     test("disposal closes the stream and detaches every subscription", async () => {
 
-      const { events, monitor, store, streams, throttle } = await harness();
+      const log = capturingLog();
+      const { monitor, store, streams, throttle } = await harness({ log });
 
       await monitor.opened;
       await settle();
@@ -2402,16 +2404,73 @@ describe("ConnectionMonitor", () => {
 
       assert.equal(streams[0]?.closeRequested, true, "the live socket was asked to close");
 
-      const transitionsBefore = events.transitions.length;
-      const rebootsBefore = events.rebooted.length;
-
-      throttle.set(true);
+      /* The disposal closes the monitor's bus, which removes every recorder registered through monitor.on, so silence after it is read where no close reaches: the
+       * throttle source's own rail reports whether an edge found a listener, and the restart detection writes its line to the log before it announces anything.
+       */
+      assert.equal(throttle.set(true), false, "no transition is announced after disposal, because the throttle subscriptions are gone");
       store.applyRefreshDocuments({ controller: controllerAt(5), topology: structuredClone(accessBootstrap2026Fixture) });
 
       await settle();
 
-      assert.equal(events.transitions.length, transitionsBefore, "no transition is announced after disposal");
-      assert.equal(events.rebooted.length, rebootsBefore, "and the restart-observation loop has ended");
+      assert.equal(logCount(log.entries, "info", "appears to have restarted"), 0, "and the restart-observation loop has ended");
+    });
+
+    test("disposal ends a stream opened without a signal and rejects a pending wait, and a restart it lands on reaches no line or event", async () => {
+
+      const log = capturingLog();
+      const { monitor, store } = await harness({ log });
+
+      await monitor.opened;
+      await settle();
+
+      const transitions: ConnectionTransition[] = [];
+      const streamed = (async (): Promise<void> => {
+
+        for await(const [transition] of monitor.stream("stateChanged")) {
+
+          transitions.push(transition);
+        }
+      })();
+      const wait = monitor.once("controllerRebooted");
+      let ended = false;
+      let settled = false;
+
+      void Promise.allSettled([streamed]).then(() => { ended = true; });
+      void Promise.allSettled([wait]).then(() => { settled = true; });
+
+      // The restart reaches the watcher in the same turn as the disposal, so the watcher drains it after the lifetime signal has fired.
+      store.applyRefreshDocuments({ controller: controllerAt(12), topology: structuredClone(accessBootstrap2026Fixture) });
+      await monitor[Symbol.asyncDispose]();
+
+      await settleUntil(() => ended, { description: "the stream opened without a signal to end at disposal" });
+      await settleUntil(() => settled, { description: "the pending wait to settle at disposal" });
+      await streamed;
+      await assert.rejects(wait, { constructor: AccessAbortedError, message: "The UniFi Access connection monitor was disposed." });
+      assert.deepEqual(transitions, [], "nothing changed state before the disposal");
+      assert.equal(logCount(log.entries, "info", "appears to have restarted"), 0, "the restart the disposal landed on logged no restart line");
+    });
+
+    test("a monitor opening on an already-aborted signal settles its handshake as the abort, and its disposal still ends its rails", async () => {
+
+      const controller = new AbortController();
+      const clock = new TestClock();
+
+      controller.abort();
+
+      // The stream built on the spent signal tears itself down inside its constructor, closing its bus there, so the bridges the monitor registers on it register
+      // nothing...harmless, because that stream has emitted everything it ever will.
+      const monitor = unopenedMonitor({ clock, eventStreamFactory: (signal?: AbortSignal): EventStream => unopeningStream(clock, signal), signal: controller.signal });
+
+      await assert.rejects(monitor.open(), AccessAbortedError);
+
+      const wait = monitor.once("stateChanged");
+      let settled = false;
+
+      void Promise.allSettled([wait]).then(() => { settled = true; });
+      await monitor[Symbol.asyncDispose]();
+
+      await settleUntil(() => settled, { description: "the pending wait to settle at disposal" });
+      await assert.rejects(wait, { constructor: AccessAbortedError, message: "The UniFi Access connection monitor was disposed." });
     });
 
     test("disposal while recovery is parked ends the loop without relaunching", async () => {

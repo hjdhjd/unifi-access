@@ -388,10 +388,11 @@ export class EventStream implements AsyncDisposable {
   }
 
   /**
-   * Wait for the next emission of a stream event.
+   * Wait for the next emission of a stream event. A wait still pending when the stream tears down, for any reason, rejects with an {@link AccessAbortedError}, so a
+   * wait that is never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to await.
-   * @param opts  - Optional abort signal.
+   * @param opts  - Optional abort signal that cancels the wait.
    *
    * @returns A promise resolving to the event's argument tuple.
    */
@@ -401,7 +402,8 @@ export class EventStream implements AsyncDisposable {
   }
 
   /**
-   * Stream every subsequent emission of a stream event until the signal aborts.
+   * Stream every subsequent emission of a stream event until the signal aborts or the stream tears down, for any reason. The teardown ends the iteration cleanly once
+   * every emission made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to stream.
    * @param opts  - Stream options, including the abort signal.
@@ -414,8 +416,8 @@ export class EventStream implements AsyncDisposable {
   }
 
   /**
-   * The realtime notification firehose: every classified {@link AccessWireEvent}, until the signal aborts. Sugar over `stream("packet")` that unwraps the
-   * single-element argument tuple to the event itself.
+   * The realtime notification firehose: every classified {@link AccessWireEvent}, until the signal aborts or the stream tears down, for any reason. Sugar over
+   * `stream("packet")` that unwraps the single-element argument tuple to the event itself.
    *
    * @param opts - Optional abort signal that terminates the iteration.
    *
@@ -423,9 +425,9 @@ export class EventStream implements AsyncDisposable {
    */
   async *packets(opts: { signal?: AbortSignal } = {}): AsyncGenerator<AccessWireEvent> {
 
-    // The underlying `stream` rail rejects with the abort reason when its signal fires (node:events' `on` contract). For the firehose sugar we smooth that into a
-    // clean return on the caller's own abort - a `for await` over the firehose ends quietly on Ctrl-C rather than forcing every consumer to wrap it in try/catch.
-    // Any other error still propagates.
+    // The underlying `stream` rail rejects with an `AbortError` when its signal fires (node:events' `on` contract), and ends cleanly when the stream tears down. For
+    // the firehose sugar we smooth the abort into a clean return on the caller's own abort - a `for await` over the firehose ends quietly on Ctrl-C rather than
+    // forcing every consumer to wrap it in try/catch. Any other error still propagates.
     try {
 
       for await(const [event] of this.#bus.stream("packet", opts)) {
@@ -634,7 +636,8 @@ export class EventStream implements AsyncDisposable {
   // on the socket and the caller's signal, ends the watchdog and releases the connection we own, and only then reports why: it settles a still-pending open
   // handshake as a failure, puts an open stream's fault on the rail, writes the fault's line, and announces the close with the code its reason carries. The
   // detach and the abort stay here as well as in #shutdown because the peer's own close listener reaches this teardown without passing through it, and repeating
-  // either does nothing.
+  // either does nothing. The stream never reconnects, so the close's announcement is its last emission, and the bus closes after it, carrying the failure the
+  // teardown reported, if any, as the cause of its reason.
   #onClose(why: SocketTeardown): void {
 
     if(this.#phase.kind === "closed") {
@@ -655,10 +658,14 @@ export class EventStream implements AsyncDisposable {
     this.#controller.abort();
     this.#phase = { kind: "closed", released: this.#releaseOwnedConnection() };
 
+    // The failure the teardown reports, on the handshake or on the rail, which the bus close carries as its cause...null when an open stream's teardown reports none.
+    let failure: Nullable<AccessError> = null;
+
     // Settle a still-pending open handshake as a failure - which is owed by the connecting phase alone, the only phase left here that has not settled it.
     if(!wasOpen) {
 
-      this.#rejectOpen(this.#preOpenFailure(why));
+      failure = this.#preOpenFailure(why);
+      this.#rejectOpen(failure);
     }
 
     /* The error rail carries what a stream that had opened did not ask for: a fault it detected, or the peer dropping a live socket without our asking, which is
@@ -669,17 +676,17 @@ export class EventStream implements AsyncDisposable {
      */
     if(wasOpen) {
 
-      const fault = this.#railFault(why);
+      failure = this.#railFault(why);
 
-      if(fault !== null) {
+      if(failure !== null) {
 
-        this.#bus.emit("error", fault);
+        this.#bus.emit("error", failure);
       }
     }
 
     /* The fault's line follows the release and the rail. It was built where the fault was classified, from the phase the stream was leaving, so it is written
      * here as it stands. A logger is expected to return, and one that throws here ends the teardown where its line sits: the connection is already let go and the
-     * rail has heard the fault, so what its throw skips is the close's announcement below.
+     * rail has heard the fault, so what its throw skips is the close's announcement below and the bus close after it.
      */
     if((why.kind === "fault") && (why.line !== null)) {
 
@@ -696,6 +703,8 @@ export class EventStream implements AsyncDisposable {
 
       channels.eventsClosed.publish({ code, host: this.#host, reason } satisfies AccessEventsClosedPayload);
     }
+
+    this.#bus.close(new AccessAbortedError("The UniFi Access realtime notification stream closed.", { ...((failure !== null) && { cause: failure }) }));
   }
 
   /* What a handshake that never completed rejects with. A fault is handed over as itself, so the rejection's type says exactly what went wrong and nothing the

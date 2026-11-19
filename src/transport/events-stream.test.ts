@@ -1459,6 +1459,82 @@ describe("EventStream", () => {
 
       assert.equal(stream.lastMessageAt, 1234);
     });
+
+    /* Each way an open stream tears down ends what its events handed out, whatever started the teardown: a stream opened without a signal ends once it has delivered
+     * the `closed` emission the teardown made, and a pending wait rejects with the stream's close, whose cause is the failure the teardown reported on the error rail,
+     * or nothing for a close the stream ran for itself.
+     */
+    const endings: { cause: (errors: EventStreamEvents["error"][]) => unknown; name: string;
+      run: (stage: { clock: TestClock; stream: EventStream; ws: FakeWebSocket }) => Promise<void> | void; }[] = [
+
+      { cause: (): undefined => undefined, name: "close()", run: async ({ stream }): Promise<void> => stream.close() },
+      { cause: (errors): unknown => first(errors)[0], name: "a peer close", run: ({ ws }): void => ws.emitClose(1001, "going away") },
+      { cause: (errors): unknown => first(errors)[0], name: "a socket error", run: ({ ws }): void => ws.emitError(new Error("socket reset")) },
+      { cause: (errors): unknown => first(errors)[0], name: "a stall", run: ({ clock }): void => clock.advance(ACCESS_EVENTS_HEARTBEAT_TIMEOUT) }
+    ];
+
+    for(const { cause, name, run } of endings) {
+
+      test("after " + name + " of an open stream, a stream opened without a signal ends and a pending wait rejects with the stream's close", async () => {
+
+        const { clock, stream, ws } = await openStream();
+        const errors = collect(stream, "error");
+        const closed: EventStreamEvents["closed"][] = [];
+        const streamed = (async (): Promise<void> => {
+
+          for await(const info of stream.stream("closed")) {
+
+            closed.push(info);
+          }
+        })();
+        const wait = stream.once("packet");
+        let ended = false;
+        let settled = false;
+
+        void Promise.allSettled([streamed]).then(() => { ended = true; });
+        void Promise.allSettled([wait]).then(() => { settled = true; });
+
+        await run({ clock, stream, ws });
+
+        await waitUntil(() => ended, { description: "the stream opened without a signal to end at the teardown" });
+        await waitUntil(() => settled, { description: "the pending wait to settle at the teardown" });
+        await streamed;
+        assert.equal(closed.length, 1, "the stream delivered the closed emission the teardown made before it ended");
+        await assert.rejects(wait, (error: unknown) => {
+
+          assert.ok(error instanceof AccessAbortedError);
+          assert.equal(error.message, "The UniFi Access realtime notification stream closed.");
+          assert.equal(error.cause, cause(errors), "the close carries the failure the teardown reported, if any, as its cause");
+
+          return true;
+        });
+      });
+    }
+
+    test("a stream that fails before it opens rejects a pending wait with its close, whose cause is the failure the handshake rejected with", async () => {
+
+      const ws = new FakeWebSocket({ autoOpen: false });
+      const stream = new EventStream({ clock: new TestClock(), host: HOST, log: silentLog(), webSocket: (): AccessWebSocket => ws });
+      const wait = stream.once("packet");
+      let settled = false;
+
+      void Promise.allSettled([wait]).then(() => { settled = true; });
+      ws.emitError(new Error("socket reset"));
+
+      await waitUntil(() => settled, { description: "the pending wait to settle at the teardown" });
+
+      const failure = await stream.opened.then(() => assert.fail("The stream opened."), (error: unknown) => error);
+
+      assert.ok(failure instanceof AccessNetworkError, "the handshake rejected with the socket's classified failure");
+      await assert.rejects(wait, (error: unknown) => {
+
+        assert.ok(error instanceof AccessAbortedError);
+        assert.equal(error.message, "The UniFi Access realtime notification stream closed.");
+        assert.equal(error.cause, failure, "the close carries the failure the handshake rejected with as its cause");
+
+        return true;
+      });
+    });
   });
 
   /* The code and the reason `closed` carries, which the teardown derives from why it ran: the peer's own frame for a close the peer started, 1006 for a fault,
