@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.1.1 (2026-11-19)
+  * Fix: API tokens missing a permission now raise `AccessAuthorizationError` rather than an `AccessAuthError` calling the token invalid or revoked, and both carry the controller's own refusal as their `cause`.
+  * Fix: clients holding both credentials and a token no longer stop using the token for every command when the controller refuses it one permission...only the commands needing that permission fall back to credentials.
+  * Fix: token-only clients whose token may not view devices connect with an empty device inventory rather than failing.
+  * Fix: realtime events carrying a non-text device identifier are left unclassified rather than published under a mistyped one.
+  * Fix: `events()`, `rawPackets()`, and `stream()` end when the client is disposed rather than waiting forever, a pending `once()` rejects with `AccessAbortedError`, and repeat calls to `client.connection.open()` no longer deliver every realtime event twice.
+  * Fix: `ufa` refuses a name that several devices, users, visitors, or webhooks share rather than acting on the first match, lookup refusals exit with status 2, and `--device` filters match every device carrying the name.
+  * Housekeeping.
+
 ## 2.1.0 (2026-11-06)
   * New feature: access-method switching. `device.setAccessMethod()` turns face, mobile, NFC, PIN, QR, Touch Pass, or wave unlock on or off over either API, `device.accessMethodStates` reads them back, and a change the controller quietly declines raises `AccessDeclinedError`.
   * New feature: `client.connection.isLost` reports whether the connection is currently lost.
