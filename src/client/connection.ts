@@ -231,9 +231,10 @@ export interface ConnectionMonitorOptions {
  * subscription in place before the socket can deliver anything. On relaunch the subscriptions are disposed *before* the old stream is torn down, so a dying
  * socket's late frames reach neither the monitor nor a consumer.
  *
- * It listens only for faults. The stream routes the faults of a stream that opened onto that rail - a stall, a socket error, and a peer dropping a live socket,
- * which is how a controller going down arrives - while a close the stream initiated itself, and any failure that lands before it opened, stay off it. So the
- * fault rail alone is the recovery signal.
+ * It listens only for faults. The stream routes the faults of a stream that opened onto that rail - a stall, a socket error, a peer dropping a live socket,
+ * which is how a controller going down arrives, and a frame that does not decode or carries no notification envelope - while a close the stream initiated itself,
+ * and any failure that lands before it opened, stay off it. So the fault rail alone is the recovery signal, and one malformed frame costs a full recovery, a price
+ * accepted because no controller has been seen to send one.
  */
 class ManagedEventStream implements AsyncDisposable {
 
