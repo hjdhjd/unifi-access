@@ -856,11 +856,11 @@ export class ConnectionMonitor {
     }
   }
 
-  /* The privilege re-check, run detached so a slow or hanging check cannot hold recovery open. The only cancellation it can be handed is the monitor's own, so a disposal
-   * landing mid-check is this task ending on schedule rather than a failure to report. The injected check absorbs every other refusal itself - a controller it could not
-   * reach keeps the recorded verdict, which the check returns as the session reports it, `null` while no session is held - so anything arriving here that is not a
-   * cancellation means that contract broke, which earns a debug line and nothing more, because the answer gates nothing. Either way the task settles here rather than
-   * surfacing as an unhandled rejection.
+  /* The privilege re-check, run detached so a slow or hanging check cannot hold recovery open. A cancellation it is handed, the monitor's own or a disposed transport's
+   * refusal, means a disposal landed mid-check, which is this task ending on schedule rather than a failure to report. The injected check absorbs every other refusal
+   * itself - a controller it could not reach keeps the recorded verdict, which the check returns as the session reports it, `null` while no session is held - so anything
+   * arriving here that is not a cancellation means that contract broke, which earns a debug line and nothing more, because the answer gates nothing. Either way the task
+   * settles here rather than surfacing as an unhandled rejection.
    */
   async #refreshAdminStatusInBackground(signal: AbortSignal): Promise<void> {
 
