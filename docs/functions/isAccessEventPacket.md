@@ -15,8 +15,8 @@ unchecked value, and asserting that value into the packet type would let any val
 consumers with an undefined identifier typed as a string and be published under it.
 
 The checked fields are the ones the classifier actually reads from the envelope: `event` and `event_object_id` must be strings, and `data` must be present and
-either null or a record, because a deletion notification legitimately carries `data: null`. `meta` is deliberately not required - it is optional on the packet
-and the classifier reaches it through optional chaining.
+either null or a record, because a deletion notification legitimately carries `data: null`. `meta` is deliberately not checked - it is optional on the packet,
+and the classifier reads its identifier as text or as absent, so a packet whose `meta.id` is not a string goes unclassified exactly as one without it does.
 
 ## Parameters
 

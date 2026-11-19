@@ -318,7 +318,7 @@ export function classifyPacket(packet: AccessEventPacket): Nullable<AccessWireEv
 
     case EVENT_DEVICE_UPDATE_V2: {
 
-      const id = packet.meta?.id;
+      const id = metaId(packet);
       const payload = asRecord(packet.data);
 
       if((id === undefined) || (payload === undefined)) {
@@ -349,7 +349,7 @@ export function classifyPacket(packet: AccessEventPacket): Nullable<AccessWireEv
 
       // The newer dialect sends no payload at all on a removal and identifies the subject through the packet's metadata, because its envelope identifier is a
       // per-notification value rather than the entity.
-      const id = packet.meta?.id;
+      const id = metaId(packet);
 
       return (id === undefined) ? null : { eventName, id, kind: "deviceRemoved" };
     }
@@ -365,7 +365,7 @@ export function classifyPacket(packet: AccessEventPacket): Nullable<AccessWireEv
 
     case EVENT_LOCATION_UPDATE_V2: {
 
-      const id = packet.meta?.id;
+      const id = metaId(packet);
       const payload = asRecord(packet.data);
 
       if((id === undefined) || (payload === undefined)) {
@@ -426,8 +426,8 @@ export function classifyPacket(packet: AccessEventPacket): Nullable<AccessWireEv
  * consumers with an undefined identifier typed as a string and be published under it.
  *
  * The checked fields are the ones the classifier actually reads from the envelope: `event` and `event_object_id` must be strings, and `data` must be present and
- * either null or a record, because a deletion notification legitimately carries `data: null`. `meta` is deliberately not required - it is optional on the packet
- * and the classifier reaches it through optional chaining.
+ * either null or a record, because a deletion notification legitimately carries `data: null`. `meta` is deliberately not checked - it is optional on the packet,
+ * and the classifier reads its identifier as text or as absent, so a packet whose `meta.id` is not a string goes unclassified exactly as one without it does.
  *
  * @param value - A decoded value of unknown shape, typically the result of parsing a notification frame.
  *
@@ -727,4 +727,13 @@ function isNonEmpty<T>(value: T[]): value is [T, ...T[]] {
 function asRecord(data: AccessEventPacket["data"]): Record<string, AccessKnownJsonValue> | undefined {
 
   return isPlainObject(data) ? data : undefined;
+}
+
+// The subject identity a newer-dialect packet names in its metadata, or undefined when it names none. The envelope check leaves `meta` unread, so its identifier is
+// whatever the controller sent, and one that is not text is read as absent: the packet goes unclassified rather than carrying a non-text identity into a string field.
+function metaId(packet: AccessEventPacket): string | undefined {
+
+  const id: unknown = packet.meta?.id;
+
+  return (typeof id === "string") ? id : undefined;
 }

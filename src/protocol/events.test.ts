@@ -1113,6 +1113,21 @@ describe("packets the classifier declines", () => {
       assert.equal(classifyPacket({ ...packet, meta: undefined }), null, packet.event + " without metadata should decline");
     }
   });
+
+  test("a v2 packet whose metadata identifier is not text classifies as null, as one with no identifier does", () => {
+
+    const update = findPacket((entry) => entry.event === "access.data.v2.device.update", "a v2 device update");
+    const remove = findPacket((entry) => entry.event === "access.data.v2.device.delete", "a v2 device delete");
+    const location = findPacket((entry) => entry.event === "access.data.v2.location.update", "a v2 location update");
+
+    for(const packet of [ update, remove, location ]) {
+
+      // The envelope check leaves the metadata unread, so a numeric identifier arrives typed as the string it is not.
+      const numeric = { ...packet, meta: { ...packet.meta, id: 42 } } as unknown as AccessEventPacket;
+
+      assert.equal(classifyPacket(numeric), null, packet.event + " with a numeric metadata identifier should decline");
+    }
+  });
 });
 
 describe("isAccessEventPacket", () => {
