@@ -75,7 +75,8 @@ describe("what every mode has in common", () => {
      * fixture beyond them. Each asserts the observable half of teardown: the notification channel closed, and the state model gone inert.
      *
      * The pools themselves are not observable here, and deliberately so: a transport destroys only a connection pool it built, and every test in this file injects
-     * one. What the composition root owns - the ORDER it tears its subsystems down in, and which transports it holds at all - is what these rows cover.
+     * one. What these rows cover is which transports each mode holds, and that disposal closes the notification channel and leaves the state model inert. The order
+     * the subsystems are torn down in is not observed: any order that closes both satisfies these assertions.
      */
     const rows: { identity: Partial<ConnectOptions>; label: string; official: boolean; withCredentials: boolean }[] = [
       { identity: { password: "p", token: "t0ken", username: "u" }, label: "dual", official: true, withCredentials: true },
@@ -117,7 +118,7 @@ describe("what every mode has in common", () => {
 
       assert.equal(captured.ws.closeRequested, true, row.label + " should close its notification channel");
 
-      // The store is torn down after the channel that feeds it, so a dispatch arriving afterward changes nothing at all.
+      // The store is torn down with the client, so a dispatch arriving afterward changes nothing at all.
       captured.client.state.applyDoorStateFacts([{ "dps": "open", "location_id": DOOR_MINI }]);
 
       assert.equal(Object.is(captured.client.doorStates, before), true, row.label + " should be inert after disposal");

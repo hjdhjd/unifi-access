@@ -51,8 +51,9 @@ export interface CommandContext {
 
 /**
  * The credential-loader hook. A mode-gated command reads the identity file through this before connecting, so it can refuse an operation the file's identities cannot
- * reach with a calm usage error instead of a connect-time failure - and it hands the loaded value to {@link OpenClient}, so the file is read exactly once per
- * invocation. The entry point injects the production loader; a test injects a fake returning the identity shape under test.
+ * reach with a plain error before anything connects, and an `--api` choice that contradicts the operation with a usage error, rather than either surfacing as a
+ * connect-time failure - and it hands the loaded value to {@link OpenClient}, so the file is read exactly once per invocation. The entry point injects the production
+ * loader; a test injects a fake returning the identity shape under test.
  *
  * @category CLI
  */
@@ -183,8 +184,8 @@ export function isMember<T extends string>(list: readonly T[], value: string): v
 }
 
 /**
- * The options every command accepts, merged into each command's own option set before parsing. `--debug` turns on the library's debug logging (to stderr); `--help`
- * prints the command's usage. Both carry the short spellings the CLI has always accepted, so `-d` and `-h` work wherever their long forms do.
+ * The options every connecting command accepts, merged into each one's own option set before parsing. `--debug` turns on the library's debug logging (to stderr);
+ * `--help` prints the command's usage. Both carry a short spelling, so `-d` and `-h` work wherever their long forms do.
  *
  * @category CLI
  */
@@ -543,8 +544,7 @@ export function packetSubjectId(packet: AccessEventPacket): string {
  * operator - so the per-packet path evaluates prepared terms rather than re-parsing the expression. What a term still does per packet is read the packet: a property
  * term walks its path, a device term attributes the packet and reads the snapshot's name for that device, and the role and activity shortcuts classify it.
  *
- * Composition is AND across every term, which is the shipped grammar's own rule: two terms narrow the stream rather than widening it, and two contradictory terms
- * therefore match nothing.
+ * Composition is AND across every term: two terms narrow the stream rather than widening it, and two contradictory terms therefore match nothing.
  *
  * @param opts - The name resolution snapshot, the shortcut flags, and the bare filter tokens as typed.
  *

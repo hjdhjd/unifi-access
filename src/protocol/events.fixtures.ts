@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * events.fixtures.ts: Real UniFi Access notification packets, captured from live controllers and embedded verbatim.
+ * events.fixtures.ts: Real UniFi Access notification packets, captured from live controllers and embedded in the shape the controller sent them.
  *
  * The controller document the topology fixtures carry was captured on 2026-08-13 and reported UniFi Access v4.3.3+12030, and the 2026 captures in this file come
  * from that controller, the tamper window aside; the 2024 captures and the tamper window have no recorded version. A notification packet carries no schema version
@@ -8,8 +8,9 @@
  */
 import type { AccessEventPacket } from "../types/index.ts";
 
-/* Each group below holds real notification packets, embedded exactly as the controller sent them and declared against the envelope type so the suite type-checks the
- * type model against real wire material. Nothing here is tidied: key order, casing, and the nineteen-digit revision strings are the controller's own.
+/* Each group below holds real notification packets, embedded in the shape the controller sent them and declared against the envelope type so the suite type-checks
+ * the type model against real wire material. Nothing structural is tidied: key order, casing, and the nineteen-digit revision strings are the controller's own,
+ * while names, identifiers, and addresses are stand-ins.
  */
 
 /* The 2026 corpus: one continuous capture window from a controller running both notification dialects. It carries every event name the window produced, including

@@ -136,7 +136,7 @@ function accessPointSelector(id: string): (state: AccessState) => AccessStateDev
   return (state) => findAccessPoint(state, id);
 }
 
-// One port of the expansion, by its own identity. Unlike the memoized selectors elsewhere in this tier, this is a deliberate per-read linear scan over the port
+// One port of the expansion, by its own identity. Unlike the memoized selectors in the state tier, this is a deliberate per-read linear scan over the port
 // expansion - AccessDevice#uplinkId in device.ts makes the same trade-off - and its cost is bounded by how few access points a controller can have.
 function findAccessPoint(state: AccessState, id: string): AccessStateDevice | undefined {
 

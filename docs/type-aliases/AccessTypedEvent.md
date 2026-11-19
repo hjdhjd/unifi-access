@@ -117,6 +117,7 @@ The discriminated union of every notification the library models, produced by th
 - `doorbellRing` - a doorbell was pressed. Attributed to the reader that rang, taken from the payload rather than the envelope, because the envelope identifier on
   this notification is a per-notification value rather than a device.
 - `doorbellCancel` - a ring was cancelled or otherwise ended.
+- `tamperAlert` - hardware raised a tamper alert. Attributed to the device its payload names, for the same reason a ring is.
 - `unlock` - a door was unlocked.
 
 Every member lifted from the wire carries `eventName`, the raw notification name, so normalizing two dialects into one kind never hides which name arrived. The

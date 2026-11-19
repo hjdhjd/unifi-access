@@ -92,9 +92,9 @@ export interface AccessWebhookActor {
 /**
  * The body of a webhook delivery: the event's name, the identifier the controller minted for this delivery, and the payload.
  *
- * Every delivery carries the same payload members - the location, the device, the actor, and an `object` whose shape is the event's own. The location is always
- * present; the device is not, because an event raised by something other than a device names none; and the actor is present only where the controller attributes
- * the action to someone, which it does not for a doorbell press or a sensor transition.
+ * Every delivery carries the same payload members - the location, the device, the actor, and an `object` whose shape is the event's own - and carries each of those
+ * keys every time. The device is null on an event raised by something other than a device, and the actor is null where the controller attributes the action to no
+ * one, as for a doorbell press or a sensor transition.
  *
  * @typeParam TEvent  - The event name, which is what tells the members of {@link AccessWebhookEvent} apart.
  * @typeParam TObject - The event-specific payload.
@@ -302,7 +302,7 @@ export function verifyWebhookSignature(opts: { body: Uint8Array | string; header
   const expected = signatureMac(opts.secret, signature.timestamp, opts.body);
   const provided = Buffer.from(signature.mac, "hex");
 
-  /* The length check is what turns a truncated or malformed MAC into a clean `false`. Hex decoding a short or invalid value simply yields a shorter buffer, and the
+  /* The length check is what turns a truncated or malformed MAC into a clean `null`. Hex decoding a short or invalid value simply yields a shorter buffer, and the
    * constant-time comparison throws on operands of different lengths rather than returning false - so without this gate a truncated signature would raise an
    * exception at exactly the moment a receiver is handling input it does not trust.
    */

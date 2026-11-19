@@ -10,15 +10,17 @@
  * {@link AccessState}. A census of the controller is not something the library fetches and holds off to one side: it is the initial state the reducer starts from,
  * through a synthetic event - the topology document via `bootstrapLoaded` where a client holds credentials, the official API's own listings via `censusApplied`
  * where it holds only a token - and every later notification advances that same state. Periodic re-reading is a permanent failsafe against a controller's
- * occasionally lossy event delivery, reconciled here so a refresh that finds no drift produces no observable change at all.
+ * occasionally lossy event delivery, reconciled here so a refresh that finds no drift leaves every device and door record, and every observer of them, untouched.
  *
  * The guarantees below make the observation layer above this cheap and correct:
  *
  * - **Immutability.** No function here mutates its input. Every step returns either the same reference, meaning nothing changed, or a new one.
- * - **Structural sharing.** A change rebuilds only the path from the root to the changed node; every untouched device, map, and nested object keeps its existing
- *   reference, which is what makes `Object.is` change detection in selectors and observers both correct and nearly free.
+ * - **Structural sharing.** A merge rebuilds only the path from the root to the changed node, and everything beside that path keeps its existing reference. A
+ *   re-bootstrap keeps every unchanged record by reference and replaces a drifted record whole. Either way an untouched record is the same object after the step,
+ *   which is what makes `Object.is` change detection in selectors and observers both correct and nearly free.
  * - **No-op fidelity.** A merge, removal, or full re-bootstrap that changes nothing by *value* returns the same reference by *identity*. This is the property that
- *   makes the periodic refresh invisible when nothing drifted.
+ *   leaves the device and door observers asleep through a periodic refresh that found no drift. The controller document a credential refresh carries beside the
+ *   topology usually differs on the host's uptime alone, so the state reference itself still advances on that refresh.
  *
  * @module AccessReducer
  */
@@ -128,7 +130,7 @@ export type AccessState = Readonly<{
 }>;
 
 /**
- * Build the empty starting state. The reducer begins here and advances through `bootstrapLoaded`.
+ * Build the empty starting state. The reducer begins here and is seeded by `bootstrapLoaded` or `censusApplied`, whichever census the client's identity reaches.
  *
  * This is a factory rather than a shared constant because the state holds `Map` instances: a single exported constant would hand every client the same map objects,
  * so two clients composed in one process would begin life aliased to each other.
@@ -157,8 +159,10 @@ export function createInitialState(): AccessState {
  *
  * @returns The next state, identical by reference to `state` when nothing changed.
  *
- * @throws {@link AccessProtocolError} only if an unrecognized event kind reaches the reducer - a defect the exhaustiveness guard converts from a silent
- *   fall-through into a loud failure.
+ * @throws {@link AccessProtocolError} if an unrecognized event kind reaches the reducer - a defect the exhaustiveness guard converts from a silent fall-through into
+ *   a loud failure.
+ * @throws {TypeError} when an event carries a payload of a wire shape the reducer does not model, raised from inside the fold that reaches into it rather than
+ *   checked for up front.
  *
  * @category Reducer
  */
@@ -226,7 +230,8 @@ export function reduce(state: AccessState, event: AccessTypedEvent): AccessState
  * The document is authoritative where it disagrees. On any per-record difference the fetched record replaces the stored one wholesale rather than being merged into
  * it, which means a field a live notification advanced after the document was fetched but before it was applied reverts to the document's value until the next
  * notification or refresh advances it again. That is eventual consistency by design: the alternative, merging a snapshot into live state, would make the result
- * depend on arrival order and could never converge. The client keeps the window small by dispatching the document before it attaches the event stream.
+ * depend on arrival order and could never converge. At connect the client applies the document before it attaches the event stream, so the seed has no window;
+ * every later refresh, the failsafe's and the recovery re-bootstrap's alike, applies with the stream live and accepts the window.
  *
  * @param state     - The current state.
  * @param bootstrap - The freshly fetched topology document.
@@ -335,8 +340,9 @@ function applyDeviceChange(state: AccessState, id: string, payload: Record<strin
 
 /* Fold a door-state packet: the doors it reported, plus the facet its own carrier contributed.
  *
- * The entries REPLACE rather than merge. The wire sends a complete entry every time - the corpus shows one door alternating between carrying and omitting its
- * alarms - so an omitted optional member means the condition cleared, and only replacement reports that. Merging would leave a cleared alarm standing forever.
+ * The entries REPLACE rather than merge, because a reporting carrier states its door's whole condition - the corpus shows one door alternating between carrying and
+ * omitting its alarms - so an alarm or a suspension a report omits has cleared, and only replacement reports that. Merging would leave a cleared alarm standing
+ * forever.
  *
  * The facet takes the exact path its standalone kind takes, so there is one merge implementation per collection reached by two event kinds rather than two that can
  * drift. The door state and the facet are independent: either can change while the other does not, and the state reference advances when either did.
@@ -657,9 +663,9 @@ function reconcileMap<T extends { unique_id: string }>(existing: ReadonlyMap<str
 // The row member that identifies a configuration row, bound to the row type so a misspelling fails to compile rather than quietly matching nothing.
 const ROW_IDENTITY: keyof AccessDeviceEntryConfig = "key";
 
-/* Merge a wire partial onto a stored DEVICE record. This is the one entry every path into such a record takes - the legacy device update and the token client's
- * census reconcile alike - and it resolves the configuration rows and the capability set on the untyped wire plane before handing the result to the generic merge
- * below, which stays the single place an untyped wire payload meets a typed record.
+/* Merge a wire partial onto a stored DEVICE record. This is the one entry every path into such a record takes - a device update of either dialect, a door-state
+ * report's device facet, and the token client's census reconcile alike - and it resolves the configuration rows and the capability set on the untyped wire plane
+ * before handing the result to the generic merge below, which stays the single place an untyped wire payload meets a typed record.
  *
  * The principle is the one the object merge already applies, carried to the collections that arrive as arrays: the wire is authoritative for what it names, and
  * absence is never a clear. The rows are a keyed collection in array clothing, so they merge by row identity - keys are unique within a device's own array on every

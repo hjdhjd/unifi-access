@@ -1,12 +1,13 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * capture.helpers.ts: The capture-backed record builders every protocol suite composes its fixtures from - a real device out of a committed topology document and
- * the variations the suites need on one - beside the captured notification corpus, the finder that names one packet out of it, and the classify-and-assert pair
- * every suite reads a typed event through.
+ * capture.helpers.ts: The capture-backed fixtures every protocol suite composes from - the lookup that finds a real device in a committed topology document and the
+ * builders that make the variations the suites need on one - beside the captured notification corpus, the finder that names one packet out of it, and the
+ * classify-and-assert pair every suite reads a typed event through.
  *
  * The discipline these serve is that a test's subject is a record the controller actually issued. Every builder starts from a captured device and varies exactly
  * what the test is about, so an assertion is about the flags rather than about a mock shape, and every builder answers a FRESH record: the capture is shared across
- * every suite in the run, so a builder that wrote through it would corrupt the evidence for whatever ran next.
+ * every suite in the run, so a builder that wrote through it would corrupt the evidence for whatever ran next. The lookup, `captured`, is the one exception by
+ * design: it answers the document's own object, for a caller to read and never to write.
  */
 import type { AccessBootstrapConfig, AccessDeviceConfig, AccessDeviceEntryConfig, AccessEventPacket } from "../types/index.ts";
 import { accessEventPackets2024Fixture, accessEventPacketsDoorStateFixture, accessEventPacketsFixture, accessEventPacketsHistoricalFixture,

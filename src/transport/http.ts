@@ -425,9 +425,9 @@ export class AccessResponse {
  * - **half-open:** once the cooldown elapses, requests are allowed through again as recovery probes. The first success closes the breaker (and emits
  *   `throttleExited` only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
  *
- * Whether the controller is serving lives here; session validity lives in {@link AuthSession} and a missing resource with its caller. The breaker never calls login
- * to probe recovery - the next real request is the probe, and the independent 401 concern is the injected `onUnauthorized` hook. The clock is injected so every
- * transition is deterministically testable.
+ * Whether the controller is serving lives here; session validity lives in the identity's session - {@link AuthSession} for credentials, the token session for a bearer
+ * token - and a missing resource with its caller. The breaker never calls login to probe recovery - the next real request is the probe, and the independent 401 concern
+ * is the injected `onUnauthorized` hook. The clock is injected so every transition is deterministically testable.
  *
  * @category Transport
  */
@@ -698,8 +698,9 @@ export class Transport implements AsyncDisposable {
     const signal = (opts.signal !== undefined) ? AbortSignal.any([ opts.signal, deadline.signal ]) : deadline.signal;
 
     /* The base headers, in precedence order. The Access API answers JSON on every endpoint and expects the content type declared on every request, including the
-     * ones carrying no body, so this is the single site that stamps it rather than a duty each call site has to remember. The auth headers (cookie and CSRF) layer
-     * over it, and a per-call header overrides either, which is how a caller sending something other than JSON says so.
+     * ones carrying no body, so this is the single site that stamps it rather than a duty each call site has to remember. The identity's auth headers - the session
+     * cookie and CSRF token, or the bearer token - layer over it, and a per-call header overrides either, which is how a caller sending something other than JSON
+     * says so.
      */
     const headers: Record<string, string> = { "content-type": "application/json", ...this.#getAuthHeaders?.(), ...opts.headers };
 
@@ -782,7 +783,7 @@ export class Transport implements AsyncDisposable {
 
         this.#throttledSince = null;
 
-        this.#log.info("Resumed communication with the UniFi Access controller after the throttle cooldown elapsed.");
+        this.#log.info("Resumed communication with the UniFi Access controller, and the throttle breaker has closed.");
 
         this.#bus.emit("throttleExited");
 

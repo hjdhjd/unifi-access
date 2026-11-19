@@ -10,11 +10,11 @@ updates:
     # Look for ".github/workflows" in the "root" directory.
     directory: "/"
 
-    # Check for updated GitHub Actions every weekday.
+    # Check for updated GitHub Actions daily.
     schedule:
       interval: "daily"
 
-    # Allow up to ten pull requests to be generated at any one time.
+    # Open no version-update pull requests: a limit of zero disables them.
     open-pull-requests-limit: 0
 
   # Enable version updates for npm.
@@ -23,11 +23,11 @@ updates:
     # Look for "package.json" and "package-lock.json" files in the "root" directory.
     directory: "/"
 
-    # Check the npm registry for updates every weekday.
+    # Check the npm registry for updates daily.
     schedule:
       interval: "daily"
 
-    # Allow up to ten pull requests to be generated at any one time.
+    # Open no version-update pull requests: a limit of zero disables them.
     open-pull-requests-limit: 0
 
     # Ignore certain dependency updates.

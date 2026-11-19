@@ -88,7 +88,7 @@ The controller's own information document, or `null` before one has been fetched
 get controllerName(): Nullable<string>;
 ```
 
-The controller's display name, or `null` before its information document has been fetched - which a connected client never sees, since connect awaits it.
+The controller's display name, or `null` before its information document has been fetched, and always on a client without credentials, which never fetches one.
 
 ##### Returns
 

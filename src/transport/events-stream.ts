@@ -14,9 +14,9 @@
  *
  * **The WebSocket is an injected dependency**, exactly like the {@link Transport}'s dispatcher and the state store's refresh callback. `EventStream` depends on the
  * minimal {@link AccessWebSocket} interface - only the surface it uses - never undici's full type. The default factory builds undici's `WebSocket` over an owned
- * HTTP/1.1 agent that accepts the controller's self-signed certificate, because a WebSocket upgrade cannot go through the HTTP/2 request pool. Tests inject a fake
- * socket and drive `open` / `message` / `close` / `error` deterministically, which is the only way to exercise this at all: undici's `MockAgent` does not mock
- * WebSockets.
+ * HTTP/1.1 agent, because a WebSocket upgrade cannot go through the HTTP/2 request pool, and that agent accepts the controller's self-signed certificate unless
+ * `verifyTls` asks for strict verification. Tests inject a fake socket and drive `open` / `message` / `close` / `error` deterministically, which is the only way to
+ * exercise this at all: undici's `MockAgent` does not mock WebSockets.
  *
  * **The watchdog detects here; the coordinator responds.** This is the same division as the throttle breaker: the subsystem that owns a resource detects its health
  * condition and emits a typed signal, and the one coordinator responds. `EventStream` stamps `lastMessageAt` on every frame and runs a silence watchdog on the
@@ -444,7 +444,7 @@ export class EventStream implements AsyncDisposable {
   }
 
   /**
-   * Close the stream: request the WebSocket close, detach every listener, end the watchdog, and release the connection we own. Safe to call more than once, and
+   * Close the stream: detach every listener, end the watchdog, request the WebSocket close, and release the connection we own. Safe to call more than once, and
    * awaitable. The connection we own is released before anything about the close is reported, so a listener never observes a closed stream still holding its
    * socket.
    */
@@ -867,9 +867,8 @@ export class EventStream implements AsyncDisposable {
    * The watchdog arms at construction rather than at open, so the same threshold also bounds a connect that never completes. That doubling is deliberate: a socket
    * that never opens and one that opens and goes quiet are the same condition from a consumer's point of view, and both want the same answer.
    *
-   * Detection latency is bounded in [threshold, 2 * threshold) by the wake cadence - a ten-to-twenty-second window against the roughly five-second heartbeat
-   * cadence, so several beats must be missed before it trips. That is the deliberate trade: polling on a fixed cadence rather than rescheduling a timer on every
-   * frame received.
+   * Detection latency is bounded in [threshold, 2 * threshold) by the wake cadence: the window spans two heartbeat intervals, and a silent channel trips one to two
+   * windows after its last frame. That is the deliberate trade: polling on a fixed cadence rather than rescheduling a timer on every frame received.
    */
   async #runWatchdog(): Promise<void> {
 

@@ -120,11 +120,11 @@ export interface OfficialDomainOptions {
 /**
  * The one path every official request takes.
  *
- * The official API answers in a uniform envelope - a result code, the payload, a message, and pagination on the endpoints that page - and it reports its refusals
- * *inside* that envelope, under a 2xx status or a 4xx. So a caller that read the status alone would treat a refusal under a 2xx as a successful request carrying a
- * payload it never got. The protocol tier's envelope reader is what makes that impossible, and it is the reader the Access application's own endpoints go through as
- * well: every official request resolves to a payload the endpoint really returned, or throws. What this module owns is one arm per response shape, the outbound encoding,
- * and the page report an arm reads beside its results.
+ * The official API answers in a result envelope - a result code, the payload, a message, and pagination on the endpoints that page - in either of the two dialects the
+ * envelope reader admits, and it reports its refusals *inside* that envelope, under a 2xx status or a 4xx. So a caller that read the status alone would treat a refusal
+ * under a 2xx as a successful request carrying a payload it never got. The protocol tier's envelope reader is what makes that impossible, and it is the reader the Access
+ * application's own endpoints go through as well: every official request resolves to a payload the endpoint really returned, or throws. What this module owns is one arm
+ * per response shape, the outbound encoding, and the page report an arm reads beside its results.
  *
  * The outcomes, and where each is decided:
  *
@@ -349,11 +349,14 @@ async function encodeMultipart(parts: readonly AccessOfficialFormPart[]): Promis
   const response = new Response(form);
   const contentType = response.headers.get("content-type");
 
-  // The boundary is minted by the serializer and reported only through this header, so a response that carries no content type describes a body nothing could
-  // parse. The platform always sets it; reading it as an answer rather than assuming it is what keeps that a statement about the response rather than a hope.
+  /* The boundary is minted by the serializer and reported only through this header, so a response that carries no content type describes a body nothing could
+   * parse. The platform always sets it; reading it as an answer rather than assuming it is what keeps that a statement about the response rather than a hope. A
+   * missing one is a fault inside this process rather than anything a controller sent, so it raises a `TypeError`, the class this library throws for an internal
+   * fault, rather than a class of the protocol hierarchy, which describes a controller's output.
+   */
   if(contentType === null) {
 
-    throw new AccessProtocolError("The platform's multipart serializer produced a body with no content type to describe it.");
+    throw new TypeError("The platform's multipart serializer produced a body with no content type to describe it.");
   }
 
   return { body: await response.bytes(), contentType };

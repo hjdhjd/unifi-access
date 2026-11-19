@@ -96,7 +96,7 @@ describe("OfficialApi", () => {
     assert.deepEqual(await rig.api.download("/system/static/avatar/a.png"), Buffer.from("PNGBYTES"));
   });
 
-  test("one transport serves every domain, so the breaker models the controller rather than any one domain", async () => {
+  test("every domain sends through the one transport the facade was handed", async () => {
 
     const { pool, transport } = makeMockTransport({ host: officialHost(HOST) });
     const api = new OfficialApi({ host: HOST, transport });

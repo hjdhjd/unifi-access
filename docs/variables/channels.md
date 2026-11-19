@@ -28,18 +28,19 @@ logging hooks or callback parameters for each. This is the modern Node observabi
 gates on `channel.hasSubscribers` before it builds a payload, and adaptable to any backend - a consumer can bridge any channel to OpenTelemetry, Pino, or a
 metrics counter.
 
-Channel names follow a stable `unifi-access:<subsystem>:<event>:<phase>` taxonomy. This module declares every channel exactly once and each subsystem imports the
-publisher it needs from here rather than re-deriving the name string, so a rename is a single edit and a typo at a call site is impossible.
+Channel names follow a stable `unifi-access:<subsystem>:<event>[:<phase>]` taxonomy, the phase present where an event is published at more than one point. This
+module declares every channel exactly once and each subsystem imports the publisher it needs from here rather than re-deriving the name string, so a rename is a
+single edit and a typo at a call site is impossible.
 
 This module is the single source of truth for the channel set. Each channel is declared with its payload type, so a consumer's `subscribe` handler is typed and
 the generated reference documentation links each channel to its payload. Adding a channel touches both: the typed, doc-commented entry here and its payload type
 below.
 
-Every payload carries the controller `host` this client was built against. The channels are process-global, so a consumer running more than one client needs that
-attribution to tell one controller's traffic from another's.
+Every payload carries a `host` member naming the controller this client was built against, null only on a relogin that had no retained credentials to attempt
+one with. The channels are process-global, so a consumer running more than one client needs that attribution to tell one controller's traffic from another's.
 
-The module sits at the source root rather than inside a tier because every tier publishes on it. Homing it here means a lower tier reaches its own publisher
-through a downward import like any other, and this module's own references upward are type-only and therefore erased.
+The module sits at the source root rather than inside a tier because the tiers that publish on it sit at more than one layer. Homing it here means a lower tier
+reaches its own publisher through a downward import like any other, and this module's own references upward are type-only and therefore erased.
 
 ## Type Declaration
 

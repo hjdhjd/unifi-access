@@ -195,7 +195,8 @@ export interface ThrottleSource {
  * - `eventStreamFactory` builds a notification stream. It is the single construction path, used for the initial stream and for every relaunch, and its optional
  *   signal binds only to the initial connect - a relaunch must not inherit a signal that may already have fired.
  * - `packetSink` and `rawPacketSink` receive what the live stream decodes; the composition root fans them into the store and the client's own rails.
- * - `reBootstrap` re-fetches the controller's documents and applies them, so recovery re-seeds state through the one path that owns that order.
+ * - `reBootstrap` re-reads what the client seeded from - the document pair where it holds credentials, the official listings where it holds only a token - and
+ *   applies it, so recovery re-seeds state through the path the connect seed took.
  * - `refreshAdminStatus` re-checks the account's privilege after a successful relaunch. It is called and not awaited, so a slow or hanging check cannot hold
  *   recovery open.
  * - `verify` is the reachability probe.
@@ -771,8 +772,10 @@ export class ConnectionMonitor {
     this.#recoveryWake?.abort();
   }
 
-  /* One recovery attempt: probe, re-bootstrap, relaunch. The probe and the re-bootstrap both dispatch as recovery trials, so they go out at this loop's cadence
-   * rather than waiting out the breaker's cooldown - which is what makes this loop the single owner of how often a recovering client touches the controller.
+  /* One recovery attempt: probe, re-bootstrap, relaunch. The probe always dispatches as a recovery trial, so it goes out at this loop's cadence rather than waiting
+   * out the breaker's cooldown - which is what makes this loop the single owner of how often a recovering client touches the controller. The credential leg's
+   * re-bootstrap dispatches as a trial too; the token leg's re-reads the official listings as ordinary requests, which the probe's success has already let through
+   * by closing the breaker.
    *
    * The privilege re-check is issued and deliberately not awaited. A reconnect is the moment an account's rights may have changed, so it is worth asking, but the
    * answer gates nothing: recovery is complete when the channel is live, and awaiting a check that a struggling controller may never answer would hold the

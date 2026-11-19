@@ -4,14 +4,14 @@
  */
 
 /**
- * Pre-built selectors over {@link AccessState}. Every selector is a **pure function returning configuration records**, and every selector's result is
- * reference-stable across a dispatch that did not touch what it reads, whether through this module's memo helper or, where the reducer already guarantees it,
- * by construction.
+ * Pre-built selectors over {@link AccessState}. Every selector is a **pure function returning configuration records or values derived from them**, and every
+ * selector's result is reference-stable across a dispatch that did not touch what it reads, whether through this module's memo helper or, where the reducer
+ * already guarantees it, by construction.
  *
  * Memoization is a correctness requirement here, not a performance flourish. An observer detects change with `Object.is`: the reducer keeps a record's reference
  * stable across dispatches that did not touch it, and these selectors keep a *derived* collection's reference stable across dispatches that did not touch the state
  * it was derived from. A selector that rebuilt its result on every call would compare unequal every time, wake every observer on every dispatch, and defeat the
- * guarantee that a refresh finding no drift is invisible.
+ * guarantee that a refresh finding no drift leaves every observer of devices and doors asleep.
  *
  * Two shapes come out of this module, and which one a view returns follows from what it is. A view that **groups** devices under a key returns a
  * `ReadonlyMap`, because the key is the point and a consumer looks its own key up. A view that **selects a subset** of devices returns a readonly array,
@@ -618,8 +618,8 @@ export function selectDoorDevices(state: AccessState): ReadonlyMap<string, reado
 }
 
 /**
- * The logical access points: one entry per door-serving port of every Enterprise Access Hub, presented as a device in its own right so that a consumer sees one
- * piece of hardware per door rather than one hub standing in for eight of them.
+ * The logical access points: one entry per door-serving port of each Enterprise Access Hub the building hosts, presented as a device in its own right so that a
+ * consumer sees one piece of hardware per door rather than one hub standing in for eight of them.
  *
  * Each synthesized record takes its identity from the port's extension, its `location_id` from the door that port targets, its `alias` from that door's name, and
  * its `name` from the hub's alias, with every remaining hardware field coming from the hub itself. The controller's own records are left untouched: this is a

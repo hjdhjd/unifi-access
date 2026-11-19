@@ -163,9 +163,8 @@ export class AccessHub extends AccessDevice {
    * Close the door this hub drives, ending an unlock that is holding it open. This is the other half of the two-button surface a gate or a door with a held-open
    * unlock presents: `unlock` begins, this ends.
    *
-   * The request deliberately carries no body at all, which is the field-proven shape for this command - the controller reads the command from the query parameter, and a
-   * body is what distinguishes an unlock from a close on the same resource. The wire shape is proven from hardware rather than from a capture, so no recorded specimen
-   * confirms it.
+   * The request carries the `control_cmd=close` query parameter and deliberately no body at all, where the unlock on the same resource carries an empty JSON body and
+   * no parameter. That is the field-proven shape for this command, proven from hardware rather than from a capture, so no recorded specimen confirms it.
    *
    * **Which API carries this depends on the client.** Every client holding a direct path takes the hardware-proven command above. A client with none - one holding only
    * a token, or one held to the official API - reaches the published API's gate control command instead, which the reference documents for UA Hub Gate hardware in
@@ -288,11 +287,11 @@ export class AccessHub extends AccessDevice {
    * The door this handle acts on - the identity its commands address and its {@link AccessHub.doorState} reads: the door bound to the hub's port when the record
    * carries that binding, and the device's own location otherwise.
    *
-   * The two arms are the same rule seen from two directions. A whole multi-port hub records each port's door in its extensions, so the binding is where the door
-   * identity lives. A synthesized per-port handle already *is* one port: the registry gives it that port's own location and no extensions at all, so the fallback
-   * resolves it to its own door by construction rather than by a special case. Single-door hardware takes the same fallback for the same reason - its location is
-   * its door. Publishing the resolution keeps it single-sourced: a consumer matching a topology door to the handle that drives it reads this rather than restating
-   * the port-extension rule.
+   * The two arms are the same rule seen from two directions. A whole multi-port hub records each port's door in its extensions, so the binding is where the door identity
+   * lives. A synthesized per-port handle already *is* one port: the state tier's port expansion gives it that port's own location and no extensions at all, so the
+   * fallback resolves it to its own door by construction rather than by a special case. Single-door hardware takes the same fallback for the same reason - its location
+   * is its door. Publishing the resolution keeps it single-sourced: a consumer matching a topology door to the handle that drives it reads this rather than restating the
+   * port-extension rule.
    *
    * Where a record carries several port bindings, the first of them as the controller delivered them is what this answers with, which is the contract
    * {@link AccessHub.portBindings} states and where every one of them is reachable. Commanding a particular door of hardware that drives more than one is what the

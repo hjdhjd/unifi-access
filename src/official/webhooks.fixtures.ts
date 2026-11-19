@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * webhooks.fixtures.ts: Real webhook deliveries, captured from a live controller and embedded verbatim.
+ * webhooks.fixtures.ts: Real webhook deliveries, captured from a live controller and embedded in the shape the controller sent them.
  *
  * The controller document the topology fixtures carry was captured on 2026-08-13 and reported UniFi Access v4.3.3+12030, and every capture in this file comes from
  * that controller. Beyond the v1 in the developer API's path, the payloads carry no schema version of their own, so that application version is what a recapture
@@ -8,9 +8,9 @@
  */
 import type { AccessWebhookEvent } from "./webhooks.ts";
 
-/* Each delivery below is the body of a real webhook request the controller made, embedded exactly as it arrived and declared against the delivery union so the
- * suite type-checks the payload model against real wire material rather than against a restatement of itself. Nothing here is tidied: key order and casing are the
- * controller's own.
+/* Each delivery below is the body of a real webhook request the controller made, embedded in the shape it arrived in and declared against the delivery union so
+ * the suite type-checks the payload model against real wire material rather than against a restatement of itself. Nothing structural is tidied: key order and
+ * casing are the controller's own, while names, identifiers, and addresses are stand-ins.
  *
  * The set is chosen for what each one settles rather than for coverage. The unlocks are the same event under different circumstances - one performed through the
  * official API with attribution supplied, carrying the actor identity and the caller's own passthrough object, and one performed by a person answering a doorbell call,

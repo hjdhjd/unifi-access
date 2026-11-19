@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * devices.fixtures.ts: The official API's device and door listings, captured from a live controller and embedded verbatim.
+ * devices.fixtures.ts: The official API's device and door listings, captured from a live controller and embedded in the shape the controller answered them.
  *
  * The controller document the topology fixtures carry was captured on 2026-08-13 and reported UniFi Access v4.3.3+12030, and every capture in this file comes from
  * that controller. Beyond the v1 in the developer API's path, the payloads carry no schema version of their own, so that application version is what a recapture
@@ -9,8 +9,9 @@
 import type { AccessOfficialDevice } from "./devices.ts";
 import type { AccessOfficialDoor } from "./spaces.ts";
 
-/* One `GET /devices` payload exactly as the controller answered it, declared against the listing type so the suite type-checks the projection against real wire
- * material rather than against a restatement of itself. Nothing here is tidied: key order, casing, and the full capability vocabulary are the controller's own.
+/* One `GET /devices` payload in the shape the controller answered it, declared against the listing type so the suite type-checks the projection against real wire
+ * material rather than against a restatement of itself. Nothing structural is tidied: key order, casing, and the full capability vocabulary are the controller's
+ * own, while names, identifiers, and addresses are stand-ins.
  *
  * The nesting is the payload's own. The endpoint groups devices by the door they serve, and every device in a group carries that group's door in `location_id`, so
  * the grouping is recoverable from the records themselves and flattening loses nothing. The groups are keyed by the same doors of the same controller the topology

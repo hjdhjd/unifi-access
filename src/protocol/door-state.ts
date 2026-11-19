@@ -10,12 +10,13 @@
  * What lives here is door MEANING. The polarity a position sensor's reading is read under, the two conditions a lock relay stands for, and the door's own extras as
  * a second carrier of the hub's facts are all door knowledge, while which keys a hub speaks about its terminals - and whether any one of them is in service - is
  * terminal knowledge, and that half lives in {@link AccessTerminalInputs} below this module. The split is what keeps a raw terminal read and a door's condition from
- * each carrying a copy of the other's knowledge: this module names no wire key at all, and asks the catalog for the position terminal it then interprets.
+ * each carrying a copy of the other's knowledge: this module names no terminal key - the wire keys it spells are the door-state members and the prefix that marks a
+ * door's extras - and asks the catalog for the position terminal it then interprets.
  *
  * This is protocol-tier material for the same reason {@link AccessVocabulary} is. The knowledge here is about what the wire's values mean, it performs no I/O, and
  * placing it above the protocol tier would make protocol-tier consumers reach upward for the vocabulary they themselves speak. The reducer's topology seed is its
- * first consumer and the composition root's official seed is its second, which is precisely why the translations are declared once here rather than at either
- * call site.
+ * first consumer and the client tier's census projection of the official listings is its second, which is precisely why the translations are declared once here
+ * rather than at either call site.
  *
  * The controller reports a door's condition in two quite different ways, and the difference is what shapes this module. A door-state notification carries the
  * controller's own semantic verdict - `close`, `open`, `locked`, `unlocked` - already interpreted. The topology document carries no door state at all; what it

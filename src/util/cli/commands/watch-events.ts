@@ -57,7 +57,7 @@ const USAGE = [
   "Examples:",
   "  ufa watch events                                    # everything",
   "  ufa watch events --ring                             # doorbell rings only",
-  "  ufa watch events --device=\"Loading Dock\"          # one device",
+  "  ufa watch events --device=\"Loading Dock\"          # every device by that name",
   "  ufa watch events event~door                         # any event whose name mentions a door",
   "  ufa watch events event~/^access\\.door/             # a regular expression",
   "  ufa watch events --json --count=10                  # ten packets, as JSON",
@@ -202,8 +202,8 @@ async function *filterPackets(source: AsyncIterable<AccessEventPacket>, filters:
  * rendering the ones that pass.
  *
  * The raw rail is the right one for this command: it carries every frame the controller sent, the ones the library does not model included, which is what makes this
- * the tool for exploring the wire protocol as well as for watching a door. Filters compile once and name resolution is snapshotted once, so the per-packet path
- * evaluates predicates and reads maps without building anything.
+ * the tool for exploring the wire protocol as well as for watching a door. Filters compile once and the name and role snapshot is taken once, so the per-packet
+ * path evaluates prepared predicates, with the terms that need it still classifying or normalizing each packet as they read it.
  *
  * @category CLI
  */

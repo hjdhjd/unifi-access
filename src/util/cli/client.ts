@@ -128,8 +128,8 @@ export function requireSurface(credentials: UfaCredentials, surface: "credential
 
     if(!("username" in credentials.identity)) {
 
-      throw new CliError("The " + operation + " rides the Access application's own endpoints, which require credentials the ufa.json configuration does not " +
-        "carry. A token-only configuration acts through the door group and the api hatch.");
+      throw new CliError("The " + operation + " runs on the Access application's own endpoints, which require credentials the ufa.json configuration does not " +
+        "carry. A token-only configuration reaches the controller through the official API.");
     }
 
     return;

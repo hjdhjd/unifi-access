@@ -1719,7 +1719,7 @@ describe("Transport", () => {
       assert.deepEqual(await transport.request<{ ok: number }>(url(host, "/x")), { ok: 1 }, "an injected dispatcher must survive reset()");
     });
 
-    test("asyncDispose resolves without destroying an injected dispatcher", async () => {
+    test("asyncDispose resolves on an injected dispatcher", async () => {
 
       const { transport } = makeMockTransport();
 

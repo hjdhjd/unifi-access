@@ -10,7 +10,8 @@
  * nothing that covers it.
  *
  * A helper earns its place here when more than one test module needs it. A helper specific to a single source module belongs beside that module as a sibling
- * helpers file instead, and the codebase's fixture convention is verbatim captured literals rather than factories, so no fixture builders live here.
+ * helpers file instead, and the codebase's fixture convention is captured literals in the shape the controller served them rather than factories, so no fixture
+ * builders live here.
  */
 import type { AccessBootstrapConfig, AccessDeviceConfig } from "./types/index.ts";
 import type { Channel } from "node:diagnostics_channel";

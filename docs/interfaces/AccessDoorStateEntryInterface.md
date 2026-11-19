@@ -15,14 +15,16 @@ Both vocabularies are open strings the controller chooses rather than closed uni
 capture generation carries, and a closed union would make that value unrepresentable rather than merely unfamiliar.
 
 The alarm and suspension members reflect per-hub-class presence rather than a sparse payload: a door reporting no alarm and no suspension omits them entirely, and
-the same door carries them on a later report when the condition arises. A consumer therefore reads their absence as "no alarm" and "not suspended".
+the same door carries them on a later report when the condition arises. A carrier's report states its door's whole condition, so on a report an absent alarm or
+suspension means the condition has cleared.
 
 Every member but the door's own identity is optional, which describes what an entry's source established rather than a sparse wire. A door hub reports the whole
 record on every notification, so an entry born from one of its reports carries them all, while hardware this library holds no capture of may report fewer members and
 its entries carry what it sent. An entry can also be seeded at connect from what a controller's other surfaces answer about a door, and those surfaces answer less:
 hardware flags establish position only where a sensor is wired, and the official API knows nothing about wiring at all. Requiring a member would force such an entry
-to invent a value for something nothing asked, so an entry states what its source established and stays silent on the rest. A consumer therefore reads an absent
-member as "not established", distinct from a `dps` of `none` or an `is_unavailable` of `false`, which are the controller positively reporting a condition.
+to invent a value for something nothing asked, so an entry states what its source established and stays silent on the rest. On a seeded or fact entry a consumer
+therefore reads an absent member as "not established", distinct from a `dps` of `none` or an `is_unavailable` of `false`, which are the controller positively
+reporting a condition.
 
 ## Properties
 

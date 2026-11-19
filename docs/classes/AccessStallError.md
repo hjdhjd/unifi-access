@@ -6,10 +6,10 @@
 
 # Class: AccessStallError
 
-The realtime events channel produced no data for longer than its heartbeat watchdog window - silence beyond `ACCESS_EVENTS_HEARTBEAT_TIMEOUT`, which the
-controller's own heartbeat cadence should have filled several times over. The underlying channel is presumed dead. As a `RecoverableError`, the error type itself
-is the signal to recover: the events stream's subscriber (the `ConnectionMonitor`) re-bootstraps and relaunches rather than leaving a consumer reading state that
-silently stopped updating.
+The realtime events channel produced no data for longer than its heartbeat watchdog window - silence beyond `ACCESS_EVENTS_HEARTBEAT_TIMEOUT`, a window spanning
+two of the controller's heartbeat intervals, which the watchdog notices one to two windows after the last frame. The underlying channel is presumed dead. As a
+`RecoverableError`, the error type itself is the signal to recover: the events stream's subscriber (the `ConnectionMonitor`) re-bootstraps and relaunches rather
+than leaving a consumer reading state that silently stopped updating.
 
 ## Extends
 

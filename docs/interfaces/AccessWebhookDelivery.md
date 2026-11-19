@@ -8,9 +8,9 @@
 
 The body of a webhook delivery: the event's name, the identifier the controller minted for this delivery, and the payload.
 
-Every delivery carries the same payload members - the location, the device, the actor, and an `object` whose shape is the event's own. The location is always
-present; the device is not, because an event raised by something other than a device names none; and the actor is present only where the controller attributes
-the action to someone, which it does not for a doorbell press or a sensor transition.
+Every delivery carries the same payload members - the location, the device, the actor, and an `object` whose shape is the event's own - and carries each of those
+keys every time. The device is null on an event raised by something other than a device, and the actor is null where the controller attributes the action to no
+one, as for a doorbell press or a sensor transition.
 
 ## Type Parameters
 

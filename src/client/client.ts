@@ -6,7 +6,7 @@
 /**
  * The consumer-facing entry point and composition root. {@link AccessClient.connect} is the one way in: it authenticates, fetches what the supplied identities can
  * reach, seeds the state model, and brings the realtime channel up as a single operation that either returns a ready client or throws. There is no half-built
- * state - a failure at any stage tears down what was built before the error propagates.
+ * state - a failure in any stage that talks to the controller tears down what was built before the error propagates.
  *
  * A controller answers to two APIs, and a client connects with the identities for either or both. Credentials reach the Access application's own endpoints, which
  * serve the topology document; a bearer token reaches the published API, whose own listings are the census a client with no credentials builds its inventory from.
@@ -375,9 +375,9 @@ export class AccessClient implements AsyncDisposable {
       ...((parts.signal !== undefined) && { signal: parts.signal })
     });
 
-    /* The diagnostics bridge. Both channels are published from here rather than from the layers that produce the events, because both payloads carry the
-     * controller's address and neither of those layers knows it: the store is deliberately host-agnostic and the monitor is deliberately host-agnostic, and this
-     * is the layer that is not. Both subscriptions live for the client's lifetime and are disposed with it.
+    /* The diagnostics bridge for the connection transition, published from here rather than from the monitor because the payload carries the controller's address
+     * and the monitor is deliberately host-agnostic, as the store is. The store's dispatch channel is published for the same reason from the hook connect wires into
+     * the store. The subscription lives for the client's lifetime and is disposed with it.
      */
     const publishTransition = (transition: ConnectionTransition): void => {
 
@@ -730,7 +730,8 @@ export class AccessClient implements AsyncDisposable {
     const routing = new AccessRoutingService({ capabilities, log, official: officialCapable ? official : null, store });
 
     // Stage 4: build the injected functions the connection monitor drives. The stream factory is the single construction path for the initial socket and every
-    // relaunch, and its optional signal binds only to the initial connect. The re-bootstrap and the reachability probe both dispatch as recovery trials.
+    // relaunch, and its optional signal binds only to the initial connect. The reachability probe always dispatches as a recovery trial, and so does the credential
+    // leg's re-bootstrap; the token leg's re-reads the official listings as ordinary requests once the probe's success has closed the breaker.
     const useOfficialChannel = transport === null;
     const eventStreamFactory = (signal?: AbortSignal): EventStream => new EventStream({
 
@@ -936,7 +937,7 @@ export class AccessClient implements AsyncDisposable {
     return this.#direct?.auth.isAdmin ?? null;
   }
 
-  /** The controller's display name, or `null` before its information document has been fetched - which a connected client never sees, since connect awaits it. */
+  /** The controller's display name, or `null` before its information document has been fetched, and always on a client without credentials, which never fetches one. */
   get controllerName(): Nullable<string> {
 
     return selectControllerName(this.#store.snapshot());

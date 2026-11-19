@@ -8,9 +8,9 @@
  * to the published API, in different vocabularies and at different widths, and this module is where the second spelling becomes the first. The library owns that
  * translation so a consumer never sees an official record in state: it reads one record shape through one set of selectors, whichever identity its client holds.
  *
- * This is client-tier material rather than protocol-tier material, for reasons that agree. The composition root is where official records are read and where
- * the one existing official-to-state mapping already lives, and the protocol tier's own official-channel folds take primitive values - a lock status, a position
- * status - rather than whole records, so putting a whole-record projection there would add a protocol-to-official type edge the architecture does not carry.
+ * This is client-tier material rather than protocol-tier material, for reasons that agree. The client tier is where official records are read, and the projection
+ * takes those records whole, while the protocol tier's own official-channel folds take primitive values - a lock status, a position status - so putting a
+ * whole-record projection there would add a protocol-to-official type edge the architecture does not carry.
  *
  * @module AccessCensus
  */

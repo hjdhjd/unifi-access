@@ -43,8 +43,8 @@ export interface AccessCredentials {
 }
 
 /**
- * Construction options for {@link AuthSession}. The session performs its handshake through the supplied {@link Transport}, which is the only dependency it holds -
- * the import points downward (`AuthSession` -> `Transport`), never the reverse.
+ * Construction options for {@link AuthSession}. The session performs its handshake through the supplied {@link Transport}, its one peer dependency beside an optional
+ * logger - the import points downward (`AuthSession` -> `Transport`), never the reverse.
  *
  * @category Transport
  */
@@ -441,10 +441,11 @@ export class AuthSession {
    * explicitly rather than relying on the transport's getAuthHeaders hook being wired back to this same session. The fetched token is the handshake's own until the
    * login succeeds: the session writes only the token the login's answer carries.
    *
-   * A false return is a refused sign-in, which login() reports as bad credentials and which a reconnecting consumer reads as a wrong password, so only an answer
-   * that judges the credentials earns it: a 4xx that names no readiness of the controller's. A controller limiting requests or not ready yet, a 3xx, or any other
-   * 5xx says nothing about the credentials, so each throws the error the transport classifies it as, and a controller answering mid-reboot is never reported as a
-   * wrong password. The controller root's status is read ahead of the login for its readiness alone: a readiness answer there, a 429 among them, throws before any
+   * A false return means no session was established: a refused sign-in, a session a logout or a fresh login superseded mid-handshake, or a 2xx carrying no complete
+   * session. Only the first is a verdict on the credentials, and it is the one a reconnecting consumer reads as a wrong password, so only an answer that judges the
+   * credentials is read as a refused sign-in: a 4xx that names no readiness of the controller's. A controller limiting requests or not ready yet, a 3xx, or any
+   * other 5xx says nothing about the credentials, so each throws the error the transport classifies it as, and a controller answering mid-reboot is never reported
+   * as a wrong password. The controller root's status is read ahead of the login for its readiness alone: a readiness answer there, a 429 among them, throws before any
    * password is sent, because a controller that gives one is not placed to judge a sign-in, and any other answer that is not a 2xx yields no token.
    *
    * Every request the handshake sends carries the marks it was handed: the caller's signal, and the probe's mark for a relogin a recovery probe triggered, which is

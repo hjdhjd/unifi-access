@@ -635,8 +635,7 @@ describe("the surface gates", () => {
 
       assert.ok(error instanceof CliError);
       assert.ok(error.message.includes("info command"));
-      assert.ok(error.message.includes("door group"));
-      assert.ok(error.message.includes("api hatch"));
+      assert.ok(error.message.includes("A token-only configuration reaches the controller through the official API."));
 
       return true;
     });
@@ -941,8 +940,7 @@ describe("the read commands", () => {
       await assert.rejects(async () => spec.run(ctx), (error: unknown) => {
 
         assert.ok(error instanceof CliError);
-        assert.match(error.message, /door group/);
-        assert.match(error.message, /api hatch/);
+        assert.match(error.message, /A token-only configuration reaches the controller through the official API\./);
 
         return true;
       });

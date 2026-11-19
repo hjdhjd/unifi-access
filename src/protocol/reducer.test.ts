@@ -1286,8 +1286,8 @@ describe("locationChanged", () => {
 
   test("an own __proto__ key in a patch lands nowhere and the record's prototype stays ordinary", () => {
 
-    // The patch is parsed from JSON text, as the codec hands one over, so `__proto__` is an own key of it where an object literal's `__proto__` would set its
-    // prototype instead and the row would plant nothing.
+    // The patch is parsed from JSON text, as a notification's payload arrives, so `__proto__` is an own key of it where an object literal's `__proto__` would set
+    // its prototype instead and the row would plant nothing.
     const state = stateFrom(accessBootstrap2026Fixture);
     const patch = JSON.parse("{\"__proto__\":{\"polluted\":true},\"name\":\"Front Door\"}") as LocationPayload;
 

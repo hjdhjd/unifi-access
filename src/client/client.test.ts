@@ -620,7 +620,7 @@ describe("AccessClient.connect", () => {
 
       clock.advance(1000);
 
-      const failure = (): unknown => log.entries.find((entry) => (entry.level === "debug") && entry.message.startsWith("Bootstrap refresh failed"))?.params[0];
+      const failure = (): unknown => log.entries.find((entry) => (entry.level === "debug") && entry.message.startsWith("State refresh failed"))?.params[0];
 
       await settleUntil(() => failure() !== undefined, { description: "the refresh pass to report its failure" });
 

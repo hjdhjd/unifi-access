@@ -607,7 +607,7 @@ function memberKeyFor(row: Record<string, unknown>, name: string): string {
  * answer exactly that shape - and no key-based catalog can reach a document that has no keys, so the conservative reading is the only safe one. The envelope shape
  * survives, which is what a capture of that endpoint is for.
  *
- * Binary values pass through untouched. Bytes are not string territory, and the layer that assembles a capture is what decides how to carry them.
+ * Binary values pass through untouched. Bytes are not string territory, and the caller decides how to carry them.
  *
  * @param value   - Any JSON-shaped value: a whole document, a record, or a single field.
  * @param context - The replacement memory. Pass one context through a whole capture so its cross-references survive.

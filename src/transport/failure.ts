@@ -106,7 +106,8 @@ function walkCauses(error: unknown): CauseWalk {
  * - `"dns"` - the host name did not resolve. Produced by `ENOTFOUND`, and by `EAI_AGAIN`, the temporary-failure form a struggling resolver returns.
  * - `"refused"` - the host answered the connection attempt by declining it. Produced by `ECONNREFUSED`.
  * - `"reset"` - an established connection was dropped mid-exchange. Produced by `ECONNRESET`.
- * - `"retries-exhausted"` - the transport retried as it was configured to and ran out of attempts. Produced by `UND_ERR_REQ_RETRY`.
+ * - `"retries-exhausted"` - the retry layer gave up without a usable response: on this library's own pool, a response it could not hand over whole, and on an
+ *   injected dispatcher possibly a retried status that ran out of attempts. Produced by `UND_ERR_REQ_RETRY`.
  * - `"timeout"` - a deadline elapsed. Produced by the platform `TimeoutError` from `AbortSignal.timeout()`, by a cancellation that is not the lifetime signal's, and
  *   by the response deadlines `UND_ERR_HEADERS_TIMEOUT` and `UND_ERR_BODY_TIMEOUT`.
  * - `"transport"` - a genuine failure carrying no marker anyone can read. The catch-all, and where a value that is not an error at all lands.

@@ -12,8 +12,9 @@
  * Each wire record has an **Interface** (the full definition with all properties) and a **Config** type alias. For update payloads, consumers use one of the published
  * `...Payload` aliases, each of which makes every member optional and null-admitting to match what a notification actually carries. Most wire-record interfaces include
  * `[key: string]: AccessKnownJsonValue` index signatures so that untyped API fields are accessible without casting, while the fully enumerated value shapes they
- * compose stay closed. The event payload interfaces are the exception: each one is deliberately closed and verified complete against captures, rather than carrying
- * that escape-valve signature.
+ * compose stay closed. The event payload interfaces are the exception: each one is deliberately closed at the type level and verified complete against a census of
+ * the captures, rather than carrying that escape-valve signature. Closed describes the declared type rather than the value at runtime: a member the wire carries and
+ * an interface does not declare is not stripped, so it reaches consumers, and on a door-state entry the state, as delivered.
  *
  * @module AccessTypes
  */

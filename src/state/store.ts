@@ -17,10 +17,11 @@
  * The store also owns the **refresh failsafe**: on a fixed cadence (default {@link ACCESS_BOOTSTRAP_REFRESH_INTERVAL}) it invokes the injected `refresh` callback,
  * which re-seeds the store from whatever the composition root seeded it from. The loop assumes nothing about what a refresh is - the callback reads what its mode
  * can reach and applies it through the store's own methods - so one mechanism serves a client re-fetching its document pair and a client re-reading the official
- * API's listings alike. The reducer's reconciliation makes a refresh that finds no drift produce no observer notifications at all, so the failsafe is invisible
- * until something has actually changed. Taking a callback rather than a transport reference keeps the store at the data layer, where it performs no I/O of its own
- * and is testable with a fake refresh and a fake `Clock`. The mechanism lives here, beside the chokepoint it feeds; the policy of what that callback does, and how
- * it interacts with connection recovery, belongs to the layer that composes the store.
+ * API's listings alike. The reducer's reconciliation leaves every device and door record untouched by a refresh that finds no drift, so no observer of them wakes
+ * until something has actually changed; a credential refresh's controller document usually differs on the host's uptime, so the state reference, the dispatch
+ * channel, and the debug line still move. Taking a callback rather than a transport reference keeps the store at the data layer, where it performs no I/O of its
+ * own and is testable with a fake refresh and a fake `Clock`. The mechanism lives here, beside the chokepoint it feeds; the policy of what that callback does, and
+ * how it interacts with connection recovery, belongs to the layer that composes the store.
  *
  * @module AccessStateStore
  */
@@ -294,7 +295,8 @@ export class StateStore implements AsyncDisposable {
    * Advance the state by one event. The single mutation chokepoint: it folds the event through the pure reducer and, only when the resulting state is a *different*
    * reference, commits it and notifies every active observer. An event the reducer returns unchanged notifies nobody.
    *
-   * Package-internal: the realtime notification stream, the refresh failsafe, and the client's initial bootstrap call it. It is not a consumer-facing surface.
+   * Package-internal: the realtime notification stream calls it, and so do the store's own apply methods, through which the client's connect seed, its refresh
+   * failsafe, and its recovery re-bootstrap all reach it. It is not a consumer-facing surface.
    *
    * @param event - The typed event to apply.
    *
@@ -353,7 +355,7 @@ export class StateStore implements AsyncDisposable {
    *
    * The controller document is dispatched before the topology, so an observer watching the controller - the reboot detection above all - sees the fresh host
    * information before the topology reconciliation's own notifications land. Every caller goes through this one method rather than replicating that order: the
-   * periodic failsafe here, and the composition root's connect seeding and recovery re-bootstrap.
+   * client's refresh closure the failsafe invokes, its connect seed, and its recovery re-bootstrap.
    *
    * A pair carrying no controller document dispatches the topology alone, which is how a caller that refreshed only the topology says so.
    *
@@ -467,7 +469,7 @@ export class StateStore implements AsyncDisposable {
            */
           if(!this.#refreshController.signal.aborted) {
 
-            this.#log.debug("Bootstrap refresh failed; retrying on the next interval.", error);
+            this.#log.debug("State refresh failed; retrying on the next interval.", error);
           }
         }
       }
@@ -480,8 +482,9 @@ export class StateStore implements AsyncDisposable {
   /* One debug line per seed that changed what the store holds: the counts the state carries once the application has landed, so a partial delivery - a listing
    * answered under throttling with a door missing - is diagnosable from a consumer's log at the moment it landed rather than reconstructed later from the
    * symptoms. The counts are read after the dispatch on purpose: what a consumer can act on is what the store now holds, and a source's own row count would say
-   * nothing about what the reducer admitted. A seed that changed nothing says nothing, on the same principle that keeps the failsafe invisible until something
-   * has actually changed - a refresh that reconciled to zero drift leaves the state reference where it was, and so does any seed reaching a disposed store.
+   * nothing about what the reducer admitted. A seed that changed nothing says nothing: a census that reconciled to zero drift leaves the state reference where it
+   * was, and so does any seed reaching a disposed store. A credential refresh whose topology found no drift still logs, because its controller document usually
+   * differs on the host's uptime.
    */
   #logApplied(source: string, before: AccessState): void {
 

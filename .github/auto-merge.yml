@@ -1,4 +1,4 @@
-# Merge all dependencies as long within ${TARGET} scope (defined in workflows/dependabot-automerge.yml).
+# The auto-merge rule: an update to any dependency qualifies when it changes no more than the minor version.
 #
 - match:
     dependency_type: all

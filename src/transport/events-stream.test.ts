@@ -1241,7 +1241,7 @@ describe("EventStream", () => {
       await stream[Symbol.asyncDispose]();
     });
 
-    test("an unsolicited close of a live stream surfaces a recoverable error then closed", async () => {
+    test("an unsolicited close of a live stream surfaces a recoverable error and closes", async () => {
 
       const { stream, ws } = await openStream();
       const errors = collect(stream, "error");

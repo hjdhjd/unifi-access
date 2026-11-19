@@ -10,8 +10,9 @@ Payload published on the `unifi-access:store:dispatch` channel. `kind` is the ev
 here is the reducer's rather than a second list that could fall behind it.
 
 That vocabulary includes the synthetic kinds, which are the ones a subscriber watching for state flow should expect to see without a packet having arrived:
-`bootstrapLoaded` and `controllerChanged` for the documents a fetch supplies, and `doorStateFactsApplied` for the door facts an official read supplies. They are
-dispatched by the composition root rather than lifted from the wire, and they are reported here exactly as a wire-borne event is.
+`bootstrapLoaded` and `controllerChanged` for the documents a fetch supplies, `censusApplied` for the official listings a token client's census supplies, and
+`doorStateFactsApplied` for the door facts an official read supplies. They are dispatched by the composition root rather than lifted from the wire, and they are
+reported here exactly as a wire-borne event is.
 
 ## Properties
 

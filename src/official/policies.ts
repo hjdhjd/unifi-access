@@ -6,7 +6,7 @@ import type { AccessOfficialCallOptions, OfficialDispatch, OfficialDomainOptions
 import { officialEndpoint } from "./endpoints.ts";
 
 /**
- * One access window within a day: the wire's `HH:MM:SS` strings, inclusive of the start and exclusive of nothing the reference documents.
+ * One access window within a day: the wire's `HH:MM:SS` strings. The reference documents the start as inclusive and says nothing about whether the end is.
  *
  * Documentation-derived: the reference's own schedule samples spell these as plain time strings rather than timestamps.
  *

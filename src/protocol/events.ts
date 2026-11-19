@@ -207,6 +207,7 @@ type NotifiedLocationPayload = Pick<DeepWirePartial<AccessLocationConfig>, Notif
  * - `doorbellRing` - a doorbell was pressed. Attributed to the reader that rang, taken from the payload rather than the envelope, because the envelope identifier on
  *   this notification is a per-notification value rather than a device.
  * - `doorbellCancel` - a ring was cancelled or otherwise ended.
+ * - `tamperAlert` - hardware raised a tamper alert. Attributed to the device its payload names, for the same reason a ring is.
  * - `unlock` - a door was unlocked.
  *
  * Every member lifted from the wire carries `eventName`, the raw notification name, so normalizing two dialects into one kind never hides which name arrived. The
@@ -268,10 +269,11 @@ export type AccessTypedEvent =
 
   /* The identifier's meaning here is per-notification, which is why it is documented rather than assumed. On `access.data.device.remote_unlock` from hub-class
    * hardware the envelope identifies the device that performed the unlock, confirmed against captured specimens whose payload carries the door's own location record
-   * while the envelope names the hub. UGT gate hubs are reported to put the door's own location identifier in that same field instead, which no capture in hand
-   * settles because none of the topologies sampled include gate hardware, so a consumer routing on this identifier has to tolerate both identity spaces. On
-   * `access.door.unlock` no specimen exists in any capture in hand, so the envelope identifier is carried through as-is and which identity space it belongs to is
-   * unverified; that name is modeled because the library's own earlier consumers filtered on it.
+   * while the envelope names the hub. UGT gate hubs are reported to put the door's own location identifier in that same field instead, which no capture in hand settles
+   * because none of the topologies sampled include gate hardware, so a consumer routing on this identifier has to tolerate both identity spaces. No notification-socket
+   * frame named `access.door.unlock` has been captured, so the envelope identifier is carried through as-is and which identity space it belongs to is unverified; the
+   * webhook corpus holds deliveries under that name, which do not settle the socket envelope's identity space. The name is modeled because the library's own earlier
+   * consumers filtered on it.
    */
   { eventName: string; id: string; kind: "unlock" };
 
@@ -414,8 +416,8 @@ export function classifyPacket(packet: AccessEventPacket): Nullable<AccessWireEv
 
     default:
 
-      // Every other name the controller emits is deliberately unmodeled rather than unrecognized: camera updates, the controller's own information broadcast, user
-      // updates, and activity log additions all reach consumers on the raw packet rail without being folded into state.
+      // Every other name the controller emits is deliberately unmodeled rather than unrecognized: camera updates, the controller's own information broadcast, and
+      // activity log additions, for example, all reach consumers on the raw packet rail without being folded into state.
       return null;
   }
 }

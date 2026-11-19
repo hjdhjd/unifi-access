@@ -297,9 +297,9 @@ function makeFakeDevice(calls: FakeCalls, spec: FakeDeviceSpec, doors: ReadonlyM
   return { handle, markAbsent };
 }
 
-// Build the fake official facade: exactly the domain methods the commands consume, each recording its invocation - method name and arguments, in call order - into
-// the shared call record before answering from the spec. Every method takes its arguments as one rest list, so the record is written the same way everywhere and a
-// change to the real facade's parameters touches no signature here.
+// Build the fake official facade: the domain methods the commands consume, plus the methods a regression would reach for, each recording its invocation - method name
+// and arguments, in call order - into the shared call record before answering from the spec. Every method takes its arguments as one rest list, so the record is written
+// the same way everywhere and a change to the real facade's parameters touches no signature here.
 function makeFakeOfficial(calls: FakeCalls, spec: FakeOfficialSpec): Record<string, unknown> {
 
   const record = (method: FakeOfficialMethod, ...args: unknown[]): void => void calls.official.push({ args, method });

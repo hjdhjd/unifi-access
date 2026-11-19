@@ -151,7 +151,7 @@ Run `ufa --help` for the full command list, or `ufa <command> --help` for one co
 
 ## Documentation
 
-- **[API reference](https://github.com/hjdhjd/unifi-access/blob/main/docs/README.md)**: the complete rendered API documentation, covering every class, function, type, and variable in the public surface.
+- **[API reference](https://github.com/hjdhjd/unifi-access/blob/main/docs/README.md)**: the complete rendered API documentation for the main `unifi-access` entry, covering every class, function, type, and variable it publishes. The `unifi-access/testing` entry's `signWebhookDelivery` is not rendered there; its source documents it.
 - **[Diagnostics channels](https://github.com/hjdhjd/unifi-access/blob/main/docs/variables/channels.md)**: the `node:diagnostics_channel` observability surface, with every named channel and its payload shape.
 - **[Changelog](https://github.com/hjdhjd/unifi-access/blob/main/docs/Changelog.md)**: changes and release history of this library.
 
@@ -163,7 +163,7 @@ The 2.0.0 API is a clean-slate design and is not source-compatible with the 1.x 
 
 ## The direct and the published Access APIs
 
-Ubiquiti publishes an official API for UniFi Access, and the native interface the Access app itself speaks is broader. This library implements both. The direct API is where realtime notifications and the full topology come from; the official API is the published, token-authenticated surface, implemented as a reference with a typed method for every documented endpoint plus webhook payload types and signature verification, and its device and door listings are what a token-only client's live projections are built from. A client connects with credentials, a token, or both, says what it can do at `client.capabilities`, and routes door commands official-first, with the `api` connect option holding a channel fixed when you need one.
+Ubiquiti publishes an official API for UniFi Access, and the native interface the Access app itself speaks is broader. This library implements both. The direct API is where realtime notifications and the full topology come from; the official API is the published, token-authenticated surface, implemented as a reference with a typed method for every documented endpoint plus webhook payload types and signature verification, and its device and door listings are what a token-only client's live projections are built from. A client connects with credentials, a token, or both, says what it can do at `client.capabilities`, and routes door commands official-first, with the `api` connect option holding a channel fixed when you need one. A controller upgraded to UniFi Identity Enterprise withdraws the official API, which the library reads from the `CODE_OTHERS_UID_ADOPTED_NOT_SUPPORTED` result code the controller answers with, while the library's support for a controller joined to plain UniFi Identity follows the published documentation.
 
 A consumer's own test suite has an entry of its own, `unifi-access/testing`: the webhook signing helper that mints a `Signature` header exactly as the controller does, so a suite can hand its receiver a delivery that verifies without restating the scheme. Nothing on the main surface reaches it, and nothing in production should.
 

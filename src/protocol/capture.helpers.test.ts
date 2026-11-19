@@ -20,8 +20,8 @@ import type { AccessBootstrapConfig } from "../types/index.ts";
 import assert from "node:assert/strict";
 import { topologyDevices } from "../testing.helpers.ts";
 
-/* The port configuration entry and the extension that carries it, spelled here rather than imported for the reason capture.helpers.ts:25-27 gives: a test that
- * reached for the implementation's own names would agree with it whatever it spelled them as.
+/* The port configuration entry and the extension that carries it, spelled here rather than imported for the reason capture.helpers.ts gives above its own
+ * `DUTY_EXTENSION`: a test that reached for the implementation's own names would agree with it whatever it spelled them as.
  */
 const DUTY_ENTRY = "rex_button_mode";
 const DUTY_EXTENSION = "port_setting";

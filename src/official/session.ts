@@ -25,7 +25,7 @@ export interface TokenSessionOptions {
  * This is the sibling of the credential session, and it sits behind the identical boundary. It exposes the functions the composition root wires into a
  * transport - {@link TokenSession.authHeaders} as the `getAuthHeaders` hook and {@link TokenSession.unauthorized} as the `onUnauthorized` hook - and the transport
  * invokes them through injected function references, so the transport never imports a session and the dependency flows one way. Wiring official identity and
- * credential identity through the same hooks is what lets one transport serve both worlds without knowing which one it is carrying.
+ * credential identity through the same hook shape is what lets one `Transport` class serve any identity without knowing which one it is carrying.
  *
  * The session holds no identity state beyond the token, and that is the design rather than an omission. A credential session holds state because a login produces
  * state that expires, rotates, and can be re-established; a token holds none of that, because the identity *is* the token. There is no handshake to run, no cookie
@@ -61,8 +61,8 @@ export class TokenSession {
   }
 
   /**
-   * The headers to stamp on every official request: the bearer token, and nothing else. Wired into the transport as its `getAuthHeaders` hook, and into the
-   * notification stream as the same hook, so one closure authenticates both the REST surface and the socket upgrade.
+   * The headers to stamp on every official request: the bearer token, and nothing else. Wired into the official transport as its `getAuthHeaders` hook, and into
+   * the notification stream as its upgrade hook, so this one method backs both the REST surface and the socket upgrade.
    *
    * @returns The authorization header.
    */

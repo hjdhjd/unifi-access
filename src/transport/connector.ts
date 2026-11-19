@@ -7,10 +7,10 @@ import { buildConnector, errors } from "undici";
 import type { Dispatcher } from "undici";
 import type { Socket } from "node:net";
 
-/* The connector's own runtime shape. undici's types declare the call as returning `void` (node_modules/undici/types/connector.d.ts:34-36) while the
- * implementation returns the socket it just created (node_modules/undici/lib/core/connect.js:163, `return socket`), which is what lets a wrapper hold a socket
- * before any event has fired on it. Naming the runtime return here is what the cast below spends, and the connector suite's release test, whose release reaches a
- * connection attempt still in flight, is the proof that the return is real.
+/* The connector's own runtime shape. undici's types declare the call as returning `void` (the `buildConnector.connector` interface in its `types/connector.d.ts`)
+ * while the implementation returns the socket it just created (the connect function `buildConnector` returns, in its `lib/core/connect.js`, ends on
+ * `return socket`), which is what lets a wrapper hold a socket before any event has fired on it. Naming the runtime return here is what the cast below spends, and
+ * the connector suite's release test, whose release reaches a connection attempt still in flight, is the proof that the return is real.
  */
 type DialingConnector = (options: buildConnector.Options, callback: buildConnector.Callback) => Socket;
 
@@ -28,9 +28,9 @@ function isSocketOwnError(error: Error): boolean {
  * Construction options for {@link createOwnedConnector}.
  *
  * - `allowH2` is what the dialer would otherwise have told undici's own builder: the HTTP pool offers HTTP/2, and a WebSocket upgrade cannot use it. It has to be
- *   stated here because a function connector bypasses the forwarding a `Pool` and an `Agent` do of their own builder options
- *   (node_modules/undici/lib/dispatcher/pool.js:56-67), and the builder's own default is to allow it - so a connector that stayed silent would quietly widen the
- *   ALPN offer.
+ *   stated here because a function connector bypasses the forwarding a `Pool` and an `Agent` do of their own builder options (the `Pool` constructor, in undici's
+ *   `lib/dispatcher/pool.js`, builds a connector from its own `allowH2` only when `connect` is not a function), and the builder's own default is to allow it - so a
+ *   connector that stayed silent would quietly widen the ALPN offer.
  * - `verifyTls` is the certificate-verification flag. Every caller here leaves it off by default, because a UniFi Access controller presents a self-signed
  *   certificate that no verification chain accepts.
  */

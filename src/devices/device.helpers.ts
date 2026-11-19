@@ -23,10 +23,10 @@ import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
 import { refuseRefresh } from "../testing.helpers.ts";
 
 /* The 2026 document with the captured camera-class record added. No captured topology holds camera-class hardware - the record survives only in the device-update
- * packets the corpus caught - and the store admits only devices a topology document gave it, so the packet's record is seated at root level, as hardware the
- * building hosts directly, which keeps the document one key different from the real one. The record is the packet's own rather than a template re-spelled, so its
- * camera flag, its capabilities and its model all arrive as the controller sent them. The downcast admits the packet's open record as a device record: the wire
- * sends nulls where the type declares values, which is the capture's truth rather than a defect to correct here.
+ * packets the corpus caught - and only a census (a topology document or the official listings) admits a device to the store, never a notification, so the packet's record
+ * is seated at root level, as hardware the building hosts directly, which keeps the document one key different from the real one. The record is the packet's own rather
+ * than a template re-spelled, so its camera flag, its capabilities and its model all arrive as the controller sent them. The downcast admits the packet's open record as
+ * a device record: the wire sends nulls where the type declares values, which is the capture's truth rather than a defect to correct here.
  */
 export function cameraBootstrap(): AccessBootstrapConfig {
 

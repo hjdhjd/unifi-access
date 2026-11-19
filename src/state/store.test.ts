@@ -458,8 +458,8 @@ describe("StateStore", () => {
 
     test("runs no failsafe at all when there is nothing to refresh from", async () => {
 
-      /* A store built with no refresh callback is one whose composer has no document source to offer - a client whose identity cannot reach those endpoints. The
-       * failsafe then does not exist rather than existing with nothing to call, so no amount of clock advancing produces a wake, and the store is otherwise a
+      /* A store built with no refresh callback has no source to re-seed from, a composition no production client builds, since every mode hands its store one.
+       * The failsafe then does not exist rather than existing with nothing to call, so no amount of clock advancing produces a wake, and the store is otherwise a
        * perfectly ordinary store.
        */
       const clock = new TestClock();
@@ -479,7 +479,7 @@ describe("StateStore", () => {
       assert.equal(store.snapshot().devices.size, DEVICE_COUNT_2026);
     });
 
-    test("fires on the clock and dispatches what the refresh returned", async () => {
+    test("fires on the clock and the refresh applies its documents", async () => {
 
       const clock = new TestClock();
       let refreshes = 0;
@@ -514,7 +514,7 @@ describe("StateStore", () => {
       // The first wake fails: the loop logs at debug and stays alive.
       clock.advance(1000);
       await settle();
-      await settleUntil(() => loggedAt(log.entries, "debug", "Bootstrap refresh failed"), { description: "the failed refresh to be logged at debug" });
+      await settleUntil(() => loggedAt(log.entries, "debug", "State refresh failed"), { description: "the failed refresh to be logged at debug" });
       assert.equal(store.snapshot().devices.size, 0);
 
       // The second wake succeeds, and the failsafe applies the document as if nothing had gone wrong.
@@ -602,7 +602,7 @@ describe("StateStore", () => {
       await settleUntil(() => released, { description: "disposal to release the read in flight" });
       await settle();
 
-      assert.ok(!log.entries.some((entry) => entry.message.includes("Bootstrap refresh failed")), "the shutdown path logged no retry promise");
+      assert.ok(!log.entries.some((entry) => entry.message.includes("State refresh failed")), "the shutdown path logged no retry promise");
     });
 
     test("never arms when the interval is false, and never arms on a non-positive interval", async () => {

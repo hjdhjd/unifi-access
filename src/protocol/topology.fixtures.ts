@@ -1,6 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * topology.fixtures.ts: The real documents a UniFi Access controller serves about itself and its topology, captured from live controllers and embedded verbatim.
+ * topology.fixtures.ts: The real documents a UniFi Access controller serves about itself and its topology, captured from live controllers and embedded in the shape
+ * the controller served them.
  *
  * The controller document below, `accessControllerInfoFixture`, was captured on 2026-08-13 and reported UniFi Access v4.3.3+12030, and every 2026 capture in this
  * file comes from that controller; the 2024 capture has no recorded version. A topology document carries no schema version of its own on the wire, so that

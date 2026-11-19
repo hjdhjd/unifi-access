@@ -99,9 +99,9 @@ export interface AccessPortBinding {
  * It is generic over the element so a caller keeps whatever element type its own record declares: the access-point expansion spreads a whole extension onto the
  * record it synthesizes, and a narrowed element type would have thrown away the members that spread carries.
  *
- * It yields rather than answering a list because two of its readers want only the first extension: the door-identity getter, which runs on every command a hub
- * handle issues, and the terminal catalog's duty selector. Yielding lets those two stop at their answer without building a list they would take the head of,
- * while the readers that want the whole list build it themselves.
+ * It yields rather than answering a list because some of its readers stop early: the door-identity getter, which runs on every command a hub handle issues, stops at the
+ * first binding through `firstPortBinding`, and the terminal catalog's duty selector stops at its answer. Yielding lets them stop without building a list they would take
+ * the head of, while the readers that want the whole list build it themselves.
  *
  * @param device - Any device record (only its extensions are read).
  *

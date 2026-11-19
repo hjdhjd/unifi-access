@@ -97,7 +97,7 @@ const restartHandler = async (ctx: CommandContext): Promise<void> => {
   // A one-shot action, so the periodic bootstrap-refresh failsafe is switched off: we connect, issue the restarts, and exit.
   await using client = await ctx.openClient({ credentials, debug: values.debug === true, refreshIntervalMs: false, signal: ctx.signal });
 
-  // The keyword is tested before name resolution, which is the shipped CLI's own precedence.
+  // The keyword is tested before name resolution, so it wins over a device that shares its name.
   const snapshots = ((target === "all") ? allTargets(client) : [findTarget(client, target)]).map(snapshotTarget);
   const restartable: RestartTarget[] = [];
 

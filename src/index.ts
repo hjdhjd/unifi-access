@@ -5,8 +5,8 @@
 
 // This file is the consumer contract, and the contract is curated by one rule, expressed in the type system so it cannot drift:
 //
-//   - `export` a value only for what a consumer constructs, calls as a free function, or tests `instanceof` against: the error hierarchy, the default logger and
-//     the production clock a consumer may reuse, and the timing constants.
+//   - `export` a value only for what a consumer constructs, calls as a free function, tests `instanceof` against, or reads or iterates: the error hierarchy, the
+//     default logger and the production clock a consumer may reuse, the timing constants, the diagnostics channels, and the protocol vocabularies.
 //   - `export type` only for what a consumer receives but never builds - the interfaces a consumer types its own injected implementations against, and every event,
 //     state, option, and domain type reachable from a public signature. Exporting these as types makes a second composition path unrepresentable, so the
 //     single-source-of-truth rule is enforced by the compiler rather than by documentation.
@@ -15,9 +15,9 @@
 //   - The one published surface outside this file is the test-support entry, `unifi-access/testing` (`src/testing/index.ts`): what a consumer's own test suite
 //     imports and production never does. It is deliberately not re-exported here, so the production/test boundary is a specifier a reader can see.
 //
-// The test the next contributor applies to any new symbol: does a consumer construct or call it (value), receive it (type), or neither (internal)? A value only a
-// consumer's own tests call is the one further answer, and it belongs on the testing entry rather than here. That keeps this file a deliberate, reviewable
-// contract rather than whatever each module happens to export.
+// The test the next contributor applies to any new symbol: does a consumer construct, call, or read it (value), receive it (type), or neither (internal)? A value only a
+// consumer's own tests call is the one further answer, and it belongs on the testing entry rather than here. That keeps this file a deliberate, reviewable contract
+// rather than whatever each module happens to export.
 
 // Errors - the typed hierarchy. Consumers branch on these with `instanceof`, so they are value exports; the bootstrap-stage and identity-leg tags are types.
 export { AccessAbortedError, AccessApiError, AccessAuthError, AccessAuthorizationError, AccessBootstrapError, AccessCapabilityError,
@@ -67,10 +67,9 @@ export type { AccessWebSocket, AccessWebSocketCloseEvent, AccessWebSocketErrorEv
 // refusal that names the address quotes it by, published so a consumer applies the library's own rule rather than restating it.
 export { maskAddressCredentials } from "./transport/url-host.ts";
 
-// Devices - the live projections the client hands out. Types only for the same reason: a handle comes from the client or the registry, never from a constructor a
-// consumer calls, so publishing the classes as values would offer a second composition path that cannot work.
+// Devices - the live projections the client hands out. Types only for the same reason: a handle comes from the client, never from a constructor a consumer calls,
+// so publishing the classes as values would offer a second composition path that cannot work.
 export type { AccessDevice } from "./devices/device.ts";
-export type { AccessDeviceRegistry } from "./devices/registry.ts";
 export type { AccessHub, AccessLockRule } from "./devices/hub.ts";
 
 // Diagnostics - the channel roster and the payload types a subscriber receives. The roster is a value export because a consumer holds it: it iterates the set to observe

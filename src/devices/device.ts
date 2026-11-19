@@ -37,8 +37,8 @@ export abstract class Projection<TConfig> {
 
   protected readonly ctx: AccessDeviceContext;
 
-  // The record's selector, pre-bound for this projection so that observe() holds a stable selector reference - the store's dedup is keyed on that identity, so a
-  // freshly-built selector per call would defeat it.
+  // The record's selector, bound once for this projection so every read - peek(), config, and observe() - goes through one function rather than building one per
+  // call. The store's dedup compares what the selector returns rather than the selector itself.
   readonly #select: (state: AccessState) => TConfig | undefined;
 
   protected constructor(ctx: AccessDeviceContext, select: (state: AccessState) => TConfig | undefined) {

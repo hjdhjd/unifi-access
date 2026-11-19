@@ -158,7 +158,7 @@ describe("a dual-mode client", () => {
     }
   });
 
-  test("keeps a refused token as itself at connect when held to the official API, which leaves the credentials unused", async () => {
+  test("keeps a refused token as itself at connect when held to the official API", async () => {
 
     /* The override holds every routed command to the official path, so a client whose token is refused has nothing that could carry them, and the connect fails on
      * the refusal as the same refusal on a routed command propagates. The login completed before the refused read, so the credentials are known good, and what a
