@@ -203,10 +203,38 @@ describe("the filter engine", () => {
     assert.equal(await matched(["--device=Back Reader"], [RING], spec), 0);
   });
 
-  test("a device filter falls back to comparing the term as an identifier", async () => {
+  test("a device filter matches the subject's identifier case-insensitively, whether or not the snapshot names the device", async () => {
+
+    const spec: FakeClientSpec = { devices: [{ id: READER_ID, name: "Front Reader" }] };
 
     assert.equal(await matched(["--device=" + READER_ID], [RING]), 1);
+    assert.equal(await matched(["--device=" + READER_ID], [RING], spec), 1);
+    assert.equal(await matched(["--device=" + READER_ID.toUpperCase()], [RING], spec), 1);
     assert.equal(await matched(["--device=nobody"], [RING]), 0);
+  });
+
+  test("a name several devices share matches the packets of every device carrying it", async () => {
+
+    // The ring is the reader's and the remote unlock is the hub's, so a filter that resolved the name to one device would keep only one of the two.
+    const spec: FakeClientSpec = { devices: [ { id: READER_ID, name: "Twin" }, { id: UAH_ID, name: "twin" } ] };
+
+    assert.equal(packetSubjectId(REMOTE_UNLOCK), UAH_ID);
+    assert.equal(await matched(["--device=Twin"], [ RING, REMOTE_UNLOCK, DOOR_STATE_LOCATION ], spec), 2);
+    assert.equal(await matched(["device!=Twin"], [ RING, REMOTE_UNLOCK, DOOR_STATE_LOCATION ], spec), 1);
+  });
+
+  test("the device shortcut's help says a shared name matches each device carrying it", async () => {
+
+    assert.match((await runEvents(["--help"], [])).join("\n"),
+      /--device=NAME +Match a device by name or id, where a name several devices share matches each device carrying it\./);
+  });
+
+  test("a device with an empty display name matches by its identifier alone", async () => {
+
+    const spec: FakeClientSpec = { devices: [{ id: READER_ID, name: "" }] };
+
+    assert.equal(await matched(["--device="], [RING], spec), 0);
+    assert.equal(await matched(["--device=" + READER_ID], [RING], spec), 1);
   });
 
   test("two different device values match nothing, because every filter must match", async () => {

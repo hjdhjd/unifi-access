@@ -23,11 +23,6 @@ export interface DeviceResolution {
 
   /** The display name of the device with this identifier, or `undefined` when the snapshot holds no such device. */
   name(id: string): string | undefined;
-
-  /** The identifier the operator's token names - the token itself when it is already an identifier, the named device's identifier when it is a name, `undefined`
-   * when it is neither.
-   */
-  resolve(token: string): string | undefined;
 }
 
 /**
@@ -69,9 +64,9 @@ export function hubHandle(client: AccessClient, id: string): AccessHub | undefin
 }
 
 /**
- * Build the {@link DeviceResolution} snapshot for this invocation from the client's current inventory. Names are indexed case-insensitively, and a device whose display
- * name is empty is indexed by identifier alone - there is no name to match it by. Roles are indexed by identifier case-insensitively, the rule the `device` filter
- * compares a packet's subject by, and read through the library's own `isHub` and `isReader`, so a role reads the same here as everywhere else in the library.
+ * Build the {@link DeviceResolution} snapshot for this invocation from the client's current inventory. Every read keys on the identifier case-insensitively, the rule
+ * the `device` filter compares a packet's subject by, and roles are read through the library's own `isHub` and `isReader`, so a role reads the same here as
+ * everywhere else in the library.
  *
  * The display name comes from each handle's own `name` getter rather than from a rule restated here, so the CLI and the library agree on which of a device's two name
  * fields wins.
@@ -85,29 +80,23 @@ export function hubHandle(client: AccessClient, id: string): AccessHub | undefin
 export function buildDeviceResolution(client: AccessClient): DeviceResolution {
 
   const namesById = new Map<string, string>();
-  const idsByName = new Map<string, string>();
   const hubIds = new Set<string>();
   const readerIds = new Set<string>();
 
   for(const device of allTargets(client)) {
 
-    const name = device.name;
+    const id = device.id.toLowerCase();
 
-    namesById.set(device.id, name);
-
-    if(name.length > 0) {
-
-      idsByName.set(name.toLowerCase(), device.id);
-    }
+    namesById.set(id, device.name);
 
     if(isHub(device.config)) {
 
-      hubIds.add(device.id.toLowerCase());
+      hubIds.add(id);
     }
 
     if(isReader(device.config)) {
 
-      readerIds.add(device.id.toLowerCase());
+      readerIds.add(id);
     }
   }
 
@@ -115,31 +104,47 @@ export function buildDeviceResolution(client: AccessClient): DeviceResolution {
 
     isHub: (id: string): boolean => hubIds.has(id.toLowerCase()),
     isReader: (id: string): boolean => readerIds.has(id.toLowerCase()),
-    name: (id: string): string | undefined => namesById.get(id),
-    resolve: (token: string): string | undefined => namesById.has(token) ? token : idsByName.get(token.toLowerCase())
+    name: (id: string): string | undefined => namesById.get(id.toLowerCase())
   };
 }
 
-// The matching rule the DEVICE resolvers share: an exact identifier first, then a case-insensitive exact name match. Matching the whole name rather than a
-// substring is deliberate - resolution feeds commands that act on hardware, so a forgiving match risks unlocking the wrong door and disambiguation stays the
-// operator's job. A door is named more than one way, so the door arm spells its own phased rule where it lives. Non-throwing, because one caller answers a miss
-// with an error and another probes on to its next resolution arm.
-function scanTargets(targets: readonly AccessDevice[], token: string): AccessDevice | undefined {
+// The matching rule every resolver here shares, for devices and official records alike: an exact identifier, or failing that every case-insensitive exact name
+// match. Matching the whole name rather than a substring is deliberate - resolution feeds commands that act on what they resolve, so a forgiving match risks
+// unlocking the wrong door or removing the wrong webhook endpoint. A door is named more than one way, so the door arm spells its own phased rule where it lives. The
+// answer is the whole match set rather than one record, so each caller decides what an empty set means: one answers it with an error, and another probes on to its
+// next resolution arm.
+function findMatches<T extends { id: string }>(records: readonly T[], token: string, name: (record: T) => string): T[] {
 
-  const byId = targets.find((device) => device.id === token);
+  const byId = records.find((record) => record.id === token);
 
   if(byId !== undefined) {
 
-    return byId;
+    return [byId];
   }
 
   const lowered = token.toLowerCase();
 
-  return targets.find((device) => device.name.toLowerCase() === lowered);
+  return records.filter((record) => name(record).toLowerCase() === lowered);
+}
+
+/* Reduce a match set to at most one record, refusing a name several records share rather than choosing among them. The operator is the one who knows which record
+ * was meant, and the identifier is the spelling that says so, so the refusal names the kind's own identifier - for a device it reads "Twin" matches 2 devices by
+ * name; use the device id to disambiguate. Like every refusal in this module, it faults the operator's target, so it is a usage error at exit 2.
+ */
+function soleMatch<T>(matches: readonly T[], token: string, kind: string): T | undefined {
+
+  const [ first, second ] = matches;
+
+  if(second !== undefined) {
+
+    throw new CliError("\"" + token + "\" matches " + matches.length.toString() + " " + kind + "s by name; use the " + kind + " id to disambiguate.", { exitCode: 2 });
+  }
+
+  return first;
 }
 
 // The not-found listing, part of the error because the next thing the operator needs is the spelling we did know. Each line renders through the same name getter
-// resolution uses, so a name shown here is a name that resolves.
+// the matching rule reads, so a name shown here is a name that matches, and the identifier beside it resolves even where several devices share the name.
 function deviceListing(targets: readonly AccessDevice[]): string[] {
 
   const listing = targets.map((device) => "  " + device.name + " => " + device.id);
@@ -155,21 +160,21 @@ function deviceListing(targets: readonly AccessDevice[]): string[] {
  *
  * @returns The matching device handle.
  *
- * @throws {@link CliError} listing the addressable devices when nothing matches.
+ * @throws {@link CliError} as a usage error when a name is ambiguous, and as one listing the addressable devices when nothing matches.
  *
  * @category CLI
  */
 export function findTarget(client: AccessClient, token: string): AccessDevice {
 
   const targets = allTargets(client);
-  const matched = scanTargets(targets, token);
+  const matched = soleMatch(findMatches(targets, token, (device) => device.name), token, "device");
 
   if(matched !== undefined) {
 
     return matched;
   }
 
-  throw new CliError([ "No device matches \"" + token + "\" by id or name.", ...deviceListing(targets) ].join("\n"));
+  throw new CliError([ "No device matches \"" + token + "\" by id or name.", ...deviceListing(targets) ].join("\n"), { exitCode: 2 });
 }
 
 /**
@@ -212,7 +217,7 @@ function matchDoor(doors: ReadonlyMap<string, AccessStateDoor>, token: string): 
     if(second !== undefined) {
 
       throw new CliError([ "More than one door matches \"" + token + "\" - name the one to command:",
-        ...matched.map(([ id, door ]) => "  " + doorName(door) + " => " + id) ].join("\n"));
+        ...matched.map(([ id, door ]) => "  " + doorName(door) + " => " + id) ].join("\n"), { exitCode: 2 });
     }
 
     if(first !== undefined) {
@@ -226,8 +231,8 @@ function matchDoor(doors: ReadonlyMap<string, AccessStateDoor>, token: string): 
 
 /**
  * Resolve the operator's token to the door a command should act on. A door can be named two ways, and both resolve here: by the hub or port that drives it (the
- * device union, by the shared matching rule), or by the topology's own door id, name, or full name. The arms are probed in order, and only the end of the sequence
- * throws - a door-name token must fall through a failed device match rather than die on it.
+ * device union, by the shared matching rule), or by the topology's own door id, name, or full name. The arms are probed in order: a token no device matches falls
+ * through to the door arm rather than dying on the device arm, while a name several hubs share is refused there rather than read as a door's.
  *
  * The answer is a {@link DoorTarget} rather than a handle, because a door the state knows is not always a door the client holds a handle for. Whether the arm that
  * has no handle can be served is a question about the client's paths, which is the command's to ask and answer.
@@ -237,27 +242,29 @@ function matchDoor(doors: ReadonlyMap<string, AccessStateDoor>, token: string): 
  *
  * @returns The driving hub where one exists, and the door record itself where none does.
  *
- * @throws {@link CliError} when the token names a device that drives no door, when one spelling matches more than one door or more than one handle drives the
- *   named door (disambiguation stays the operator's job), or when nothing matches - the last listing both the devices and the topology's door names.
+ * @throws {@link CliError} as a usage error when the token names only devices that drive no door, when a name several hubs share or one spelling of several
+ *   doors is ambiguous, when more than one handle drives the named door (disambiguation stays the operator's job), or when nothing matches - the last listing both
+ *   the devices and the topology's door names.
  *
  * @category CLI
  */
 export function findDoorTarget(client: AccessClient, token: string): DoorTarget {
 
-  // First, the device union: a matched device narrows to its hub-capable handle, and a device that exists but has no door to drive is worth saying plainly rather
-  // than reporting as not-found.
-  const device = scanTargets(allTargets(client), token);
+  // First, the device union, its matches narrowed to their hub-capable handles before one is required: only a hub drives a door, so a reader sharing a hub's name
+  // is no ambiguity, while a name several hubs share is. A token matching devices but no hub among them is worth saying plainly rather than reporting as not-found.
+  const matches = findMatches(allTargets(client), token, (device) => device.name);
+  const matchedHub = soleMatch(matches.map((device) => hubHandle(client, device.id)).filter((handle) => handle !== undefined), token, "device");
+
+  if(matchedHub !== undefined) {
+
+    return { hub: matchedHub, kind: "hub" };
+  }
+
+  const [device] = matches;
 
   if(device !== undefined) {
 
-    const hub = hubHandle(client, device.id);
-
-    if(hub === undefined) {
-
-      throw new CliError("\"" + device.name + "\" is not a hub, so it drives no door.");
-    }
-
-    return { hub, kind: "hub" };
+    throw new CliError("\"" + device.name + "\" is not a hub, so it drives no door.", { exitCode: 2 });
   }
 
   // Second, the state's own doors, by the phased rule above. The handle scan is the hub-typed collections rather than the whole device union, because only a
@@ -274,7 +281,7 @@ export function findDoorTarget(client: AccessClient, token: string): DoorTarget 
     if(second !== undefined) {
 
       throw new CliError([ "More than one device drives the door \"" + doorName(door) + "\" - name the one to command:",
-        ...candidates.map((hub) => "  " + hub.name + " => " + hub.id) ].join("\n"));
+        ...candidates.map((hub) => "  " + hub.name + " => " + hub.id) ].join("\n"), { exitCode: 2 });
     }
 
     return (first !== undefined) ? { hub: first, kind: "hub" } : { door, doorId, kind: "door" };
@@ -284,7 +291,7 @@ export function findDoorTarget(client: AccessClient, token: string): DoorTarget 
   const doorListing = [...doors.values()].map((door) => "  " + doorName(door) + " => " + door.unique_id);
 
   throw new CliError([ "No device or door matches \"" + token + "\" by id or name.", ...deviceListing(allTargets(client)),
-    ...((doorListing.length > 0) ? [ "", "Doors:", ...doorListing ] : []) ].join("\n"));
+    ...((doorListing.length > 0) ? [ "", "Doors:", ...doorListing ] : []) ].join("\n"), { exitCode: 2 });
 }
 
 /**
@@ -329,26 +336,10 @@ export function doorLabel(target: DoorTarget): string {
   return (door !== undefined) ? (doorName(door) + " (" + hub.doorId + ")") : (hub.name + " (" + hub.id + ")");
 }
 
-// The shared matching rule behind every official resolution: an exact id first, then a case-insensitive exact match on the record's display name. It answers
-// `undefined` rather than throwing, because one caller wants the listing error where nothing matches and another wants to widen its search instead.
-function matchOfficialRecord<T extends { id: string }>(records: readonly T[], token: string, name: (record: T) => string): T | undefined {
-
-  const byId = records.find((record) => record.id === token);
-
-  if(byId !== undefined) {
-
-    return byId;
-  }
-
-  const lowered = token.toLowerCase();
-
-  return records.find((record) => name(record).toLowerCase() === lowered);
-}
-
 /**
  * Resolve the operator's token to one official record, by the shared matching rule: an exact id first, then a case-insensitive exact match on the record's display
- * name. The one resolver behind every official listing the CLI addresses by name - users, visitors, and webhook endpoints - so what "resolve by id or name" means
- * is written once, and each caller supplies only what a name is for its record kind.
+ * name, refusing a name several records share as the device resolvers do. The one resolver behind every official listing the CLI addresses by name - users,
+ * visitors, and webhook endpoints - so what "resolve by id or name" means is written once, and each caller supplies only what a name is for its record kind.
  *
  * @typeParam T - The record type, carrying its own `id`.
  *
@@ -358,13 +349,13 @@ function matchOfficialRecord<T extends { id: string }>(records: readonly T[], to
  *
  * @returns The matching record.
  *
- * @throws {@link CliError} listing the records when nothing matches.
+ * @throws {@link CliError} as a usage error when a name is ambiguous, and as one listing the records when nothing matches.
  *
  * @category CLI
  */
 export function findOfficialRecord<T extends { id: string }>(records: readonly T[], token: string, opts: { kind: string; name: (record: T) => string }): T {
 
-  const match = matchOfficialRecord(records, token, opts.name);
+  const match = soleMatch(findMatches(records, token, opts.name), token, opts.kind);
 
   if(match !== undefined) {
 
@@ -375,7 +366,8 @@ export function findOfficialRecord<T extends { id: string }>(records: readonly T
   const plural = opts.kind + "s";
   const heading = plural.charAt(0).toUpperCase() + plural.slice(1) + ":";
 
-  throw new CliError([ "No " + opts.kind + " matches \"" + token + "\" by id or name.", ...((listing.length > 0) ? [ "", heading, ...listing ] : []) ].join("\n"));
+  throw new CliError([ "No " + opts.kind + " matches \"" + token + "\" by id or name.", ...((listing.length > 0) ? [ "", heading, ...listing ] : []) ].join("\n"),
+    { exitCode: 2 });
 }
 
 /**
@@ -410,8 +402,9 @@ export interface OfficialRecordResolution<T extends { id: string }, S extends { 
  * that can help, then the whole listing through {@link findOfficialRecord}. An id costs one request, because the controller answers an unknown one with a typed
  * refusal rather than a match. Any refusal falls through to the arm behind it and everything else is rethrown: a token that is a name can draw a code other than
  * not-found for its shape, while a systemic refusal - an invalid token, a missing permission - is refused again by the next arm and reaches the operator either
- * way. A search narrows a name to its hits and the same matching rule picks the exact name among them; a search that finds no exact name falls to the walk, so a
- * search can only ever save requests, and a token matching nothing still errors with every record listed.
+ * way. A search narrows a name to its hits and the same matching rule picks the exact name among them, refusing one several hits share; a search that finds no
+ * exact name falls to the walk, so a search can only ever save requests, and a token matching nothing still errors with every record listed. A search hits every
+ * record whose name carries its keyword, so a name several records share is refused at the search as the walk would refuse it.
  *
  * Every arm but the direct id fetch ends in a fetch of the resolved id. A search hit is a narrower record than a full one, the visitor listing takes an `expand`
  * the by-id read does not, and the by-id read is what the callers render.
@@ -424,7 +417,7 @@ export interface OfficialRecordResolution<T extends { id: string }, S extends { 
  *
  * @returns The matching record, as the by-id fetch answers it.
  *
- * @throws {@link CliError} listing the records when nothing matches.
+ * @throws {@link CliError} as a usage error when a name is ambiguous, and as one listing the records when nothing matches.
  *
  * @category CLI
  */
@@ -444,7 +437,7 @@ export async function resolveOfficialRecord<T extends { id: string }, S extends 
 
   if(opts.search !== undefined) {
 
-    const hit = matchOfficialRecord(await Array.fromAsync(opts.search.run(token)), token, opts.search.name);
+    const hit = soleMatch(findMatches(await Array.fromAsync(opts.search.run(token)), token, opts.search.name), token, opts.kind);
 
     if(hit !== undefined) {
 

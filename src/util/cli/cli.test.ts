@@ -1439,4 +1439,14 @@ describe("the entry point", () => {
     assert.equal(cli.text, "ufa: no such door: the topology names none by that name.\n",
       "a message carrying no period of its own still ends the line with one");
   });
+
+  test("a multi-line failure ends on its listing's last line with no period added, so the last identifier copies as it stands", async () => {
+
+    const entry = await loadEntry();
+    const listing = [ "No device matches \"Nothing\" by id or name.", "", "Devices:", "  Front Reader => dev-1" ].join("\n");
+    const cli = await withStderr(() => entry.renderError(new CliError(listing, { exitCode: 2 })));
+
+    assert.equal(cli.code, 2);
+    assert.equal(cli.text, "ufa: " + listing + "\n");
+  });
 });

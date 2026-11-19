@@ -101,9 +101,27 @@ describe("the device restart command", () => {
 
       assert.ok(error instanceof CliError);
       assert.ok(error.message.includes("Acme Name 6 => " + HUB_ID));
+      assert.equal(error.exitCode, 2);
 
       return true;
     });
+  });
+
+  test("a name several devices share is refused as a usage error, and the identifier still resolves", async () => {
+
+    const { calls, client } = makeFakeClient({ devices: [ { id: HUB_ID, name: "Twin" }, { id: READER_ID, name: "twin" } ] });
+    const { ctx } = makeCommandContext({ args: [ "restart", "Twin" ], calls, client });
+
+    await assert.rejects(async () => device.run(ctx), { exitCode: 2, message: "\"Twin\" matches 2 devices by name; use the device id to disambiguate.",
+      name: "CliError" });
+
+    assert.deepEqual(calls.restarts, [], "an ambiguous name commands no device");
+
+    const byId = makeCommandContext({ args: [ "restart", READER_ID ], calls, client });
+
+    await device.run(byId.ctx);
+
+    assert.deepEqual(calls.restarts, [READER_ID]);
   });
 
   test("a failed restart is reported and the run continues", async () => {
@@ -474,6 +492,7 @@ describe("the device state command", () => {
 
       assert.ok(error instanceof CliError);
       assert.ok(error.message.includes("Front Ultra => " + ULTRA_ID));
+      assert.equal(error.exitCode, 2);
 
       return true;
     });

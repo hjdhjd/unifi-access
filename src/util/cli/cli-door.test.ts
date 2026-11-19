@@ -83,9 +83,36 @@ describe("door resolution", () => {
 
       assert.ok(error instanceof CliError);
       assert.ok(error.message.includes("is not a hub, so it drives no door"));
+      assert.equal(error.exitCode, 2);
 
       return true;
     });
+  });
+
+  test("a name several hubs share is refused at the device arm rather than falling through to a door of that name", () => {
+
+    // The shared name is also a door's own name, so a device arm that let the ambiguity through would resolve the door instead of refusing.
+    const { client } = makeFakeClient({ ...HUB_SPEC, devices: [ { doorId: "door-1", id: "hub-1", name: "Acme Name 13" },
+      { doorId: "door-2", id: "hub-2", name: "Acme Name 13" } ] });
+
+    assert.throws(() => findDoorTarget(asAccessClient(client), "acme name 13"), { exitCode: 2,
+      message: "\"acme name 13\" matches 2 devices by name; use the device id to disambiguate.", name: "CliError" });
+    assert.deepEqual(resolved(findDoorTarget(asAccessClient(client), "hub-2")), { id: "hub-2", kind: "hub" }, "the identifier still resolves");
+  });
+
+  test("a reader sharing a hub's name is no ambiguity, because only the hub drives a door", () => {
+
+    const { client } = makeFakeClient({ ...HUB_SPEC, devices: [ ...HUB_SPEC.devices, { id: "reader-2", name: "side hub" } ] });
+
+    assert.deepEqual(resolved(findDoorTarget(asAccessClient(client), "Side Hub")), { id: "hub-2", kind: "hub" });
+  });
+
+  test("a name only devices that drive no door share earns the not-a-hub error rather than an ambiguity", () => {
+
+    const { client } = makeFakeClient({ ...HUB_SPEC, devices: [ ...HUB_SPEC.devices, { id: "reader-2", name: "reader" } ] });
+
+    assert.throws(() => findDoorTarget(asAccessClient(client), "Reader"), { exitCode: 2, message: "\"Reader\" is not a hub, so it drives no door.",
+      name: "CliError" });
   });
 
   test("a door resolves by id, then by name, then by full name, each case-insensitively", () => {
@@ -119,6 +146,7 @@ describe("door resolution", () => {
       assert.ok(error.message.includes("More than one door matches"));
       assert.ok(error.message.includes("1F - Loading Dock => door-1"));
       assert.ok(error.message.includes("2F - Loading Dock => door-2"));
+      assert.equal(error.exitCode, 2);
 
       return true;
     });
@@ -136,6 +164,7 @@ describe("door resolution", () => {
       assert.ok(error.message.includes("1F - Loading Dock"));
       assert.ok(error.message.includes("Acme Name 6"));
       assert.ok(error.message.includes("Side Hub"));
+      assert.equal(error.exitCode, 2);
 
       return true;
     });
@@ -165,6 +194,7 @@ describe("door resolution", () => {
       assert.ok(error.message.includes("Acme Name 6 => hub-1"));
       assert.ok(error.message.includes("2F - Loading Bay => door-2"));
       assert.ok(!error.message.includes("Side Door => door-2"));
+      assert.equal(error.exitCode, 2);
 
       return true;
     });
@@ -196,6 +226,28 @@ describe("the door unlock command", () => {
     assert.deepEqual(calls.unlocks, [{ id: "hub-1" }]);
     assert.deepEqual(calls.lockRules, []);
     assert.match(rendered(lines)[0] ?? "", /^1F - Loading Dock \(door-1\) - unlocked\.$/);
+  });
+
+  test("an unlock naming a hub by a name another hub shares is refused as a usage error, and unlocks nothing", async () => {
+
+    const { calls, client } = makeFakeClient({ ...HUB_SPEC, devices: [ ...HUB_SPEC.devices, { doorId: "door-1", id: "hub-3", name: "Side Hub" } ],
+      hubIds: [ ...HUB_SPEC.hubIds, "hub-3" ] });
+    const { ctx } = makeCommandContext({ args: [ "unlock", "Side Hub" ], calls, client });
+
+    await assert.rejects(async () => door.run(ctx), { exitCode: 2, message: "\"Side Hub\" matches 2 devices by name; use the device id to disambiguate.",
+      name: "CliError" });
+
+    assert.deepEqual(calls.unlocks, []);
+  });
+
+  test("an unlock naming a hub by a name a reader also carries unlocks the hub", async () => {
+
+    const { calls, client } = makeFakeClient({ ...HUB_SPEC, devices: [ ...HUB_SPEC.devices, { id: "reader-2", name: "Side Hub" } ] });
+    const { ctx } = makeCommandContext({ args: [ "unlock", "Side Hub" ], calls, client });
+
+    await door.run(ctx);
+
+    assert.deepEqual(calls.unlocks, [{ id: "hub-2" }]);
   });
 
   test("a duration establishes a custom rule in whole minutes, converted at the CLI boundary", async () => {

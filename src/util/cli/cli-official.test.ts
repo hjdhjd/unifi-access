@@ -154,11 +154,31 @@ describe("the user group", () => {
       assert.ok(error instanceof CliError);
       assert.match(error.message, /Dr\. Jane Smith => user-1/);
       assert.match(error.message, /Sam Jones => user-2/);
+      assert.equal(error.exitCode, 2);
 
       return true;
     });
 
     assert.deepEqual(calls.official.map((call) => call.method), [ "users.fetch", "users.iterateSearch", "users.iterateAll" ]);
+  });
+
+  test("show refuses a name several users share at the search, and the identifier still resolves", async () => {
+
+    const twins = [ ...USERS, { "email": "sam.j@example.net", "first_name": "Sam", "full_name": "sam jones", "id": "user-4", "last_name": "Jones" } ];
+    const { calls, client } = makeFakeClient({ official: { users: twins } });
+    const { ctx } = makeCommandContext({ args: [ "show", "Sam Jones" ], calls, client });
+
+    await assert.rejects(async () => user.run(ctx), { exitCode: 2, message: "\"Sam Jones\" matches 2 users by name; use the user id to disambiguate.",
+      name: "CliError" });
+
+    assert.deepEqual(calls.official.map((call) => call.method), [ "users.fetch", "users.iterateSearch" ], "the search refuses the name, so nothing is walked or read");
+
+    const byId = makeFakeClient({ official: { users: twins } });
+    const resolvedById = makeCommandContext({ args: [ "show", "user-4", "--json" ], calls: byId.calls, client: byId.client });
+
+    await user.run(resolvedById.ctx);
+
+    assert.equal(rendered(resolvedById.lines)[0], JSON.stringify(twins[2]));
   });
 
   test("avatar reads the file's bytes and uploads them under the file's own name", async () => {
@@ -291,6 +311,18 @@ describe("the visitor group", () => {
       "the resolver walks the listing, never its first page");
     assert.deepEqual(calls.official.filter((call) => call.method === "visitors.fetch").map((call) => call.args[0]), [ "guest three", "vis-3" ]);
     assert.equal(rendered(lines)[0], JSON.stringify(WALKED_VISITORS[2]));
+  });
+
+  test("show refuses a name several visitors share at the walk, and reads no record", async () => {
+
+    const twins = [ ...VISITORS, { "end_time": 1755600000, "first_name": "guest", "id": "vis-4", "last_name": "one", "start_time": 1755500000 } ];
+    const { calls, client } = makeFakeClient({ official: { visitors: twins } });
+    const { ctx } = makeCommandContext({ args: [ "show", "Guest One" ], calls, client });
+
+    await assert.rejects(async () => visitor.run(ctx), { exitCode: 2,
+      message: "\"Guest One\" matches 2 visitors by name; use the visitor id to disambiguate.", name: "CliError" });
+
+    assert.deepEqual(calls.official.map((call) => call.method), [ "visitors.fetch", "visitors.iterateAll" ]);
   });
 
   test("a fetch failure that is not an official refusal surfaces, and no further arm runs", async () => {
@@ -567,6 +599,18 @@ describe("the webhook group", () => {
 
     assert.deepEqual(byId.calls.official.filter((call) => call.method === "webhooks.deleteEndpoint").map((call) => call.args[0]), ["wh-1"]);
     assert.match(rendered(removal.lines)[0] ?? "", /alerts \(wh-1\) - removed\./);
+  });
+
+  test("remove refuses a name several endpoints share, and unregisters nothing", async () => {
+
+    const twins = [ ...ENDPOINTS, { "endpoint": "https://example.net/other", "events": ["access.door.unlock"], "id": "wh-2", "name": "Alerts", "secret": "other" } ];
+    const { calls, client } = makeFakeClient({ official: { webhookEndpoints: twins } });
+    const { ctx } = makeCommandContext({ args: [ "remove", "alerts" ], calls, client });
+
+    await assert.rejects(async () => webhook.run(ctx), { exitCode: 2,
+      message: "\"alerts\" matches 2 webhook endpoints by name; use the webhook endpoint id to disambiguate.", name: "CliError" });
+
+    assert.deepEqual(calls.official.filter((call) => call.method === "webhooks.deleteEndpoint"), []);
   });
 
   test("the add command requires a name and a delivery URL", async () => {

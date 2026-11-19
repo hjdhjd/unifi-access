@@ -539,9 +539,9 @@ export function packetSubjectId(packet: AccessEventPacket): string {
 }
 
 /**
- * Compile a filter expression into the predicates the packet loop evaluates. Every term is compiled once here - regular expressions built, names resolved to
- * identifiers, comparisons bound to their operator - so the per-packet path evaluates prepared terms rather than re-parsing the expression, and the only work it
- * repeats is splitting each term's path as it walks the packet.
+ * Compile a filter expression into the predicates the packet loop evaluates. Every term is parsed once here - regular expressions built, comparisons bound to their
+ * operator - so the per-packet path evaluates prepared terms rather than re-parsing the expression. What a term still does per packet is read the packet: a property
+ * term walks its path, a device term attributes the packet and reads the snapshot's name for that device, and the role and activity shortcuts classify it.
  *
  * Composition is AND across every term, which is the shipped grammar's own rule: two terms narrow the stream rather than widening it, and two contradictory terms
  * therefore match nothing.
@@ -684,16 +684,20 @@ function compilePropertyFilter(path: string, operator: string, value: string, re
 
   const negate = (operator === "!=") || (operator === "!~");
 
-  /* The "device" path is not a path at all: it names the subject of the packet, and its value may be a device name rather than an identifier. We resolve the name once,
-   * here, and fall back to comparing the term as an identifier when it names nothing - which is what lets an operator filter by either spelling.
+  /* The "device" path is not a path at all: it names the subject of the packet, by its identifier or by the name the snapshot holds for it, each compared
+   * case-insensitively - which is what lets an operator filter by either spelling. A name several devices share matches the packets of every one of them, because a
+   * filter selects what to show rather than choosing hardware to act on. A device whose display name is empty has no name to match it by, so it matches by its
+   * identifier alone.
    */
   if(path === "device") {
 
-    const target = (resolve.resolve(value) ?? value).toLowerCase();
+    const target = value.toLowerCase();
 
     return (packet: AccessEventPacket): boolean => {
 
-      const matched = packetSubjectId(packet).toLowerCase() === target;
+      const id = packetSubjectId(packet);
+      const name = resolve.name(id) ?? "";
+      const matched = (id.toLowerCase() === target) || ((name.length > 0) && (name.toLowerCase() === target));
 
       return negate ? !matched : matched;
     };

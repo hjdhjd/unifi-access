@@ -101,10 +101,21 @@ export function readVersion(packageUrl: URL = new URL("../../../package.json", i
   }
 }
 
+/* An expected failure as the operator reads it: the whole cause chain, closed with a period. The chain carries no period of its own, so a one-line message ends on
+ * exactly one. A multi-line message is a listing whose last line ends on an identifier, so it is left unclosed, and that identifier copies from the terminal as it
+ * stands.
+ */
+function failureLine(error: Error): string {
+
+  const rendered = formatErrorChain(error);
+
+  return "ufa: " + rendered + (rendered.includes("\n") ? "" : ".") + "\n";
+}
+
 /**
  * Render a thrown value to stderr and set the process exit code. Each case is deliberate: a `CliError` or a typed `AccessError` is an expected outcome and gets a calm
- * one-line message; a caller abort (Ctrl-C) exits 130 silently, per convention; an argument-parse error is a usage error and exits 2; anything else is an unexpected
- * bug and gets its stack, because that is the only case where a stack helps anyone.
+ * message, closed with a period unless it ends on a listing; a caller abort (Ctrl-C) exits 130 silently, per convention; an argument-parse error is a usage
+ * error and exits 2; anything else is an unexpected bug and gets its stack, because that is the only case where a stack helps anyone.
  *
  * @param error - The thrown value.
  *
@@ -121,7 +132,7 @@ export function renderError(error: unknown): void {
 
   if(error instanceof CliError) {
 
-    process.stderr.write("ufa: " + formatErrorChain(error) + ".\n");
+    process.stderr.write(failureLine(error));
     process.exitCode = error.exitCode;
 
     return;
@@ -129,7 +140,7 @@ export function renderError(error: unknown): void {
 
   if(error instanceof AccessError) {
 
-    process.stderr.write("ufa: " + formatErrorChain(error) + ".\n");
+    process.stderr.write(failureLine(error));
     process.exitCode = 1;
 
     return;
